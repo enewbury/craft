@@ -1,0 +1,3 @@
+%{
+  "arq": {:hex, :arq, "0.3.1", "65fac5b42ff8d63470b5fcad61e54da1946afa0b614bd693a2b83ea9f724780c", [:mix], [], "hexpm", "dd461eb4aa157dcec08818aabbfc4026927d9df0017e8a9987e1a23924c9342a"},
+}
