@@ -1,5 +1,5 @@
 defmodule Craft.RPC.AppendEntries do
-  alias Craft.Consensus.State
+  alias Craft.Consensus.LeaderState
 
   defstruct [
     :term,
@@ -10,7 +10,7 @@ defmodule Craft.RPC.AppendEntries do
     :leader_commit
   ]
 
-  def new(%State{current_term: term}, _to_node) do
+  def new(%LeaderState{current_term: term}, _to_node) do
     %__MODULE__{
       term: term,
       leader_id: node(),

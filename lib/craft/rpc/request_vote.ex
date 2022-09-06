@@ -1,5 +1,5 @@
 defmodule Craft.RPC.RequestVote do
-  alias Craft.Consensus.State
+  alias Craft.Consensus.CandidateState
 
   defstruct [
     :term,
@@ -8,7 +8,7 @@ defmodule Craft.RPC.RequestVote do
     :last_log_term
   ]
 
-  def new(%State{current_term: term}) do
+  def new(%CandidateState{current_term: term}) do
     %__MODULE__{
       term: term,
       candidate_id: node()
@@ -16,18 +16,29 @@ defmodule Craft.RPC.RequestVote do
   end
 
   defmodule Results do
+    alias Craft.Consensus.FollowerState
+    alias Craft.RPC.RequestVote
+
     defstruct [
       :term,
       :candidate_id,
-      # instead of a boolean "vote_granted", we just say who we voted for
-      :voted_for
+      :vote_granted
     ]
 
-    def new(%State{current_term: term, voted_for: voted_for}) do
+    def new(%RequestVote{} = request_vote, %FollowerState{} = state) do
+      do_new(state, state.voted_for == request_vote.candidate_id)
+    end
+
+    # candidates will always vote no for other candidates
+    def new(%RequestVote{}, %CandidateState{} = state) do
+      do_new(state, false)
+    end
+
+    defp do_new(state, vote_granted) do
       %__MODULE__{
-        term: term,
+        term: state.current_term,
         candidate_id: node(),
-        voted_for: voted_for
+        vote_granted: vote_granted
       }
     end
   end

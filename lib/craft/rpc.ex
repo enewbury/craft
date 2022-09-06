@@ -2,7 +2,9 @@ defmodule Craft.RPC do
   @moduledoc false
 
   alias Craft.Consensus
-  alias Craft.Consensus.State
+  alias Craft.Consensus.FollowerState
+  alias Craft.Consensus.CandidateState
+  alias Craft.Consensus.LeaderState
   alias Craft.RPC.RequestVote
   alias Craft.RPC.AppendEntries
 
@@ -10,7 +12,7 @@ defmodule Craft.RPC do
   #   ARQ.start(request, supervisor)
   # end
 
-  def request_vote(%State{name: name, other_nodes: other_nodes} = state) do
+  def request_vote(%CandidateState{name: name, other_nodes: other_nodes} = state) do
     request_vote = RequestVote.new(state)
 
     for to_node <- other_nodes do
@@ -18,11 +20,11 @@ defmodule Craft.RPC do
     end
   end
 
-  def respond_vote(%RequestVote{candidate_id: candidate_id}, %State{name: name} = state) do
-    :gen_statem.cast({Consensus.name(name), candidate_id}, RequestVote.Results.new(state))
+  def respond_vote(%RequestVote{candidate_id: candidate_id} = request_vote, %state_name{name: name} = state) when state_name in [FollowerState, CandidateState] do
+    :gen_statem.cast({Consensus.name(name), candidate_id}, RequestVote.Results.new(request_vote, state))
   end
 
-  def append_entries(%State{name: name, other_nodes: other_nodes} = state) do
+  def append_entries(%LeaderState{name: name, other_nodes: other_nodes} = state) do
     for to_node <- other_nodes do
       append_entries = AppendEntries.new(state, to_node)
 

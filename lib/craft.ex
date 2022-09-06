@@ -1,22 +1,19 @@
 defmodule Craft do
-  @moduledoc """
-  Documentation for `Craft`.
-  """
-
   alias Craft.Consensus
+  alias Craft.Log.MapLog
 
-  def start_group(name, nodes) do
+  def start_group(name, nodes, opts \\ [log_module: MapLog]) do
     for node <- nodes do
       :pong = Node.ping(node)
       {:module, Craft} = :rpc.call(node, Code, :ensure_loaded, [Craft])
     end
 
     for node <- nodes do
-      {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes])
+      {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes, opts])
     end
   end
 
-  defdelegate start_member(name, nodes), to: Craft.Application
+  defdelegate start_member(name, nodes, opts), to: Craft.Application
 
   def step_down(name, node) do
     :gen_statem.cast({Consensus.name(name), node}, :step_down)

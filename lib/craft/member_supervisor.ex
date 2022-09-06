@@ -8,11 +8,11 @@ defmodule Craft.MemberSupervisor do
   end
 
   @impl Supervisor
-  def init(%{name: name, nodes: nodes}) do
+  def init(%{name: name, nodes: nodes, log_module: log_module}) do
     other_nodes = List.delete(nodes, node())
 
     children = [
-      {Craft.Consensus, [name, other_nodes]},
+      {Craft.Consensus, [name, other_nodes, log_module]},
       {Registry, keys: :unique, name: registry_name(name)},
       {ARQ, name: rpc_supervisor_name(name)}
     ]
