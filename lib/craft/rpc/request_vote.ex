@@ -29,7 +29,7 @@ defmodule Craft.RPC.RequestVote do
       do_new(state, state.voted_for == request_vote.candidate_id)
     end
 
-    # candidates will always vote no for other candidates
+    # candidates will always vote 'no' for other candidates
     def new(%RequestVote{}, %CandidateState{} = state) do
       do_new(state, false)
     end

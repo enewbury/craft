@@ -160,15 +160,15 @@ defmodule Craft.Consensus do
 
     Logger.info("became leader", logger_metadata(data))
 
-    {:keep_state, data, [{{:timeout, :heartbeat}, 0, :heartbeat}]}
+    {:keep_state, data, [{:state_timeout, 0, :heartbeat}]}
   end
 
-  def leader({:timeout, :heartbeat}, :heartbeat, data) do
+  def leader(:state_timeout, :heartbeat, data) do
     Logger.info("heartbeat", logger_metadata(data))
 
     RPC.append_entries(data)
 
-    {:keep_state_and_data, [{{:timeout, :heartbeat}, @heartbeat_interval, :heartbeat}]}
+    {:keep_state_and_data, [{:state_timeout, @heartbeat_interval, :heartbeat}]}
   end
 
   # ignore any messages from earlier terms
@@ -187,7 +187,7 @@ defmodule Craft.Consensus do
   def leader(:cast, :step_down, data) do
     Logger.info("stepping down", logger_metadata(data))
 
-    {:next_state, :follower, data, [{{:timeout, :heartbeat}, :infinity, :heartbeat}]}
+    {:next_state, :follower, data, []}
   end
 
   def leader(type, msg, data) do
