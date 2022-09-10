@@ -1,10 +1,6 @@
 defmodule Craft.Log.MapLog do
   @behaviour Craft.Log
 
-  defstruct [
-    {:map, %{}}
-  ]
-
   defmodule Entry do
     defstruct [
       :term,
@@ -14,19 +10,19 @@ defmodule Craft.Log.MapLog do
 
   @impl true
   def new(_group_name) do
-    %__MODULE__{}
+    %{}
   end
 
   @impl true
-  def last_term(%__MODULE__{map: map}) when map_size(map) > 0 do
+  def latest_term(map) when map_size(map) > 0 do
     %Entry{term: term} = Map.fetch!(map, map_size(map))
 
     term
   end
-  def last_term(%__MODULE__{}), do: -1
+  def latest_term(_), do: -1
 
   @impl true
-  def last_index(%__MODULE__{map: map}) do
+  def latest_index(map) do
     map_size(map)
   end
 end

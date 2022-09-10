@@ -20,4 +20,22 @@ defmodule Craft.RPC.AppendEntries do
       leader_commit: nil
     }
   end
+
+  defmodule Results do
+    alias Craft.Consensus.FollowerState
+
+    defstruct [
+      :term,
+      :from,
+      :success
+    ]
+
+    def new(%FollowerState{} = state, success) do
+      %__MODULE__{
+        term: state.current_term,
+        from: node(),
+        success: success
+      }
+    end
+  end
 end

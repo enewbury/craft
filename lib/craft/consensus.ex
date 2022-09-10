@@ -57,27 +57,32 @@ defmodule Craft.Consensus do
   end
   def follower(:state_timeout, :become_candidate, data), do: {:next_state, :candidate, data}
 
-  # ignore any messages from earlier terms
-  def follower(:cast, %{term: term} = msg, %FollowerState{current_term: current_term} = data) when term < current_term do
-    Logger.info("ignoring message #{inspect msg} from #{msg.candidate_id} for earlier term #{term}", logger_metadata(data))
+  # if we receive a message with a higher term, bump our term and process the message
+  #
+  # this would have been implemented as a `:postpone`, but :gen_statem doesn't process postpones for :repeat_state so we have to fake it
+  def follower(:cast, %{term: term} = msg, %FollowerState{current_term: current_term} = data) when term > current_term do
+    # wipe voted_for etc...
+    data = FollowerState.new(%FollowerState{data | current_term: term})
 
-    :keep_state_and_data
+    follower(:cast, msg, data)
   end
 
   # maybe vote for candidate
   def follower(:cast, %RequestVote{} = request_vote, data) do
-    data = FollowerState.vote(data, request_vote)
+    {vote_granted, data} = FollowerState.vote(data, request_vote)
 
-    # Logger.info("voting for #{request_vote.candidate_id} and restarting timer", logger_metadata(data))
+    Logger.info("considering voting for #{request_vote.candidate_id}", logger_metadata(data))
 
-    RPC.respond_vote(request_vote, data)
+    RPC.respond_vote(request_vote, vote_granted, data)
 
-    {:keep_state, data, [follower_state_timeout()]}
+    {:keep_state, data}
   end
 
   # hear leader heartbeat and append entries if necessary
   def follower(:cast, %AppendEntries{} = append_entries, data) do
-    data = FollowerState.append_entries(data, append_entries)
+    {success, data} = FollowerState.append_entries(data, append_entries)
+
+    RPC.respond_append_entries(append_entries, success, data)
 
     Logger.info("leader heartbeat from #{append_entries.leader_id}, restarting timer", logger_metadata(data))
 
@@ -121,7 +126,7 @@ defmodule Craft.Consensus do
   def candidate(:cast, %RequestVote{} = request_vote, data) do
     Logger.info("denying vote to other candidate #{request_vote.candidate_id}", logger_metadata(data))
 
-    RPC.respond_vote(request_vote, data)
+    RPC.respond_vote(request_vote, false, data)
 
     :keep_state_and_data
   end
@@ -134,9 +139,9 @@ defmodule Craft.Consensus do
   # handle incoming RequestVote response, becoming leader if a quorum votes for us
   def candidate(:cast, %RequestVote.Results{} = results, data) do
     if results.vote_granted do
-      Logger.info("vote granted by #{results.candidate_id}", logger_metadata(data))
+      Logger.info("vote granted by #{results.from}", logger_metadata(data))
     else
-      Logger.info("vote denied by #{results.candidate_id}", logger_metadata(data))
+      Logger.info("vote denied by #{results.from}", logger_metadata(data))
     end
 
     data = CandidateState.record_vote(data, results)
@@ -173,7 +178,7 @@ defmodule Craft.Consensus do
 
   # ignore any messages from earlier terms
   def leader(:cast, %{term: term} = msg, %LeaderState{current_term: current_term} = data) when term < current_term do
-    Logger.info("ignoring message #{inspect msg} from #{msg.candidate_id} for earlier term #{term}", logger_metadata(data))
+    Logger.info("ignoring message #{inspect msg} for earlier term #{term}", logger_metadata(data))
 
     :keep_state_and_data
   end
@@ -188,6 +193,10 @@ defmodule Craft.Consensus do
     Logger.info("stepping down", logger_metadata(data))
 
     {:next_state, :follower, data, []}
+  end
+
+  def leader(:cast, %AppendEntries.Results{} = _results, _data) do
+    :keep_state_and_data
   end
 
   def leader(type, msg, data) do
@@ -220,7 +229,7 @@ defmodule Craft.Consensus do
   end
 
   defp become_follower(%{term: term} = msg, data) do
-    Logger.info("received message #{inspect msg} from #{msg.candidate_id} from later term #{term}, becoming follower", logger_metadata(data))
+    Logger.info("received message #{inspect msg} from #{msg.candidate_id} from later term #{term}, becoming/remaining follower", logger_metadata(data))
 
     {:next_state, :follower, %{data | current_term: term}, [:postpone]}
   end

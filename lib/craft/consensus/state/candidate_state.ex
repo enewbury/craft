@@ -21,11 +21,11 @@ defmodule Craft.Consensus.CandidateState do
   end
 
   def record_vote(%__MODULE__{} = state, %RequestVote.Results{} = results) do
-    if not MapSet.member?(state.received_votes_from, results.candidate_id) do
+    if not MapSet.member?(state.received_votes_from, results.from) do
       %__MODULE__{
         state |
         num_votes: state.num_votes + if(results.vote_granted, do: 1, else: 0),
-        received_votes_from: MapSet.put(state.received_votes_from, results.candidate_id)
+        received_votes_from: MapSet.put(state.received_votes_from, results.from)
       }
     else
       state

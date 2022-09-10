@@ -15,8 +15,8 @@ defmodule Craft.Log do
 
   #TODO: proper typespecs
   @callback new(group_name :: String.t()) :: any()
-  @callback last_term(any()) :: integer()
-  @callback last_index(any()) :: integer()
+  @callback latest_term(any()) :: integer()
+  @callback latest_index(any()) :: integer()
 
   defstruct [
     :module,
@@ -30,11 +30,11 @@ defmodule Craft.Log do
     }
   end
 
-  def last_term(%__MODULE__{module: module, state: state}) do
-    module.last_term(state)
+  def latest_term(%__MODULE__{module: module, state: state}) do
+    module.latest_term(state)
   end
 
-  def last_index(%__MODULE__{module: module, state: state}) do
-    module.last_index(state)
+  def latest_index(%__MODULE__{module: module, state: state}) do
+    module.latest_index(state)
   end
 end

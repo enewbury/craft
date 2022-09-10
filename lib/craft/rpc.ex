@@ -12,23 +12,35 @@ defmodule Craft.RPC do
   #   ARQ.start(request, supervisor)
   # end
 
-  def request_vote(%CandidateState{name: name, other_nodes: other_nodes} = state) do
+  def request_vote(%CandidateState{} = state) do
     request_vote = RequestVote.new(state)
 
-    for to_node <- other_nodes do
-      :gen_statem.cast({Consensus.name(name), to_node}, request_vote)
+    for to_node <- state.other_nodes do
+      send_message(request_vote, to_node, state)
     end
   end
 
-  def respond_vote(%RequestVote{candidate_id: candidate_id} = request_vote, %state_name{name: name} = state) when state_name in [FollowerState, CandidateState] do
-    :gen_statem.cast({Consensus.name(name), candidate_id}, RequestVote.Results.new(request_vote, state))
+  def respond_vote(%RequestVote{} = request_vote, vote_granted, state) do
+    state
+    |> RequestVote.Results.new(vote_granted)
+    |> send_message(request_vote.candidate_id, state)
   end
 
-  def append_entries(%LeaderState{name: name, other_nodes: other_nodes} = state) do
-    for to_node <- other_nodes do
-      append_entries = AppendEntries.new(state, to_node)
-
-      :gen_statem.cast({Consensus.name(name), to_node}, append_entries)
+  def append_entries(%LeaderState{} = state) do
+    for to_node <- state.other_nodes do
+      state
+      |> AppendEntries.new(state)
+      |> send_message(to_node, state)
     end
+  end
+
+  def respond_append_entries(%AppendEntries{} = append_entries, success, %FollowerState{} = state) do
+    state
+    |> AppendEntries.Results.new(success)
+    |> send_message(append_entries.leader_id, state)
+  end
+
+  def send_message(message, to_node, state) do
+    :gen_statem.cast({Consensus.name(state.name), to_node}, message)
   end
 end

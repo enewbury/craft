@@ -22,31 +22,38 @@ defmodule Craft.Consensus.FollowerState do
     }
   end
 
-  # vote for candidate if their term is higher than ours, even if we've already voted for someone in our term
-  def vote(%__MODULE__{current_term: current_term} = state, %RequestVote{term: term} = request_vote) when term > current_term do
-    %__MODULE__{state | current_term: term, voted_for: request_vote.candidate_id}
+  # vote 'no' for lower term candidates
+  def vote(%__MODULE__{current_term: current_term} = state, %RequestVote{term: term} = request_vote) when term < current_term do
+    {false, state}
   end
 
   # maybe vote for candidate in our term if we haven't voted for anyone else
-  def vote(%__MODULE__{voted_for: nil, current_term: term, log: log} = state, %RequestVote{term: term} = request_vote) do
+  def vote(%__MODULE__{voted_for: nil, current_term: term} = state, %RequestVote{term: term} = request_vote) do
     their_log_more_up_to_date =
-      request_vote.last_log_term > Log.last_term(log) ||
+      request_vote.last_log_term > Log.latest_term(state.log) ||
       (
-        request_vote.last_log_term == Log.last_term(log) &&
-        request_vote.last_log_index >= Log.last_index(log)
+        request_vote.last_log_term == Log.latest_term(state.log) &&
+        request_vote.last_log_index >= Log.latest_index(state.log)
       )
 
     if their_log_more_up_to_date do
-      %__MODULE__{state | voted_for: request_vote.candidate_id}
+      {true, %__MODULE__{state | voted_for: request_vote.candidate_id}}
     else
-      state
+      {false, state}
     end
   end
 
   # repeat vote if asked
-  def vote(%__MODULE__{} = state, %RequestVote{}), do: state
+  def vote(%__MODULE__{} = state, %RequestVote{} = request_vote) do
+    {state.voted_for == request_vote.candidate_id, state}
+  end
 
-  def append_entries(%__MODULE__{} = state, %AppendEntries{} = append_entries) do
-    %__MODULE__{state | leader_id: append_entries.leader_id, current_term: append_entries.term}
+  def append_entries(%__MODULE__{current_term: term} = state, %AppendEntries{term: term} = append_entries) do
+    {true, %__MODULE__{state | leader_id: append_entries.leader_id}}
+  end
+
+  # if the message is from an older term
+  def append_entries(%__MODULE__{} = state, %AppendEntries{}) do
+    {false, state}
   end
 end

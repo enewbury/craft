@@ -16,28 +16,20 @@ defmodule Craft.RPC.RequestVote do
   end
 
   defmodule Results do
+    alias Craft.Consensus.CandidateState
     alias Craft.Consensus.FollowerState
     alias Craft.RPC.RequestVote
 
     defstruct [
       :term,
-      :candidate_id,
+      :from,
       :vote_granted
     ]
 
-    def new(%RequestVote{} = request_vote, %FollowerState{} = state) do
-      do_new(state, state.voted_for == request_vote.candidate_id)
-    end
-
-    # candidates will always vote 'no' for other candidates
-    def new(%RequestVote{}, %CandidateState{} = state) do
-      do_new(state, false)
-    end
-
-    defp do_new(state, vote_granted) do
+    def new(%state_type{} = state, vote_granted) when state_type in [FollowerState, CandidateState] do
       %__MODULE__{
         term: state.current_term,
-        candidate_id: node(),
+        from: node(),
         vote_granted: vote_granted
       }
     end
