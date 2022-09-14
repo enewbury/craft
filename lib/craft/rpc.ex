@@ -29,7 +29,7 @@ defmodule Craft.RPC do
   def append_entries(%LeaderState{} = state) do
     for to_node <- state.other_nodes do
       state
-      |> AppendEntries.new(state)
+      |> AppendEntries.new(to_node)
       |> send_message(to_node, state)
     end
   end

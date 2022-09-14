@@ -1,12 +1,7 @@
 defmodule Craft.Log.MapLog do
-  @behaviour Craft.Log
+  alias Craft.Log.Entry
 
-  defmodule Entry do
-    defstruct [
-      :term,
-      :command
-    ]
-  end
+  @behaviour Craft.Log
 
   @impl true
   def new(_group_name) do
@@ -14,15 +9,22 @@ defmodule Craft.Log.MapLog do
   end
 
   @impl true
-  def latest_term(map) when map_size(map) > 0 do
-    %Entry{term: term} = Map.fetch!(map, map_size(map))
+  def latest_term(map) do
+    %Entry{term: term} = Map.fetch!(map, latest_index(map))
 
     term
   end
-  def latest_term(_), do: -1
 
   @impl true
   def latest_index(map) do
-    map_size(map)
+    map_size(map) - 1
+  end
+
+  @impl true
+  defdelegate fetch(map, index), to: Map
+
+  @impl true
+  def append(map, entry) do
+    Map.put(map, map_size(map), entry)
   end
 end

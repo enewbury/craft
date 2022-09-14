@@ -1,4 +1,6 @@
 defmodule Craft.RPC.AppendEntries do
+  alias Craft.Log
+  alias Craft.Log.Entry
   alias Craft.Consensus.LeaderState
 
   defstruct [
@@ -10,12 +12,15 @@ defmodule Craft.RPC.AppendEntries do
     :leader_commit
   ]
 
-  def new(%LeaderState{current_term: term}, _to_node) do
+  def new(%LeaderState{} = state, to_node) do
+    prev_log_index = Map.get(state.next_indices, to_node) - 1
+    {:ok, %Entry{term: prev_log_term}} = Log.fetch(state.log, prev_log_index)
+
     %__MODULE__{
-      term: term,
+      term: state.current_term,
       leader_id: node(),
-      prev_log_index: nil,
-      prev_log_term: nil,
+      prev_log_index: prev_log_index,
+      prev_log_term: prev_log_term,
       entries: [],
       leader_commit: nil
     }
@@ -38,4 +43,7 @@ defmodule Craft.RPC.AppendEntries do
       }
     end
   end
+
+  # defmodule SuccessResult
+  # defmodule FailureResult
 end

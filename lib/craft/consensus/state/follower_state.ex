@@ -23,7 +23,7 @@ defmodule Craft.Consensus.FollowerState do
   end
 
   # vote 'no' for lower term candidates
-  def vote(%__MODULE__{current_term: current_term} = state, %RequestVote{term: term} = request_vote) when term < current_term do
+  def vote(%__MODULE__{current_term: current_term} = state, %RequestVote{term: term}) when term < current_term do
     {false, state}
   end
 
@@ -49,6 +49,11 @@ defmodule Craft.Consensus.FollowerState do
   end
 
   def append_entries(%__MODULE__{current_term: term} = state, %AppendEntries{term: term} = append_entries) do
+
+    STOPPED HERE: repond with proper `success` if we were able to append the entries
+
+    IO.inspect append_entries
+    IO.inspect {Log.latest_index(state.log), Log.latest_term(state.log)}
     {true, %__MODULE__{state | leader_id: append_entries.leader_id}}
   end
 

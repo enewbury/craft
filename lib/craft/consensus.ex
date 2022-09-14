@@ -195,7 +195,7 @@ defmodule Craft.Consensus do
     {:next_state, :follower, data, []}
   end
 
-  def leader(:cast, %AppendEntries.Results{} = _results, _data) do
+  def leader(:cast, %AppendEntries.Results{} = results, _data) do
     :keep_state_and_data
   end
 
