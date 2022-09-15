@@ -18,8 +18,9 @@ defmodule Craft.Log do
   @callback new(group_name :: String.t()) :: any()
   @callback latest_term(any()) :: integer()
   @callback latest_index(any()) :: integer()
-  @callback fetch(any(), index :: pos_integer()) :: Entry.t()
+  @callback fetch(any(), index :: integer()) :: Entry.t()
   @callback append(any(), [Entry.t()]) :: any()
+  @callback rewind(any(), index :: integer()) :: any() # remove all long entries after index
 
   defstruct [
     :module,
@@ -48,5 +49,9 @@ defmodule Craft.Log do
 
   def append(%__MODULE__{module: module, private: private} = log, entries) do
     %__MODULE__{log | private: module.append(private, entries)}
+  end
+
+  def rewind(%__MODULE__{module: module, private: private} = log, index) do
+    %__MODULE__{log | private: module.rewind(private, index)}
   end
 end

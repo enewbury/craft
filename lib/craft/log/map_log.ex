@@ -29,4 +29,15 @@ defmodule Craft.Log.MapLog do
       Map.put(map, map_size(map), entry)
     end)
   end
+
+  # 0 1 2 3 4 5  size: 6
+  # rewind to 3
+
+  @impl true
+  def rewind(map, index) when index < map_size(map) - 1 do
+    map
+    |> Map.delete(latest_index(map))
+    |> rewind(index)
+  end
+  def rewind(map, _index), do: map
 end
