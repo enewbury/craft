@@ -19,7 +19,7 @@ defmodule Craft.Log do
   @callback latest_term(any()) :: integer()
   @callback latest_index(any()) :: integer()
   @callback fetch(any(), index :: pos_integer()) :: Entry.t()
-  @callback append(any(), Entry.t()) :: any()
+  @callback append(any(), [Entry.t()]) :: any()
 
   defstruct [
     :module,
@@ -31,7 +31,7 @@ defmodule Craft.Log do
       module: log_module,
       private: log_module.new(group_name)
     }
-    |> append(%Entry{term: 0})
+    |> append([%Entry{term: 0}])
   end
 
   def latest_term(%__MODULE__{module: module, private: private}) do
@@ -46,7 +46,7 @@ defmodule Craft.Log do
     module.fetch(private, index)
   end
 
-  def append(%__MODULE__{module: module, private: private} = log, entry) do
-    %__MODULE__{log | private: module.append(private, entry)}
+  def append(%__MODULE__{module: module, private: private} = log, entries) do
+    %__MODULE__{log | private: module.append(private, entries)}
   end
 end

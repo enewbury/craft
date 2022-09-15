@@ -24,7 +24,9 @@ defmodule Craft.Log.MapLog do
   defdelegate fetch(map, index), to: Map
 
   @impl true
-  def append(map, entry) do
-    Map.put(map, map_size(map), entry)
+  def append(map, entries) do
+    Enum.reduce(entries, map, fn entry, map ->
+      Map.put(map, map_size(map), entry)
+    end)
   end
 end

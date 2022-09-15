@@ -48,17 +48,20 @@ defmodule Craft.Consensus.FollowerState do
     {state.voted_for == request_vote.candidate_id, state}
   end
 
-  def append_entries(%__MODULE__{current_term: term} = state, %AppendEntries{term: term} = append_entries) do
-
-    STOPPED HERE: repond with proper `success` if we were able to append the entries
-
-    IO.inspect append_entries
-    IO.inspect {Log.latest_index(state.log), Log.latest_term(state.log)}
-    {true, %__MODULE__{state | leader_id: append_entries.leader_id}}
+  def append_entries(%__MODULE__{current_term: current_term} = state, %AppendEntries{term: term}) when term < current_term do
+    {false, state}
   end
 
-  # if the message is from an older term
-  def append_entries(%__MODULE__{} = state, %AppendEntries{}) do
-    {false, state}
+  #TODO: store latest log entry index/term in state so we can pattern match instead of querying the log module?
+  def append_entries(%__MODULE__{} = state, %AppendEntries{} = append_entries) do
+    if Log.latest_index(state.log) == append_entries.prev_log_index && Log.latest_term(state.log) == append_entries.prev_log_term do
+      if Enum.empty?(append_entries.entries) do
+        {true, %__MODULE__{state | leader_id: append_entries.leader_id}}
+      else
+        {true, %__MODULE__{state | leader_id: append_entries.leader_id, log: Log.append(state.log, append_entries.entries)}}
+      end
+    else
+      {false, %__MODULE__{state | leader_id: append_entries.leader_id}}
+    end
   end
 end
