@@ -189,14 +189,14 @@ defmodule Craft.Consensus do
   # ignore superfluous votes from when we were a candidate
   def leader(:cast, %RequestVote.Results{}, _data), do: :keep_state_and_data
 
+  def leader(:cast, %AppendEntries.Results{} = results, data) do
+    {:keep_state, LeaderState.handle_append_entries_results(data, results)}
+  end
+
   def leader(:cast, :step_down, data) do
     Logger.info("stepping down", logger_metadata(data))
 
     {:next_state, :follower, data, []}
-  end
-
-  def leader(:cast, %AppendEntries.Results{} = results, _data) do
-    :keep_state_and_data
   end
 
   def leader(type, msg, data) do

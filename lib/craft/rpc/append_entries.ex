@@ -13,15 +13,17 @@ defmodule Craft.RPC.AppendEntries do
   ]
 
   def new(%LeaderState{} = state, to_node) do
-    prev_log_index = Map.get(state.next_indices, to_node) - 1
+    next_index = Map.get(state.next_indices, to_node)
+    prev_log_index = next_index - 1
     {:ok, %Entry{term: prev_log_term}} = Log.fetch(state.log, prev_log_index)
+    entries = Log.fetch_from(state.log, next_index)
 
     %__MODULE__{
       term: state.current_term,
       leader_id: node(),
       prev_log_index: prev_log_index,
       prev_log_term: prev_log_term,
-      entries: [],
+      entries: entries,
       leader_commit: 0
     }
   end
@@ -32,14 +34,16 @@ defmodule Craft.RPC.AppendEntries do
     defstruct [
       :term,
       :from,
-      :success
+      :success,
+      :latest_index # if successful, the follower's latest index
     ]
 
     def new(%FollowerState{} = state, success) do
       %__MODULE__{
         term: state.current_term,
         from: node(),
-        success: success
+        success: success,
+        latest_index: Log.latest_index(state.log)
       }
     end
   end

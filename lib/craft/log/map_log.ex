@@ -24,14 +24,24 @@ defmodule Craft.Log.MapLog do
   defdelegate fetch(map, index), to: Map
 
   @impl true
+  def fetch_from(map, index) do
+    if index >= latest_index(map) do
+      []
+    else
+      Enum.map(index..latest_index(map), fn index ->
+        {:ok, entry} = fetch(map, index)
+
+        entry
+      end)
+    end
+  end
+
+  @impl true
   def append(map, entries) do
     Enum.reduce(entries, map, fn entry, map ->
       Map.put(map, map_size(map), entry)
     end)
   end
-
-  # 0 1 2 3 4 5  size: 6
-  # rewind to 3
 
   @impl true
   def rewind(map, index) when index < map_size(map) - 1 do

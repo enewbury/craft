@@ -1,6 +1,7 @@
 defmodule Craft.Consensus.LeaderState do
   alias Craft.Consensus.CandidateState
   alias Craft.Log
+  alias Craft.RPC.AppendEntries
 
   defstruct [
     :name,
@@ -24,5 +25,18 @@ defmodule Craft.Consensus.LeaderState do
       next_indices: next_indices,
       match_indices: match_indices
     }
+  end
+
+  def handle_append_entries_results(%__MODULE__{} = state, %AppendEntries.Results{success: true} = results) do
+    match_indices = Map.put(state.match_indices, results.from, results.latest_index)
+    next_indices = Map.put(state.next_indices, results.from, results.latest_index + 1)
+
+    %__MODULE__{state | next_indices: next_indices, match_indices: match_indices}
+  end
+
+  def handle_append_entries_results(%__MODULE__{} = state, %AppendEntries.Results{success: false} = results) do
+    next_indices = Map.update!(state.next_indices, results.from, fn next_index -> next_index - 1 end)
+
+    %__MODULE__{state | next_indices: next_indices}
   end
 end

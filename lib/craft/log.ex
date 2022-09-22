@@ -19,6 +19,7 @@ defmodule Craft.Log do
   @callback latest_term(any()) :: integer()
   @callback latest_index(any()) :: integer()
   @callback fetch(any(), index :: integer()) :: Entry.t()
+  @callback fetch_from(any(), index :: integer()) :: [Entry.t()]
   @callback append(any(), [Entry.t()]) :: any()
   @callback rewind(any(), index :: integer()) :: any() # remove all long entries after index
 
@@ -45,6 +46,10 @@ defmodule Craft.Log do
 
   def fetch(%__MODULE__{module: module, private: private}, index) do
     module.fetch(private, index)
+  end
+
+  def fetch_from(%__MODULE__{module: module, private: private}, index) do
+    module.fetch_from(private, index)
   end
 
   def append(%__MODULE__{module: module, private: private} = log, entries) do
