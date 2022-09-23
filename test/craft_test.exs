@@ -1,8 +1,30 @@
 defmodule CraftTest do
   use ExUnit.Case
-  doctest Craft
+  alias Craft.Test.ClusterNodes
+  alias Craft.TestHelper
+  alias Craft.Log.MapLog
+  alias Craft.Consensus.FollowerState
+  alias Craft.Consensus.CandidateState
 
-  test "greets the world" do
-    assert Craft.hello() == :world
+  setup_all do
+    nodes = ClusterNodes.spawn_nodes(5)
+
+    [nodes: nodes]
+  end
+
+  test "greets the world", %{nodes: nodes} do
+    states = [
+      %FollowerState{log: Craft.Log.new(nil, MapLog)},
+      %FollowerState{log: Craft.Log.new(nil, MapLog)},
+      %FollowerState{log: Craft.Log.new(nil, MapLog)},
+      %FollowerState{log: Craft.Log.new(nil, MapLog)},
+      %CandidateState{log: Craft.Log.new(nil, MapLog)}
+    ]
+
+    TestHelper.start_group(states, nodes)
+
+    receive do
+
+    end
   end
 end

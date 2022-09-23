@@ -4,8 +4,8 @@ defmodule Craft.Consensus.CandidateState do
   defstruct [
     :name,
     :other_nodes,
-    :current_term,
     :log,
+    current_term: -1,
 
     num_votes: 1,
     received_votes_from: MapSet.new()

@@ -1,5 +1,4 @@
 defmodule Craft.Consensus.LeaderState do
-  alias Craft.Consensus.CandidateState
   alias Craft.Log
   alias Craft.RPC.AppendEntries
 
@@ -12,7 +11,7 @@ defmodule Craft.Consensus.LeaderState do
     :match_indices
   ]
 
-  def new(%CandidateState{} = state) do
+  def new(state) do
     next_index = Log.latest_index(state.log) + 1
     next_indices = Map.new(state.other_nodes, &{&1, next_index})
     match_indices = Map.new(state.other_nodes, &{&1, 0})

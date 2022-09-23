@@ -5,11 +5,17 @@ defmodule Craft.Application do
 
   @impl Application
   def start(_type, _args) do
-    if Mix.env() == :dev do
+    if Mix.env() in [:dev, :test] do
       Logger.add_translator({Craft.SASLLoggerTranslator, :translate})
     end
 
     DynamicSupervisor.start_link([strategy: :one_for_one, name: Craft.Supervisor])
+  end
+
+  if Mix.env() == :test do
+    def start_member(state) do
+      DynamicSupervisor.start_child(Craft.Supervisor, {Craft.MemberSupervisor, state})
+    end
   end
 
   def start_member(name, nodes, opts) do

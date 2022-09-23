@@ -27,6 +27,15 @@ defmodule Craft.Consensus do
     :gen_statem.start_link({:local, name(name)}, __MODULE__, [name, other_nodes, log_module], [])
   end
 
+  if Mix.env() == :test do
+    def start_link(state), do: :gen_statem.start_link({:local, name(state.name)}, __MODULE__, state, [])
+    def ready_to_test(:enter, _, _data), do: :keep_state_and_data
+    def ready_to_test(:cast, :run, %FollowerState{} = data), do: {:next_state, :follower, data, []}
+    def ready_to_test(:cast, :run, %CandidateState{} = data), do: {:next_state, :candidate, data, []}
+    def ready_to_test(:cast, :run, %LeaderState{} = data), do: {:next_state, :leader, data, []}
+    def init(data) when is_map(data), do: {:ok, :ready_to_test, data}
+  end
+
   def init([name, other_nodes, log_module]) do
     Logger.metadata(name: name, node: node())
 

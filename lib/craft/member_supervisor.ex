@@ -11,8 +11,18 @@ defmodule Craft.MemberSupervisor do
   def init(%{name: name, nodes: nodes, log_module: log_module}) do
     other_nodes = List.delete(nodes, node())
 
+    do_init(name, [name, other_nodes, log_module])
+  end
+
+  if Mix.env() == :test do
+    def init(state) do
+      do_init(state.name, [state])
+    end
+  end
+
+  defp do_init(name, consensus_args) do
     children = [
-      {Craft.Consensus, [name, other_nodes, log_module]},
+      {Craft.Consensus, consensus_args},
       {Registry, keys: :unique, name: registry_name(name)},
       {ARQ, name: rpc_supervisor_name(name)}
     ]
