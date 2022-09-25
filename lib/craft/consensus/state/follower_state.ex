@@ -10,7 +10,9 @@ defmodule Craft.Consensus.FollowerState do
     :log,
 
     :voted_for,
-    :leader_id
+    :leader_id,
+
+    :tracer_pid
   ]
 
   def new(state) do

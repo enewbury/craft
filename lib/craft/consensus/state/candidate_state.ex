@@ -5,7 +5,9 @@ defmodule Craft.Consensus.CandidateState do
     :name,
     :other_nodes,
     :log,
+    :tracer_pid,
     current_term: -1,
+
 
     num_votes: 1,
     received_votes_from: MapSet.new()

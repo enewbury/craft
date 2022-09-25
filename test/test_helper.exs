@@ -27,7 +27,7 @@ defmodule Craft.TestHelper do
     end)
     |> Stream.run()
 
-    states
+    :ok
   end
 end
 

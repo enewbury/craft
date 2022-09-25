@@ -33,7 +33,27 @@ defmodule Craft.Consensus do
     def ready_to_test(:cast, :run, %FollowerState{} = data), do: {:next_state, :follower, data, []}
     def ready_to_test(:cast, :run, %CandidateState{} = data), do: {:next_state, :candidate, data, []}
     def ready_to_test(:cast, :run, %LeaderState{} = data), do: {:next_state, :leader, data, []}
-    def init(data) when is_map(data), do: {:ok, :ready_to_test, data}
+    def init(data) when is_map(data) do
+      me = self()
+      spawn_link(fn ->
+        :erlang.trace(me, true, [:call])
+        :erlang.trace_pattern({__MODULE__, :leader, :_}, true, [:global])
+        :erlang.trace_pattern({__MODULE__, :candidate, :_}, true, [:global])
+        :erlang.trace_pattern({__MODULE__, :follower, :_}, true, [:global])
+
+        (fn recursor ->
+          recursor.(recursor)
+        end).(fn loop ->
+          receive do
+            msg ->
+              send(data.tracer_pid, msg)
+              loop.(loop)
+          end
+        end)
+      end)
+
+      {:ok, :ready_to_test, data}
+    end
   end
 
   def init([name, other_nodes, log_module]) do

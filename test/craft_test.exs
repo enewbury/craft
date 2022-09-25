@@ -12,19 +12,34 @@ defmodule CraftTest do
     [nodes: nodes]
   end
 
+  # describe "smoke tests" do
+  #   test "starts a group, elects a leader, replicates logs, processes commands" do
+
+  #   end
+  # end
+
   test "greets the world", %{nodes: nodes} do
+    log = Craft.Log.new(nil, MapLog)
+
     states = [
-      %FollowerState{log: Craft.Log.new(nil, MapLog)},
-      %FollowerState{log: Craft.Log.new(nil, MapLog)},
-      %FollowerState{log: Craft.Log.new(nil, MapLog)},
-      %FollowerState{log: Craft.Log.new(nil, MapLog)},
-      %CandidateState{log: Craft.Log.new(nil, MapLog)}
+      %CandidateState{log: log, tracer_pid: self()},
+
+      %FollowerState{log: log, tracer_pid: self()},
+      %FollowerState{log: log, tracer_pid: self()},
+      %FollowerState{log: log, tracer_pid: self()},
+      %FollowerState{log: log, tracer_pid: self()}
     ]
 
     TestHelper.start_group(states, nodes)
 
-    receive do
+        forward = fn(func) ->
+          receive do
+            msg ->
+              IO.inspect msg
+              func.(func)
+          end
+        end
 
-    end
+        forward.(forward)
   end
 end
