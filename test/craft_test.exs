@@ -6,6 +6,8 @@ defmodule CraftTest do
   alias Craft.Consensus.FollowerState
   alias Craft.Consensus.CandidateState
 
+  import Craft.GroupWatcher, only: [watch: 2]
+
   setup_all do
     nodes = ClusterNodes.spawn_nodes(5)
 
@@ -32,14 +34,8 @@ defmodule CraftTest do
 
     TestHelper.start_group(states, nodes)
 
-        forward = fn(func) ->
-          receive do
-            msg ->
-              IO.inspect msg
-              func.(func)
-          end
-        end
-
-        forward.(forward)
+    # watch(nodes, millisecs: 5_000)
+    watch(nodes, until: :leader_stable)
+    |> IO.inspect
   end
 end

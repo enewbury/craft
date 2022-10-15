@@ -41,9 +41,7 @@ defmodule Craft.Consensus do
         :erlang.trace_pattern({__MODULE__, :candidate, :_}, true, [:global])
         :erlang.trace_pattern({__MODULE__, :follower, :_}, true, [:global])
 
-        (fn recursor ->
-          recursor.(recursor)
-        end).(fn loop ->
+        (fn f -> f.(f) end).(fn loop ->
           receive do
             msg ->
               send(data.tracer_pid, msg)
@@ -219,6 +217,7 @@ defmodule Craft.Consensus do
   def leader(:cast, %RequestVote.Results{}, _data), do: :keep_state_and_data
 
   def leader(:cast, %AppendEntries.Results{} = results, data) do
+    # spawn fn -> IO.inspect results, label: :consensus end
     {:keep_state, LeaderState.handle_append_entries_results(data, results)}
   end
 
