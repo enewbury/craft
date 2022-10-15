@@ -13,8 +13,8 @@ defmodule Craft.Application do
   end
 
   if Mix.env() == :test do
-    def start_member(state) do
-      DynamicSupervisor.start_child(Craft.Supervisor, {Craft.MemberSupervisor, state})
+    def start_member(args) do
+      DynamicSupervisor.start_child(Craft.Supervisor, {Craft.MemberSupervisor, args})
     end
   end
 

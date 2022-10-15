@@ -28,29 +28,23 @@ defmodule Craft.Consensus do
   end
 
   if Mix.env() == :test do
-    def start_link(state), do: :gen_statem.start_link({:local, name(state.name)}, __MODULE__, state, [])
-    def ready_to_test(:enter, _, _data), do: :keep_state_and_data
-    def ready_to_test(:cast, :run, %FollowerState{} = data), do: {:next_state, :follower, data, []}
-    def ready_to_test(:cast, :run, %CandidateState{} = data), do: {:next_state, :candidate, data, []}
-    def ready_to_test(:cast, :run, %LeaderState{} = data), do: {:next_state, :leader, data, []}
-    def init(data) when is_map(data) do
-      me = self()
-      spawn_link(fn ->
-        :erlang.trace(me, true, [:call])
-        :erlang.trace_pattern({__MODULE__, :leader, :_}, true, [:global])
-        :erlang.trace_pattern({__MODULE__, :candidate, :_}, true, [:global])
-        :erlang.trace_pattern({__MODULE__, :follower, :_}, true, [:global])
-
-        (fn f -> f.(f) end).(fn loop ->
-          receive do
-            msg ->
-              send(data.tracer_pid, msg)
-              loop.(loop)
-          end
-        end)
-      end)
-
-      {:ok, :ready_to_test, data}
+    def start_link(state), do: :gen_statem.start_link({:local, name(state.name)}, Craft.Consensus.Tracer, state, [])
+    defmodule Tracer do
+      @moduledoc ":erlang.trace/3 can't guarantee delivery order between traces messages and messages that this process sends, so we decorate instead"
+      defdelegate callback_mode, to: Craft.Consensus
+      def init(data) when is_struct(data) do
+        {:ok, :ready_to_test, data}
+      end
+      def ready_to_test(:enter, _, _data), do: :keep_state_and_data
+      def ready_to_test(:cast, :run, %FollowerState{} = data), do: {:next_state, :follower, data, []}
+      def ready_to_test(:cast, :run, %CandidateState{} = data), do: {:next_state, :candidate, data, []}
+      def ready_to_test(:cast, :run, %LeaderState{} = data), do: {:next_state, :leader, data, []}
+      for state <- [:follower, :candidate, :leader] do
+        def unquote(state)(event, msg, data) do
+          send(data.tracer_pid, {:trace, node(), event, msg, data})
+          apply(Craft.Consensus, unquote(state), [event, msg, data])
+        end
+      end
     end
   end
 

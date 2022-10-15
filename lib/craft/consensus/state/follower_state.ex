@@ -20,7 +20,8 @@ defmodule Craft.Consensus.FollowerState do
       name: state.name,
       other_nodes: state.other_nodes,
       current_term: state.current_term,
-      log: state.log
+      log: state.log,
+      tracer_pid: state.tracer_pid,
     }
   end
 

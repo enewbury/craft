@@ -8,7 +8,8 @@ defmodule Craft.Consensus.LeaderState do
     :current_term,
     :log,
     :next_indices,
-    :match_indices
+    :match_indices,
+    :tracer_pid
   ]
 
   def new(state) do
@@ -22,7 +23,8 @@ defmodule Craft.Consensus.LeaderState do
       current_term: state.current_term,
       log: state.log,
       next_indices: next_indices,
-      match_indices: match_indices
+      match_indices: match_indices,
+      tracer_pid: state.tracer_pid,
     }
   end
 

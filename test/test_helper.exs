@@ -8,7 +8,7 @@ defmodule Craft.TestHelper do
 
     states =
       Enum.zip_with(states, nodes, fn state, node ->
-        {node, %{state | name: name, other_nodes: List.delete(nodes, node)}}
+        {node, %{state | name: name, other_nodes: List.delete(nodes, node), tracer_pid: self()}}
       end)
 
     for node <- nodes do
@@ -108,32 +108,33 @@ defmodule Craft.GroupWatcher do
         invocations = Enum.sort_by(state.genstatem_invocations, fn {time, _} -> time end)
         {:ok, %State{state | genstatem_invocations: invocations}}
 
-      {:trace, member_pid, :call, {Craft.Consensus, _fsm_state, [:cast, %AppendEntries{} = append_entries, _member_state]}} = invocation ->
-        state
-        |> record_invocation(invocation)
-        |> State.append_entries_received(node(member_pid), append_entries)
-        |> do_watch(until)
+      # {:trace, member_pid, :call, {Craft.Consensus, _fsm_state, [:cast, %AppendEntries{} = append_entries, _member_state]}} = invocation ->
+      #   state
+      #   |> record_invocation(invocation)
+      #   |> State.append_entries_received(node(member_pid), append_entries)
+      #   |> do_watch(until)
 
-      {:trace, leader_pid, :call, {Craft.Consensus, _fsm_state, [:cast, %AppendEntries.Results{} = append_entries_results, _member_state]}} = invocation ->
-        state =
-          state
-          |> record_invocation(invocation)
-          |> State.append_entries_results_received(node(leader_pid), append_entries_results)
+      # {:trace, leader_pid, :call, {Craft.Consensus, _fsm_state, [:cast, %AppendEntries.Results{} = append_entries_results, _member_state]}} = invocation ->
+      #   state =
+      #     state
+      #     |> record_invocation(invocation)
+      #     |> State.append_entries_results_received(node(leader_pid), append_entries_results)
 
-        if until == :leader_stable do
-          IO.inspect state.empty_append_entries_counts
-        end
+      #   if until == :leader_stable do
+      #     IO.inspect state.empty_append_entries_counts
+      #   end
 
-        do_watch(state, until)
+      #   do_watch(state, until)
 
-      {:trace, leader_pid, :call, {Craft.Consensus, :leader, [:enter, :candidate, %CandidateState{current_term: current_term}]}} = invocation ->
-        state
-        |> record_invocation(invocation)
-        |> State.leader_elected(node(leader_pid), current_term)
-        |> do_watch(until)
+      # {:trace, leader_pid, :call, {Craft.Consensus, :leader, [:enter, :candidate, %CandidateState{current_term: current_term}]}} = invocation ->
+      #   state
+      #   |> record_invocation(invocation)
+      #   |> State.leader_elected(node(leader_pid), current_term)
+      #   |> do_watch(until)
 
       # {:trace, _, _, _} = invocation ->
-      {:trace, _, _, _} = invocation ->
+      {:trace, _, _, _, _} = invocation ->
+        IO.inspect invocation
         state
         |> record_invocation(invocation)
         |> do_watch(until)

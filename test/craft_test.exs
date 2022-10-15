@@ -24,12 +24,11 @@ defmodule CraftTest do
     log = Craft.Log.new(nil, MapLog)
 
     states = [
-      %CandidateState{log: log, tracer_pid: self()},
-
-      %FollowerState{log: log, tracer_pid: self()},
-      %FollowerState{log: log, tracer_pid: self()},
-      %FollowerState{log: log, tracer_pid: self()},
-      %FollowerState{log: log, tracer_pid: self()}
+      %CandidateState{log: log},
+      %FollowerState{log: log},
+      %FollowerState{log: log},
+      %FollowerState{log: log},
+      %FollowerState{log: log}
     ]
 
     TestHelper.start_group(states, nodes)
