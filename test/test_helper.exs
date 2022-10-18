@@ -132,12 +132,14 @@ defmodule Craft.GroupWatcher do
       #   |> State.leader_elected(node(leader_pid), current_term)
       #   |> do_watch(until)
 
-      # {:trace, _, _, _} = invocation ->
       {:trace, _, _, _, _} = invocation ->
-        IO.inspect invocation
         state
         |> record_invocation(invocation)
         |> do_watch(until)
+
+      {:cast, _from, to, msg} ->
+        :gen_statem.cast(to, msg)
+        do_watch(state, until)
     end
   end
 

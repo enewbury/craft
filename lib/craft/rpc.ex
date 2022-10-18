@@ -40,7 +40,13 @@ defmodule Craft.RPC do
     |> send_message(append_entries.leader_id, state)
   end
 
-  def send_message(message, to_node, state) do
-    :gen_statem.cast({Consensus.name(state.name), to_node}, message)
+  if Mix.env() == :test do
+    def send_message(message, to_node, state) do
+      send(state.tracer_pid, {:cast, DateTime.utc_now(), node(), {Consensus.name(state.name), to_node}, message})
+    end
+  else
+    def send_message(message, to_node, state) do
+      :gen_statem.cast({Consensus.name(state.name), to_node}, message)
+    end
   end
 end
