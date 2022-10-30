@@ -63,8 +63,8 @@ defmodule Craft.Nexus do
     end
   end
 
-  def start_link(states) do
-    GenServer.start_link(__MODULE__, states)
+  def start_link(members) do
+    GenServer.start_link(__MODULE__, members)
   end
 
   def cast(nexus, to, message) do
@@ -75,34 +75,8 @@ defmodule Craft.Nexus do
     GenServer.call(nexus, {:wait_until, condition}, 10_000)
   end
 
-  def init(states) do
-    name =
-      :crypto.strong_rand_bytes(3)
-      |> Base.encode16()
-
-    nodes = Keyword.keys(states)
-
-    states =
-      Enum.map(states, fn {node, state} ->
-        {node, %{state | name: name, other_nodes: List.delete(nodes, node), tracer_pid: self()}}
-      end)
-
-    for node <- nodes do
-      :pong = Node.ping(node)
-      {:module, Craft} = :rpc.call(node, Code, :ensure_loaded, [Craft])
-    end
-
-    Task.async_stream(states, fn {node, state} ->
-      :rpc.call(node, Craft.Application, :start_member, [state])
-    end)
-    |> Stream.run()
-
-    Task.async_stream(nodes, fn node ->
-      :gen_statem.cast({Consensus.name(name), node}, :run)
-    end)
-    |> Stream.run()
-
-    {:ok, %State{members: nodes}}
+  def init(members) do
+    {:ok, %State{members: members}}
   end
 
   def handle_call({:wait_until, condition}, from, state) do

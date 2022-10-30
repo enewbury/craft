@@ -1,10 +1,11 @@
 defmodule CraftTest do
   use ExUnit.Case
-  alias Craft.Test.ClusterNodes
-  alias Craft.Log.MapLog
-  alias Craft.Consensus.FollowerState
   alias Craft.Consensus.CandidateState
+  alias Craft.Consensus.FollowerState
+  alias Craft.Log.MapLog
   alias Craft.Nexus
+  alias Craft.Test.ClusterNodes
+  alias Craft.TestHelper
 
   import Nexus, only: [wait_until: 2]
 
@@ -37,7 +38,9 @@ defmodule CraftTest do
 
     expected_leader = List.first(nodes)
 
-    {:ok, nexus} = Nexus.start_link(states)
+    {:ok, nexus} = Nexus.start_link(nodes)
+
+    TestHelper.start_group(states, nexus)
 
     assert %Nexus.State{leader: ^expected_leader, term: 0} = wait_until(nexus, :group_stable)
   end
