@@ -42,7 +42,7 @@ defmodule Craft.RPC do
 
   if Mix.env() == :test do
     def send_message(message, to_node, state) do
-      send(state.tracer_pid, {:cast, DateTime.utc_now(), node(), {Consensus.name(state.name), to_node}, message})
+      Craft.Nexus.cast(state.tracer_pid, {Consensus.name(state.name), to_node}, message)
     end
   else
     def send_message(message, to_node, state) do

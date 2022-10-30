@@ -41,7 +41,7 @@ defmodule Craft.Consensus do
       def ready_to_test(:cast, :run, %LeaderState{} = data), do: {:next_state, :leader, data, []}
       for state <- [:follower, :candidate, :leader] do
         def unquote(state)(event, msg, data) do
-          send(data.tracer_pid, {:trace, DateTime.utc_now(), node(), event, msg, data})
+          send(data.tracer_pid, {:trace, DateTime.utc_now(), node(), unquote(state), event, msg, data})
           apply(Craft.Consensus, unquote(state), [event, msg, data])
         end
       end

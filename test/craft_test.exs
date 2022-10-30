@@ -1,12 +1,12 @@
 defmodule CraftTest do
   use ExUnit.Case
   alias Craft.Test.ClusterNodes
-  alias Craft.TestHelper
   alias Craft.Log.MapLog
   alias Craft.Consensus.FollowerState
   alias Craft.Consensus.CandidateState
+  alias Craft.Nexus
 
-  import Craft.GroupWatcher, only: [watch: 2]
+  import Nexus, only: [wait_until: 2]
 
   setup_all do
     nodes = ClusterNodes.spawn_nodes(5)
@@ -20,21 +20,36 @@ defmodule CraftTest do
   #   end
   # end
 
-  test "greets the world", %{nodes: nodes} do
+  test "pre-chosen candidate becomes leader", %{nodes: nodes} do
     log = Craft.Log.new(nil, MapLog)
 
-    states = [
-      %CandidateState{log: log},
-      %FollowerState{log: log},
-      %FollowerState{log: log},
-      %FollowerState{log: log},
-      %FollowerState{log: log}
-    ]
+    states =
+      Enum.zip(
+        nodes,
+        [
+          %CandidateState{log: log},
+          %FollowerState{log: log},
+          %FollowerState{log: log},
+          %FollowerState{log: log},
+          %FollowerState{log: log}
+        ]
+      )
 
-    TestHelper.start_group(states, nodes)
+    expected_leader = List.first(nodes)
 
-    # watch(nodes, millisecs: 5_000)
-    watch(nodes, until: :leader_stable)
-    |> IO.inspect
+    {:ok, nexus} = Nexus.start_link(states)
+
+    assert %Nexus.State{leader: ^expected_leader, term: 0} = wait_until(nexus, :group_stable)
   end
+
+  # test api design:
+  #
+  # series of:
+  #   {until, nemesis}
+  #
+  #  ex:
+  #  start in split brain, wait for stability (leader elected, etc), send a command to the group, then heal connectivity and wait for stability
+  #  [{:group_stable, SplitBrain},
+  #   fn group -> :ok = Craft.command(group, :some_command) end,
+  #   {:group_stable, nil}]
 end
