@@ -9,6 +9,8 @@ defmodule Craft.Application do
       Logger.add_translator({Craft.SASLLoggerTranslator, :translate})
     end
 
+    Craft.LeaderCache.init()
+
     DynamicSupervisor.start_link([strategy: :one_for_one, name: Craft.Supervisor])
   end
 
@@ -18,12 +20,13 @@ defmodule Craft.Application do
     end
   end
 
-  def start_member(name, nodes, opts) do
+  def start_member(name, nodes, machine, opts) do
     args =
       opts
       |> Map.new()
       |> Map.put(:name, name)
       |> Map.put(:nodes, nodes)
+      |> Map.put(:machine, machine)
 
     DynamicSupervisor.start_child(Craft.Supervisor, {Craft.MemberSupervisor, args})
   end

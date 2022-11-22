@@ -1,5 +1,6 @@
 defmodule CraftTest do
   use ExUnit.Case
+  alias Craft.Consensus
   alias Craft.Consensus.CandidateState
   alias Craft.Consensus.FollowerState
   alias Craft.Log.MapLog
@@ -43,6 +44,36 @@ defmodule CraftTest do
     TestHelper.start_group(states, nexus)
 
     assert %Nexus.State{leader: ^expected_leader, term: 0} = wait_until(nexus, :group_stable)
+  end
+
+  test "commands", %{nodes: nodes} do
+    log = Craft.Log.new(nil, MapLog)
+
+    states =
+      Enum.zip(
+        nodes,
+        [
+          %CandidateState{log: log},
+          %FollowerState{log: log},
+          %FollowerState{log: log},
+          %FollowerState{log: log},
+          %FollowerState{log: log}
+        ]
+      )
+
+    {:ok, nexus} = Nexus.start_link(nodes)
+
+    name = TestHelper.start_group(states, nexus)
+
+    wait_until(nexus, :group_stable)
+
+    Craft.command(:butts, name, nodes)
+    |> IO.inspect
+
+    Enum.into(nodes, %{}, fn node ->
+      {node, {Consensus.name(name), node} |> :sys.get_state()}
+    end)
+    |> IO.inspect
   end
 
   # test api design:

@@ -9,7 +9,8 @@ defmodule Craft.Consensus.LeaderState do
     :log,
     :next_indices,
     :match_indices,
-    :tracer_pid
+    :tracer_pid,
+    client_requests: %{}
   ]
 
   def new(state) do

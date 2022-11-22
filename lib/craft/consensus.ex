@@ -2,6 +2,7 @@ defmodule Craft.Consensus do
   @moduledoc false
 
   alias Craft.Log
+  alias Craft.Log.Entry
   alias Craft.RPC
   alias Craft.RPC.RequestVote
   alias Craft.RPC.AppendEntries
@@ -20,14 +21,40 @@ defmodule Craft.Consensus do
   @heartbeat_interval 1400
 
 
-  def callback_mode, do: [:state_functions, :state_enter]
+  #
+  # API
+  #
+
+  def command(name, node, command, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+    id = {self(), make_ref()}
+
+    :gen_statem.cast({name(name), node}, {:command, id, command})
+
+    receive do
+      {^id, reply} ->
+        reply
+
+      after
+        timeout ->
+          {:error, :timeout}
+    end
+  end
+
   def name(name), do: Module.concat(__MODULE__, name)
 
-  def start_link(name, other_nodes, log_module) do
-    :gen_statem.start_link({:local, name(name)}, __MODULE__, [name, other_nodes, log_module], [])
+  #
+  # GenStateM implementation
+  #
+
+  def callback_mode, do: [:state_functions, :state_enter]
+
+  def start_link(args) do
+    :gen_statem.start_link({:local, name(args.name)}, __MODULE__, args, [])
   end
 
   if Mix.env() == :test do
+    defoverridable start_link: 1
     def start_link(state), do: :gen_statem.start_link({:local, name(state.name)}, Craft.Consensus.Tracer, state, [])
     defmodule Tracer do
       @moduledoc ":erlang.trace/3 can't guarantee delivery order between traces messages and messages that this process sends, so we decorate instead"
@@ -48,14 +75,14 @@ defmodule Craft.Consensus do
     end
   end
 
-  def init([name, other_nodes, log_module]) do
-    Logger.metadata(name: name, node: node())
+  def init(args) do
+    Logger.metadata(name: args.name, node: node())
 
     data =
       %FollowerState{
-        name: name,
-        other_nodes: other_nodes,
-        log: Log.new(name, log_module)
+        name: args.name,
+        other_nodes: args.other_nodes,
+        log: Log.new(args.name, args.log_module)
       }
 
     {:ok, :follower, data}
@@ -96,7 +123,17 @@ defmodule Craft.Consensus do
 
     RPC.respond_vote(request_vote, vote_granted, data)
 
-    {:keep_state, data}
+    #
+    # reset timer if we grant vote to give candidate a sec to take leadership
+    #
+    # if our timer pops immediately after granting a vote, we'll become a candidate
+    # and cause an unnecessary election
+    #
+    if vote_granted do
+      {:keep_state, data, [follower_state_timeout()]}
+    else
+      {:keep_state, data}
+    end
   end
 
   # hear leader heartbeat and append entries if necessary
@@ -105,9 +142,15 @@ defmodule Craft.Consensus do
 
     RPC.respond_append_entries(append_entries, success, data)
 
-    Logger.info("leader heartbeat from #{append_entries.leader_id}, restarting timer", logger_metadata(data))
+    Logger.debug("leader heartbeat from #{append_entries.leader_id}, restarting timer", logger_metadata(data))
 
     {:keep_state, data, [follower_state_timeout()]}
+  end
+
+  def follower(:cast, {:command, {caller_pid, _ref} = id, _command}, data) do
+    send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
+
+    :keep_state_and_data
   end
 
   def follower(type, msg, data) do
@@ -174,6 +217,16 @@ defmodule Craft.Consensus do
     end
   end
 
+  # even though this node doesn't recognize the leader as legitimate anymore,
+  # we should still try to redirect commands to the old leader, in case it is
+  # actually is legitimate and we're incorrect. (e.g. we're isolated from the
+  # other nodes and they're happily carrying on without us)
+  def candidate(:cast, {:command, {caller_pid, _ref} = id, _command}, data) do
+    send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
+
+    :keep_state_and_data
+  end
+
   def candidate(type, msg, data) do
     Logger.info("ignoring #{inspect type} message #{inspect msg}", logger_metadata(data))
 
@@ -190,7 +243,7 @@ defmodule Craft.Consensus do
   end
 
   def leader(:state_timeout, :heartbeat, data) do
-    Logger.info("heartbeat", logger_metadata(data))
+    Logger.debug("heartbeat", logger_metadata(data))
 
     RPC.append_entries(data)
 
@@ -219,6 +272,15 @@ defmodule Craft.Consensus do
     Logger.info("stepping down", logger_metadata(data))
 
     {:next_state, :follower, data, []}
+  end
+
+  def leader(:cast, {:command, id, command}, data) do
+    log = Log.append(data.log, %Entry{term: data.current_term, command: command})
+    entry_index = Log.latest_index(log)
+
+    client_requests = Map.put(data.client_requests, entry_index, id)
+
+    {:keep_state, %LeaderState{data | log: log, client_requests: client_requests}}
   end
 
   def leader(type, msg, data) do

@@ -52,9 +52,10 @@ defmodule Craft.Log do
     module.fetch_from(private, index)
   end
 
-  def append(%__MODULE__{module: module, private: private} = log, entries) do
+  def append(%__MODULE__{module: module, private: private} = log, entries) when is_list(entries) do
     %__MODULE__{log | private: module.append(private, entries)}
   end
+  def append(log, entry), do: append(log, [entry])
 
   def rewind(%__MODULE__{module: module, private: private} = log, index) do
     %__MODULE__{log | private: module.rewind(private, index)}

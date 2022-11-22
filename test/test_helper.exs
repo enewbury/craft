@@ -28,6 +28,8 @@ defmodule Craft.TestHelper do
       :gen_statem.cast({Consensus.name(name), node}, :run)
     end)
     |> Stream.run()
+
+    name
   end
 end
 

@@ -6,6 +6,7 @@ defmodule Craft.Consensus.CandidateState do
     :other_nodes,
     {:current_term, -1},
     :log,
+    :leader_id,
 
     :tracer_pid,
 
@@ -20,6 +21,7 @@ defmodule Craft.Consensus.CandidateState do
       current_term: state.current_term + 1,
       log: state.log,
       tracer_pid: state.tracer_pid,
+      leader_id: state.leader_id
     }
   end
 
