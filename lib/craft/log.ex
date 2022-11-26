@@ -28,12 +28,19 @@ defmodule Craft.Log do
     :private
   ]
 
+  #
+  # Craft requires that log implementations are initialized at following point:
+  #
+  # last_applied: 0
+  # log: 0 -> Entry{term: -1, command: nil}
+  #
+  # this makes the rest of the codebase a lot simpler
+  #
   def new(group_name, log_module) do
     %__MODULE__{
       module: log_module,
       private: log_module.new(group_name)
     }
-    |> append([%Entry{term: 0}])
   end
 
   def latest_term(%__MODULE__{module: module, private: private}) do
@@ -42,6 +49,14 @@ defmodule Craft.Log do
 
   def latest_index(%__MODULE__{module: module, private: private}) do
     module.latest_index(private)
+  end
+
+  def last_applied(%__MODULE__{module: module, private: private}) do
+    module.last_applied(private)
+  end
+
+  def increment_last_applied(%__MODULE__{module: module, private: private}) do
+    module.increment_last_applied(private)
   end
 
   def fetch(%__MODULE__{module: module, private: private}, index) do

@@ -18,7 +18,6 @@ defmodule Craft.RPC.RequestVote do
   defmodule Results do
     alias Craft.Consensus.CandidateState
     alias Craft.Consensus.FollowerState
-    alias Craft.RPC.RequestVote
 
     defstruct [
       :term,

@@ -2,6 +2,14 @@ defmodule Craft do
   alias Craft.Consensus
   alias Craft.Log.MapLog
 
+  #FIXME
+  @type command :: any()
+  @type reply :: any()
+  @type side_effects :: any()
+  @type group_name :: any()
+  @type query() :: any()
+  @type log_index() :: non_neg_integer()
+
   def start_group(name, nodes, machine, opts \\ [log_module: MapLog]) do
     for node <- nodes do
       :pong = Node.ping(node)

@@ -43,6 +43,12 @@ defmodule Craft.Consensus do
 
   def name(name), do: Module.concat(__MODULE__, name)
 
+  def quorum_reached?(state, num) do
+    num_members = length(state.other_nodes) + 1
+    quorum_needed = div(num_members, 2) + 1
+
+    num >= quorum_needed
+  end
   #
   # GenStateM implementation
   #

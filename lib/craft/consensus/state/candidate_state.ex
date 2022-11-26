@@ -1,4 +1,5 @@
 defmodule Craft.Consensus.CandidateState do
+  alias Craft.Consensus
   alias Craft.RPC.RequestVote
 
   defstruct [
@@ -38,9 +39,6 @@ defmodule Craft.Consensus.CandidateState do
   end
 
   def won_election?(%__MODULE__{} = state) do
-    num_members = length(state.other_nodes) + 1
-    quorum_needed = div(num_members, 2) + 1
-
-    state.num_votes >= quorum_needed
+    Consensus.quorum_reached?(state, state.num_votes)
   end
 end

@@ -1,4 +1,5 @@
 defmodule Craft.Consensus.LeaderState do
+  alias Craft.Consensus
   alias Craft.Log
   alias Craft.RPC.AppendEntries
 
@@ -10,6 +11,7 @@ defmodule Craft.Consensus.LeaderState do
     :next_indices,
     :match_indices,
     :tracer_pid,
+    commit_index: 0,
     client_requests: %{}
   ]
 
@@ -32,6 +34,8 @@ defmodule Craft.Consensus.LeaderState do
   def handle_append_entries_results(%__MODULE__{} = state, %AppendEntries.Results{success: true} = results) do
     match_indices = Map.put(state.match_indices, results.from, results.latest_index)
     next_indices = Map.put(state.next_indices, results.from, results.latest_index + 1)
+
+    # Consensus.quorum_reached?(state, )
 
     %__MODULE__{state | next_indices: next_indices, match_indices: match_indices}
   end

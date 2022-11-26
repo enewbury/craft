@@ -5,7 +5,7 @@ defmodule Craft.Log.MapLog do
 
   @impl true
   def new(_group_name) do
-    %{}
+    append(%{}, [%Entry{term: -1}])
   end
 
   @impl true
@@ -25,7 +25,7 @@ defmodule Craft.Log.MapLog do
 
   @impl true
   def fetch_from(map, index) do
-    if index >= latest_index(map) do
+    if index > latest_index(map) do
       []
     else
       Enum.map(index..latest_index(map), fn index ->

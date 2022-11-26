@@ -24,7 +24,7 @@ defmodule Craft.RPC.AppendEntries do
       prev_log_index: prev_log_index,
       prev_log_term: prev_log_term,
       entries: entries,
-      leader_commit: 0
+      leader_commit: state.commit_index
     }
   end
 

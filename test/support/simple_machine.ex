@@ -1,5 +1,5 @@
 defmodule Craft.SimpleMachine do
-  @behaviour Craft.Machine
+  use Craft.Machine, persistent: false
 
   def init(_group_name) do
     {:ok, %{}}

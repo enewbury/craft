@@ -12,6 +12,7 @@ defmodule Craft.RPC do
   #   ARQ.start(request, supervisor)
   # end
 
+  # TODO: parallelize
   def request_vote(%CandidateState{} = state) do
     request_vote = RequestVote.new(state)
 
@@ -26,6 +27,7 @@ defmodule Craft.RPC do
     |> send_message(request_vote.candidate_id, state)
   end
 
+  # TODO: parallelize
   def append_entries(%LeaderState{} = state) do
     for to_node <- state.other_nodes do
       state

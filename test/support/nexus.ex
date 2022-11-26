@@ -7,10 +7,7 @@ defmodule Craft.Nexus do
   """
   use GenServer
 
-  alias Craft.Consensus
-  # alias Craft.Consensus.FollowerState
   alias Craft.Consensus.CandidateState
-  # alias Craft.Consensus.LeaderState
   alias Craft.RPC.AppendEntries
 
   defmodule State do
