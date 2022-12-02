@@ -43,6 +43,7 @@ defmodule Craft.Consensus do
 
   def name(name), do: Module.concat(__MODULE__, name)
 
+  # TODO: pre-compute quorum and store in state
   def quorum_reached?(state, num) do
     num_members = length(state.other_nodes) + 1
     quorum_needed = div(num_members, 2) + 1
@@ -243,6 +244,10 @@ defmodule Craft.Consensus do
   def leader(:enter, _previous_state, data) do
     data = LeaderState.new(data)
 
+    entry = %Entry{term: data.current_term}
+    log = Log.append(data.log, entry)
+    data = %LeaderState{data | log: log}
+
     Logger.info("became leader", logger_metadata(data))
 
     {:keep_state, data, [{:state_timeout, 0, :heartbeat}]}
@@ -281,9 +286,10 @@ defmodule Craft.Consensus do
   end
 
   def leader(:cast, {:command, id, command}, data) do
-    log = Log.append(data.log, %Entry{term: data.current_term, command: command})
-    entry_index = Log.latest_index(log)
+    entry = %Entry{term: data.current_term, command: command}
+    log = Log.append(data.log, entry)
 
+    entry_index = Log.latest_index(log)
     client_requests = Map.put(data.client_requests, entry_index, id)
 
     {:keep_state, %LeaderState{data | log: log, client_requests: client_requests}}

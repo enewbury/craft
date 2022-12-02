@@ -12,7 +12,9 @@ defmodule Craft.Consensus.FollowerState do
     :voted_for,
     :leader_id,
 
-    :tracer_pid
+    :tracer_pid,
+
+    commit_index: 0
   ]
 
   def new(state) do
@@ -22,6 +24,7 @@ defmodule Craft.Consensus.FollowerState do
       current_term: state.current_term,
       log: state.log,
       tracer_pid: state.tracer_pid,
+      commit_index: state.commit_index
     }
   end
 

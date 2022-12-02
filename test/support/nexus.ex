@@ -30,22 +30,19 @@ defmodule Craft.Nexus do
     end
 
     def append_entries_received(%State{term: term, leader: leader} = state, member, %AppendEntries{term: term, leader_id: leader} = append_entries) do
-      empty_append_entries_counts =
-        if append_entries.entries == [] do
-          Map.update!(state.empty_append_entries_counts, member, fn {num, :confirmed} -> {num, :received} end)
-        else
-          Map.put(state.empty_append_entries_counts, member, {0, :confirmed})
-        end
+      empty_append_entries_counts = Map.update(state.empty_append_entries_counts, member, {0, append_entries}, fn {num, _} -> {num, append_entries} end)
 
       %__MODULE__{state | empty_append_entries_counts: empty_append_entries_counts}
     end
 
     def append_entries_results_received(%State{term: term, leader: leader} = state, leader, %AppendEntries.Results{term: term} = append_entries_results) do
       empty_append_entries_counts =
-        if append_entries_results.success do
-          Map.update!(state.empty_append_entries_counts, append_entries_results.from, fn {num, :received} -> {num + 1, :confirmed} end)
+        with true <- append_entries_results.success,
+             {num, %AppendEntries{entries: []}} <- Map.get(state.empty_append_entries_counts, append_entries_results.from) do
+          Map.put(state.empty_append_entries_counts, append_entries_results.from, {num + 1, nil})
         else
-          Map.put(state.empty_append_entries_counts, append_entries_results.from, {0, :confirmed})
+          _ ->
+            Map.put(state.empty_append_entries_counts, append_entries_results.from, {0, nil})
         end
 
       %__MODULE__{state | empty_append_entries_counts: empty_append_entries_counts}
@@ -53,10 +50,7 @@ defmodule Craft.Nexus do
 
     # if three rounds of empty AppendEntries messages take place with the same leader, we consider the group stable
     def group_stable?(%State{} = state) do
-      [{3, :confirmed}] ==
-        state.empty_append_entries_counts
-        |> Map.values()
-        |> Enum.uniq()
+      Enum.all?(state.empty_append_entries_counts, fn {_, {num, _}} -> num >= 3 end)
     end
   end
 

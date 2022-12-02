@@ -25,18 +25,19 @@ defmodule Craft.MemberSupervisor do
   defp do_init(args) do
     children = [
       {Craft.Consensus, [args]},
-      {Registry, keys: :unique, name: registry_name(args.name)},
-      {ARQ, name: rpc_supervisor_name(args.name)}
+      {Craft.Machine, [args]}
+      # {Registry, keys: :unique, name: registry_name(args.name)},
+      # {ARQ, name: rpc_supervisor_name(args.name)}
     ]
 
     Supervisor.init(children, strategy: :one_for_all)
   end
 
-  def registry_name(name) do
-    Module.concat(Craft.Registry, name)
-  end
+  # def registry_name(name) do
+  #   Module.concat(Craft.Registry, name)
+  # end
 
-  def rpc_supervisor_name(name) do
-    Module.concat(Craft.Registry, name)
-  end
+  # def rpc_supervisor_name(name) do
+  #   Module.concat(Craft.Registry, name)
+  # end
 end

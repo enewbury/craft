@@ -12,7 +12,9 @@ defmodule Craft.Consensus.CandidateState do
     :tracer_pid,
 
     num_votes: 1,
-    received_votes_from: MapSet.new()
+    received_votes_from: MapSet.new(),
+
+    commit_index: 0
   ]
 
   def new(state) do
@@ -22,7 +24,8 @@ defmodule Craft.Consensus.CandidateState do
       current_term: state.current_term + 1,
       log: state.log,
       tracer_pid: state.tracer_pid,
-      leader_id: state.leader_id
+      leader_id: state.leader_id,
+      commit_index: state.commit_index
     }
   end
 

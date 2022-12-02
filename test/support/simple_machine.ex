@@ -5,11 +5,11 @@ defmodule Craft.SimpleMachine do
     {:ok, %{}}
   end
 
-  def command({:put, k, v}, state) do
+  def command({:put, k, v}, _log_index, state) do
     {:ok, Map.put(state, k, v)}
   end
 
-  def command({:get, k}, state) do
+  def command({:get, k}, _log_index, state) do
     {{:ok, Map.get(state, k)}, state}
   end
 end
