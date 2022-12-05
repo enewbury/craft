@@ -39,10 +39,10 @@ defmodule Craft.Consensus.LeaderState do
 
     # find the highest uncommitted match index shared by a majority of servers
     # this can be optimized to some degree (mapset, gb_tree, etc...)
-    # also optimized by pre-computing quorum count and storing in state
+    # also optimized by pre-computing quorum requirement and storing in state
     highest_uncommitted_match_index =
       state.match_indices
-      |> Enum.map(fn {_node, index} -> index end)
+      |> Map.values()
       |> Enum.filter(fn index -> index >= state.commit_index end)
       |> Enum.uniq()
       |> Enum.sort()

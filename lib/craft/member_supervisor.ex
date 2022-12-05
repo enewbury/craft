@@ -9,23 +9,25 @@ defmodule Craft.MemberSupervisor do
 
   @impl Supervisor
   def init(args) do
-    args
-    |> Map.delete(:nodes)
-    |> Map.put(:other_nodes, List.delete(args.nodes, node()))
-    |> do_init()
+    args =
+      args
+      |> Map.delete(:nodes)
+      |> Map.put(:other_nodes, List.delete(args.nodes, node()))
+
+    do_init(args, args)
   end
 
   if Mix.env() == :test do
     defoverridable init: 1
-    def init(state) do
-      do_init(state)
+    def init(consensus_state, machine_args) do
+      do_init(consensus_state, machine_args)
     end
   end
 
-  defp do_init(args) do
+  defp do_init(consensus_args, machine_args) do
     children = [
-      {Craft.Consensus, [args]},
-      {Craft.Machine, [args]}
+      {Craft.Consensus, [consensus_args]},
+      {Craft.Machine, machine_args}
       # {Registry, keys: :unique, name: registry_name(args.name)},
       # {ARQ, name: rpc_supervisor_name(args.name)}
     ]

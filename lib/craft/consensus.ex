@@ -1,14 +1,15 @@
 defmodule Craft.Consensus do
   @moduledoc false
 
+  alias Craft.Consensus.CandidateState
+  alias Craft.Consensus.FollowerState
+  alias Craft.Consensus.LeaderState
   alias Craft.Log
   alias Craft.Log.Entry
+  alias Craft.Machine
   alias Craft.RPC
-  alias Craft.RPC.RequestVote
   alias Craft.RPC.AppendEntries
-  alias Craft.Consensus.FollowerState
-  alias Craft.Consensus.CandidateState
-  alias Craft.Consensus.LeaderState
+  alias Craft.RPC.RequestVote
 
   require Logger
 
@@ -275,8 +276,14 @@ defmodule Craft.Consensus do
   def leader(:cast, %RequestVote.Results{}, _data), do: :keep_state_and_data
 
   def leader(:cast, %AppendEntries.Results{} = results, data) do
-    # spawn fn -> IO.inspect results, label: :consensus end
-    {:keep_state, LeaderState.handle_append_entries_results(data, results)}
+    old_commit_index = data.commit_index
+    data = LeaderState.handle_append_entries_results(data, results)
+
+    if data.commit_index > old_commit_index do
+      Machine.commit_index_bumped(data)
+    end
+
+    {:keep_state, data}
   end
 
   def leader(:cast, :step_down, data) do

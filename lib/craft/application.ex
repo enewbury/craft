@@ -15,8 +15,8 @@ defmodule Craft.Application do
   end
 
   if Mix.env() == :test do
-    def start_member(args) do
-      DynamicSupervisor.start_child(Craft.Supervisor, {Craft.MemberSupervisor, args})
+    def start_member(consensus_state, machine_args) do
+      DynamicSupervisor.start_child(Craft.Supervisor, {Craft.MemberSupervisor, [consensus_state, machine_args]})
     end
   end
 

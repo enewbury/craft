@@ -3,6 +3,8 @@ defmodule Craft.Machine do
 
   alias Craft.Log
   alias Craft.Log.Entry
+  alias Craft.Consensus.FollowerState
+  alias Craft.Consensus.LeaderState
 
   @type private :: any()
 
@@ -37,10 +39,10 @@ defmodule Craft.Machine do
   # to continue without being blocked by the machine process while it's applying
   # entries
   #
-  def commit_index_bumped(group_name, new_commit_index, log) do
-    group_name
+  def commit_index_bumped(%type{} = state) when type in [LeaderState, FollowerState] do
+    state.name
     |> name()
-    |> GenServer.cast({:commit_index_bumped, new_commit_index, log})
+    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.log, state.client_requests, type == LeaderState})
   end
 
   @impl true
@@ -68,43 +70,49 @@ defmodule Craft.Machine do
 
     private =
       Enum.reduce(last_applied_log_index..new_commit_index, state.private, fn index, private ->
-        %Entry{command: command} = Log.fetch(log, index)
+        case Log.fetch(log, index) do
+          # `nil` commands are for craft's internal use (0th log entry or log entries when a new leader is elected)
+          # so we don't tell the machine about them
+          {:ok, %Entry{command: nil}} ->
+            private
 
-        {reply, side_effects, private} =
-          case state.module.command(command, index, private) do
-            {reply, private} ->
-              {reply, [], private}
+          {:ok, %Entry{command: command}} ->
+            {reply, side_effects, private} =
+              case state.module.command(command, index, private) do
+                {reply, private} ->
+                  {reply, [], private}
 
-            {reply, side_effects, private} ->
-              {reply, side_effects, private}
-          end
+                {reply, side_effects, private} ->
+                  {reply, side_effects, private}
+              end
 
-        if is_leader? do
-          case Map.fetch(requests, index) do
-            {:ok, {pid, _ref} = id} ->
-              send(pid, {id, reply})
+            if is_leader? do
+              case Map.fetch(requests, index) do
+                {:ok, {pid, _ref} = id} ->
+                  send(pid, {id, reply})
 
-            _ ->
-              :noop
-          end
+                _ ->
+                  :noop
+              end
 
-          Enum.each(side_effects, fn {m, f, a} ->
-            spawn(fn -> apply(m, f, a) end)
-          end)
+              Enum.each(side_effects, fn {m, f, a} ->
+                spawn(fn -> apply(m, f, a) end)
+              end)
+            end
+
+            private
         end
-
-        private
       end)
 
     {:noreply, %State{state | private: private, last_applied: new_commit_index}}
   end
 
 
-  def __using__(opts) do
+  defmacro __using__(opts) do
+    persistent = Keyword.fetch!(opts, :persistent)
     quote do
       # FIXME: better error
-      persistent = Keyword.fetch!(unquote(opts), :persistent)
-      def __craft_persistent__(), do: persistent
+      def __craft_persistent__(), do: unquote(persistent)
     end
   end
 end
