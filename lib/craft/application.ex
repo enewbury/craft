@@ -14,12 +14,6 @@ defmodule Craft.Application do
     DynamicSupervisor.start_link([strategy: :one_for_one, name: Craft.Supervisor])
   end
 
-  if Mix.env() == :test do
-    def start_member(consensus_state, machine_args) do
-      DynamicSupervisor.start_child(Craft.Supervisor, {Craft.MemberSupervisor, [consensus_state, machine_args]})
-    end
-  end
-
   def start_member(name, nodes, machine, opts) do
     args =
       opts

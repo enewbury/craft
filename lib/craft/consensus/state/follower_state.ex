@@ -1,7 +1,7 @@
 defmodule Craft.Consensus.FollowerState do
   alias Craft.Log
-  alias Craft.RPC.RequestVote
   alias Craft.RPC.AppendEntries
+  alias Craft.RPC.RequestVote
 
   defstruct [
     :name,
@@ -29,9 +29,7 @@ defmodule Craft.Consensus.FollowerState do
   end
 
   # vote 'no' for lower term candidates
-  def vote(%__MODULE__{current_term: current_term} = state, %RequestVote{term: term}) when term < current_term do
-    {false, state}
-  end
+  def vote(%__MODULE__{current_term: current_term} = state, %RequestVote{term: term}) when term < current_term, do: {false, state}
 
   # maybe vote for candidate in our term if we haven't voted for anyone else
   def vote(%__MODULE__{voted_for: nil, current_term: term} = state, %RequestVote{term: term} = request_vote) do
@@ -54,21 +52,21 @@ defmodule Craft.Consensus.FollowerState do
     {state.voted_for == request_vote.candidate_id, state}
   end
 
-  def append_entries(%__MODULE__{current_term: current_term} = state, %AppendEntries{term: term}) when term < current_term do
-    {false, state}
-  end
+  def append_entries(%__MODULE__{current_term: current_term} = state, %AppendEntries{term: term}) when term < current_term, do: {false, state}
 
   #TODO: store latest log entry index/term in state so we can pattern match instead of querying the log module?
   # plenty of optimizations to be had here
   def append_entries(%__MODULE__{} = state, %AppendEntries{} = append_entries) do
+    state = %__MODULE__{state | leader_id: append_entries.leader_id}
+
     if Log.latest_index(state.log) == append_entries.prev_log_index && Log.latest_term(state.log) == append_entries.prev_log_term do
-      if Enum.empty?(append_entries.entries) do
-        {true, %__MODULE__{state | leader_id: append_entries.leader_id}}
-      else
-        {true, %__MODULE__{state | leader_id: append_entries.leader_id, log: Log.append(state.log, append_entries.entries)}}
-      end
+      log = Log.append(state.log, append_entries.entries)
+
+      state = %__MODULE__{state | log: log, commit_index: min(append_entries.leader_commit, Log.latest_index(log))}
+
+      {true, state}
     else
-      {false, %__MODULE__{state | leader_id: append_entries.leader_id}, log: Log.rewind(state.log, append_entries.prev_log_index)}
+      {false, %__MODULE__{state | log: Log.rewind(state.log, append_entries.prev_log_index)}}
     end
   end
 end

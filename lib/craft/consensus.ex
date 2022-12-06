@@ -146,7 +146,12 @@ defmodule Craft.Consensus do
 
   # hear leader heartbeat and append entries if necessary
   def follower(:cast, %AppendEntries{} = append_entries, data) do
+    old_commit_index = data.commit_index
     {success, data} = FollowerState.append_entries(data, append_entries)
+
+    if success && data.commit_index > old_commit_index do
+      Machine.commit_index_bumped(data)
+    end
 
     RPC.respond_append_entries(append_entries, success, data)
 
@@ -332,7 +337,7 @@ defmodule Craft.Consensus do
   end
 
   defp become_follower(%{term: term} = msg, data) do
-    Logger.info("received message #{inspect msg} from #{msg.candidate_id} from later term #{term}, becoming/remaining follower", logger_metadata(data))
+    Logger.info("received message #{inspect msg} from #{msg.from} from later term #{term}, becoming/remaining follower", logger_metadata(data))
 
     {:next_state, :follower, %{data | current_term: term}, [:postpone]}
   end

@@ -33,16 +33,22 @@ defmodule Craft.Machine do
   # otherwise a crash between the two operations would result in inconsistent
   # state when the machine picks up the log where it left off
   #
-  # document that the consensus process sends the `log` state to this process,
+  # - document that the consensus process sends the `log` state to this process,
   # and that craft assumes that the `log` is small (a handle), rather
   # than the whole log itself, the point of this is to allow the consensus process
   # to continue without being blocked by the machine process while it's applying
   # entries
   #
-  def commit_index_bumped(%type{} = state) when type in [LeaderState, FollowerState] do
+  def commit_index_bumped(%LeaderState{} = state) do
     state.name
     |> name()
-    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.log, state.client_requests, type == LeaderState})
+    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.log, state.client_requests})
+  end
+
+  def commit_index_bumped(%FollowerState{} = state) do
+    state.name
+    |> name()
+    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.log})
   end
 
   @impl true
@@ -60,7 +66,11 @@ defmodule Craft.Machine do
   end
 
   @impl true
-  def handle_cast({:commit_index_bumped, new_commit_index, log, requests, is_leader?}, state) do
+  def handle_cast({:commit_index_bumped, new_commit_index, log}, state) do
+    handle_cast({:commit_index_bumped, new_commit_index, log, nil}, state)
+  end
+
+  def handle_cast({:commit_index_bumped, new_commit_index, log, requests}, state) do
     last_applied_log_index =
       if state.persistent do
         state.module.last_applied(state.private)
@@ -86,7 +96,8 @@ defmodule Craft.Machine do
                   {reply, side_effects, private}
               end
 
-            if is_leader? do
+            # if requests isn't nil, we're the leader
+            if requests do
               case Map.fetch(requests, index) do
                 {:ok, {pid, _ref} = id} ->
                   send(pid, {id, reply})

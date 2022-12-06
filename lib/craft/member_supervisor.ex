@@ -14,17 +14,15 @@ defmodule Craft.MemberSupervisor do
       |> Map.delete(:nodes)
       |> Map.put(:other_nodes, List.delete(args.nodes, node()))
 
-    do_init(args, args)
-  end
+    {consensus_args, machine_args} =
+      case args do
+        %{consensus_state: consensus_args, machine_args: machine_args} ->
+          {consensus_args, machine_args}
 
-  if Mix.env() == :test do
-    defoverridable init: 1
-    def init(consensus_state, machine_args) do
-      do_init(consensus_state, machine_args)
-    end
-  end
+        _ ->
+          {args, args}
+      end
 
-  defp do_init(consensus_args, machine_args) do
     children = [
       {Craft.Consensus, [consensus_args]},
       {Craft.Machine, machine_args}

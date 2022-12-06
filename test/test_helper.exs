@@ -23,7 +23,7 @@ defmodule Craft.TestHelper do
     end
 
     machine_args = %{
-      name: state.name,
+      name: name,
       machine: machine
     }
     # ensure all members are up and ready

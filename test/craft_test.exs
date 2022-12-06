@@ -67,12 +67,7 @@ defmodule CraftTest do
 
     wait_until(nexus, :group_stable)
 
-    Craft.command(:butts, name, nodes)
-    |> IO.inspect
-
-    Enum.into(nodes, %{}, fn node ->
-      {node, {Consensus.name(name), node} |> :sys.get_state()}
-    end)
+    Craft.state(name, nodes)
     |> IO.inspect
   end
 
