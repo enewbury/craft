@@ -1,21 +1,23 @@
 defmodule Craft.Machine do
   use GenServer
 
-  alias Craft.Log
-  alias Craft.Log.Entry
+  alias Craft.Consensus
   alias Craft.Consensus.FollowerState
   alias Craft.Consensus.LeaderState
+  alias Craft.Log
+  alias Craft.Log.Entry
 
   @type private :: any()
 
   @callback init(Craft.group_name()) :: {:ok, private()}
   @callback command(Craft.command(), Craft.log_index(), private()) :: {Craft.reply(), private()} | {Craft.reply(), Craft.side_effects(), private()}
-  @callback last_applied_log_index(private()) :: Craft.log_index()
+  # TODO: document that we want an int or nil if no entries have been applied
+  @callback last_applied_log_index(private()) :: Craft.log_index() | nil
 
   defmodule State do
     defstruct [
+      :name,
       :module,
-      :persistent,
       :private,
       last_applied: 0
     ]
@@ -57,12 +59,19 @@ defmodule Craft.Machine do
 
     state =
       %State{
+        name: args.name,
         module: args.machine,
-        persistent: args.machine.__craft_persistent__(),
         private: private
       }
 
-    {:ok, state}
+    {:ok, state, {:continue, :restore_machine_state}}
+  end
+
+  @impl true
+  def handle_continue(:restore_machine_state, state) do
+    {commit_index, log} = Consensus.catch_up(state.name)
+
+    handle_cast({:commit_index_bumped, commit_index, log}, state)
   end
 
   @impl true
@@ -72,14 +81,16 @@ defmodule Craft.Machine do
 
   def handle_cast({:commit_index_bumped, new_commit_index, log, requests}, state) do
     last_applied_log_index =
-      if state.persistent do
-        state.module.last_applied(state.private)
+      with true <- state.module.__craft_persistent__(),
+           last_applied when not is_nil(last_applied) <- state.module.last_applied_log_index(state.private) do
+        last_applied
       else
-        state.last_applied
+        _ ->
+          state.last_applied
       end
 
     private =
-      Enum.reduce(last_applied_log_index..new_commit_index, state.private, fn index, private ->
+      Enum.reduce(last_applied_log_index..new_commit_index//1, state.private, fn index, private ->
         case Log.fetch(log, index) do
           # `nil` commands are for craft's internal use (0th log entry or log entries when a new leader is elected)
           # so we don't tell the machine about them
@@ -117,7 +128,6 @@ defmodule Craft.Machine do
 
     {:noreply, %State{state | private: private, last_applied: new_commit_index}}
   end
-
 
   defmacro __using__(opts) do
     persistent = Keyword.fetch!(opts, :persistent)

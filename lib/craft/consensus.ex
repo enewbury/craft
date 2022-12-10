@@ -30,6 +30,7 @@ defmodule Craft.Consensus do
     timeout = Keyword.get(opts, :timeout, 5_000)
     id = {self(), make_ref()}
 
+    # FIXME: use call instead
     :gen_statem.cast({name(name), node}, {:command, id, command})
 
     receive do
@@ -44,6 +45,11 @@ defmodule Craft.Consensus do
 
   def name(name), do: Module.concat(__MODULE__, name)
 
+  # called after the machine restarts to get any committed entries that need to be applied
+  def catch_up(name) do
+    :gen_statem.call({name(name), node()}, :catch_up)
+  end
+
   # TODO: pre-compute quorum and store in state
   def quorum_reached?(state, num) do
     num_members = length(state.other_nodes) + 1
@@ -51,8 +57,9 @@ defmodule Craft.Consensus do
 
     num >= quorum_needed
   end
+
   #
-  # GenStateM implementation
+  # genstatem implementation
   #
 
   def callback_mode, do: [:state_functions, :state_enter]
@@ -164,6 +171,10 @@ defmodule Craft.Consensus do
     send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
 
     :keep_state_and_data
+  end
+
+  def follower({:call, from}, :catch_up, data) do
+    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.log}}]};
   end
 
   def follower(type, msg, data) do

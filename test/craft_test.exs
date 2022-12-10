@@ -1,10 +1,11 @@
 defmodule CraftTest do
   use ExUnit.Case
-  alias Craft.Consensus
   alias Craft.Consensus.CandidateState
   alias Craft.Consensus.FollowerState
   alias Craft.Log.MapLog
   alias Craft.Nexus
+
+  alias Craft.SimpleMachine
   alias Craft.Test.ClusterNodes
   alias Craft.TestHelper
 
@@ -66,6 +67,9 @@ defmodule CraftTest do
     name = TestHelper.start_group(states, nexus)
 
     wait_until(nexus, :group_stable)
+
+    # assert :ok = SimpleMachine.put(name, nodes, :a, 123)
+    # assert {:ok, 123} = SimpleMachine.get(name, nodes, :a)
 
     Craft.state(name, nodes)
     |> IO.inspect
