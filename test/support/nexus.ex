@@ -58,6 +58,8 @@ defmodule Craft.Nexus do
     GenServer.start_link(__MODULE__, members)
   end
 
+  defdelegate stop(pid), to: GenServer
+
   def cast(nexus, to, message) do
     GenServer.cast(nexus, {:cast, to, node(), message})
   end

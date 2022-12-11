@@ -1,21 +1,12 @@
 # Craft
 
-**TODO: Add description**
-
-## Installation
-
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `craft` to your list of dependencies in `mix.exs`:
-
-```elixir
-def deps do
-  [
-    {:craft, "~> 0.1.0"}
-  ]
-end
-```
-
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/craft>.
-
+todo:
+- snapshots
+- membership changes
+- cluster splitting
+- rocksdb backend
+- smart appendentries intervals for commands (immediate, interval-based batching...)
+- nemesis development
+- querying (dirty [leader, follower], linearizable command-based read)
+  - may not need log entry for linearizable read... (leader receives read request, notes at what log index it should take place, when that log index is committed, responds to read as of that index)
+- pre-vote

@@ -81,6 +81,7 @@ defmodule Craft.Consensus do
       def ready_to_test(:cast, :run, %FollowerState{} = data), do: {:next_state, :follower, data, []}
       def ready_to_test(:cast, :run, %CandidateState{} = data), do: {:next_state, :candidate, data, []}
       def ready_to_test(:cast, :run, %LeaderState{} = data), do: {:next_state, :leader, data, []}
+      def ready_to_test({:call, _from}, :catch_up, data), do: {:keep_state_and_data, [:postpone]}
       for state <- [:follower, :candidate, :leader] do
         def unquote(state)(event, msg, data) do
           send(data.tracer_pid, {:trace, DateTime.utc_now(), node(), unquote(state), event, msg, data})
@@ -249,6 +250,12 @@ defmodule Craft.Consensus do
     send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
 
     :keep_state_and_data
+  end
+
+  # this should only happen in test, it'd be nice to throw a Mix.env() assertion in here,
+  # but Mix isn't available in releases.
+  def candidate({:call, from}, :catch_up, data) do
+    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.log}}]};
   end
 
   def candidate(type, msg, data) do

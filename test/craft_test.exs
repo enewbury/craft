@@ -40,39 +40,26 @@ defmodule CraftTest do
 
     expected_leader = List.first(nodes)
 
-    {:ok, nexus} = Nexus.start_link(nodes)
-
-    TestHelper.start_group(states, nexus)
+    {:ok, name, nexus} = TestHelper.start_group(states)
 
     assert %Nexus.State{leader: ^expected_leader, term: 0} = wait_until(nexus, :group_stable)
+
+    Craft.stop_group(name, nodes)
+    Nexus.stop(nexus)
   end
 
   test "commands", %{nodes: nodes} do
-    log = Craft.Log.new(nil, MapLog)
-
-    states =
-      Enum.zip(
-        nodes,
-        [
-          %CandidateState{log: log},
-          %FollowerState{log: log},
-          %FollowerState{log: log},
-          %FollowerState{log: log},
-          %FollowerState{log: log}
-        ]
-      )
-
-    {:ok, nexus} = Nexus.start_link(nodes)
-
-    name = TestHelper.start_group(states, nexus)
+    {:ok, name, nexus} = TestHelper.start_group()
 
     wait_until(nexus, :group_stable)
 
-    # assert :ok = SimpleMachine.put(name, nodes, :a, 123)
-    # assert {:ok, 123} = SimpleMachine.get(name, nodes, :a)
+    assert :ok = SimpleMachine.put(name, nodes, :a, 123)
+    assert {:ok, 123} = SimpleMachine.get(name, nodes, :a)
 
-    Craft.state(name, nodes)
-    |> IO.inspect
+    # Craft.state(name, nodes)
+    # |> IO.inspect
+    Craft.stop_group(name, nodes)
+    Nexus.stop(nexus)
   end
 
   # test api design:

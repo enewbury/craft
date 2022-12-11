@@ -82,7 +82,7 @@ defmodule Craft.Machine do
   def handle_cast({:commit_index_bumped, new_commit_index, log, requests}, state) do
     last_applied_log_index =
       with true <- state.module.__craft_persistent__(),
-           last_applied when not is_nil(last_applied) <- state.module.last_applied_log_index(state.private) do
+           last_applied when is_integer(last_applied) <- state.module.last_applied_log_index(state.private) do
         last_applied
       else
         _ ->

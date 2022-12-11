@@ -13,15 +13,4 @@ defmodule Craft.Application do
 
     DynamicSupervisor.start_link([strategy: :one_for_one, name: Craft.Supervisor])
   end
-
-  def start_member(name, nodes, machine, opts) do
-    args =
-      opts
-      |> Map.new()
-      |> Map.put(:name, name)
-      |> Map.put(:nodes, nodes)
-      |> Map.put(:machine, machine)
-
-    DynamicSupervisor.start_child(Craft.Supervisor, {Craft.MemberSupervisor, args})
-  end
 end

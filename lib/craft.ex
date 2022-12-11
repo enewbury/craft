@@ -21,7 +21,16 @@ defmodule Craft do
     end
   end
 
-  defdelegate start_member(name, nodes, machine, opts), to: Craft.Application
+  def stop_group(name, nodes) do
+    #TODO: ask group for its nodes instead of relying on user to pass in the correct set of nodes
+
+    for node <- nodes do
+      :ok = :rpc.call(node, Craft, :stop_member, [name])
+    end
+  end
+
+  defdelegate start_member(name, nodes, machine, opts), to: Craft.MemberSupervisor
+  defdelegate stop_member(name), to: Craft.MemberSupervisor
 
   def command(command, name, nodes, opts \\ []) do
     redirect_once = Keyword.pop(opts, :redirect_once, true)

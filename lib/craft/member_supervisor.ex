@@ -4,7 +4,7 @@ defmodule Craft.MemberSupervisor do
   use Supervisor
 
   def start_link(args) do
-    Supervisor.start_link(__MODULE__, args, name: Module.concat(__MODULE__, args.name))
+    Supervisor.start_link(__MODULE__, args, name: name(args.name))
   end
 
   @impl Supervisor
@@ -16,6 +16,7 @@ defmodule Craft.MemberSupervisor do
 
     {consensus_args, machine_args} =
       case args do
+        # for testing
         %{consensus_state: consensus_args, machine_args: machine_args} ->
           {consensus_args, machine_args}
 
@@ -31,6 +32,30 @@ defmodule Craft.MemberSupervisor do
     ]
 
     Supervisor.init(children, strategy: :one_for_all)
+  end
+
+  def start_member(name, nodes, machine, opts) do
+    args =
+      opts
+      |> Map.new()
+      |> Map.put(:name, name)
+      |> Map.put(:nodes, nodes)
+      |> Map.put(:machine, machine)
+
+    DynamicSupervisor.start_child(Craft.Supervisor, {__MODULE__, args})
+  end
+
+  def stop_member(name) do
+    pid =
+      name
+      |> name()
+      |> Process.whereis()
+
+    DynamicSupervisor.terminate_child(Craft.Supervisor, pid)
+  end
+
+  def name(name) do
+    Module.concat(__MODULE__, name)
   end
 
   # def registry_name(name) do
