@@ -9,7 +9,7 @@ defmodule Craft.Consensus.CandidateState do
     :log,
     :leader_id,
 
-    :tracer_pid,
+    :nexus_pid,
 
     num_votes: 1,
     received_votes_from: MapSet.new(),
@@ -23,7 +23,7 @@ defmodule Craft.Consensus.CandidateState do
       other_nodes: state.other_nodes,
       current_term: state.current_term + 1,
       log: state.log,
-      tracer_pid: state.tracer_pid,
+      nexus_pid: state.nexus_pid,
       leader_id: state.leader_id,
       commit_index: state.commit_index
     }

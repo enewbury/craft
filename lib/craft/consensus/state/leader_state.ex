@@ -10,7 +10,7 @@ defmodule Craft.Consensus.LeaderState do
     :log,
     :next_indices,
     :match_indices,
-    :tracer_pid,
+    :nexus_pid,
     commit_index: 0,
     client_requests: %{}
   ]
@@ -27,7 +27,7 @@ defmodule Craft.Consensus.LeaderState do
       log: state.log,
       next_indices: next_indices,
       match_indices: match_indices,
-      tracer_pid: state.tracer_pid,
+      nexus_pid: state.nexus_pid,
       commit_index: state.commit_index
     }
   end

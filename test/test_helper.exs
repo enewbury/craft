@@ -18,7 +18,7 @@ defmodule Craft.TestHelper do
         {node, %{state |
                  name: name,
                  other_nodes: List.delete(nodes, node),
-                 tracer_pid: nexus}}
+                 nexus_pid: nexus}}
       end)
 
     for node <- nodes do
@@ -60,7 +60,7 @@ defmodule Craft.TestHelper do
             log: Craft.Log.new(nil, MapLog),
             name: name,
             other_nodes: List.delete(nodes, node),
-            tracer_pid: nexus}
+            nexus_pid: nexus}
         }
       end)
 
