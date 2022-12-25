@@ -49,7 +49,7 @@ defmodule CraftTest do
   end
 
   test "commands", %{nodes: nodes} do
-    {:ok, name, nexus} = TestHelper.start_group()
+    {:ok, name, nexus} = TestHelper.start_group(nodes)
 
     wait_until(nexus, :group_stable)
 
