@@ -20,7 +20,7 @@ defmodule Craft.Nexus do
       wait_until: {_watcher_from = nil, _condition = nil} # watcher termination condition (:group_stable, :millisecs, etc)
     ]
 
-    def leader_elected(%State{term: term} = state, leader, new_term) when new_term == term + 1 do
+    def leader_elected(%State{term: term} = state, leader, new_term) when new_term > term do
       empty_append_entries_counts =
         state.members
         |> List.delete(leader)

@@ -12,9 +12,7 @@ defmodule CraftTest do
   import Nexus, only: [wait_until: 2]
 
   setup_all do
-    nodes = ClusterNodes.spawn_nodes(5)
-
-    [nodes: nodes]
+    [nodes: ClusterNodes.spawn_nodes(5)]
   end
 
   # describe "smoke tests" do
@@ -56,8 +54,6 @@ defmodule CraftTest do
     assert :ok = SimpleMachine.put(name, nodes, :a, 123)
     assert {:ok, 123} = SimpleMachine.get(name, nodes, :a)
 
-    # Craft.state(name, nodes)
-    # |> IO.inspect
     Craft.stop_group(name, nodes)
     Nexus.stop(nexus)
   end

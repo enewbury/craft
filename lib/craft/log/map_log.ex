@@ -44,7 +44,7 @@ defmodule Craft.Log.MapLog do
   end
 
   @impl true
-  def rewind(map, index) when index < map_size(map) - 1 do
+  def rewind(map, index) when index < map_size(map) do
     map
     |> Map.delete(latest_index(map))
     |> rewind(index)

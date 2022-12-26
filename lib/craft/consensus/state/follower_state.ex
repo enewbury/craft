@@ -57,6 +57,14 @@ defmodule Craft.Consensus.FollowerState do
   #TODO: store latest log entry index/term in state so we can pattern match instead of querying the log module?
   # plenty of optimizations to be had here
   def append_entries(%__MODULE__{} = state, %AppendEntries{} = append_entries) do
+    if node() == :"8204@127.0.0.1" do
+      IO.inspect "-------------------------------------------------------"
+      IO.inspect state, label: :follower
+      IO.inspect append_entries, label: :append_entries
+      IO.inspect Log.latest_index(state.log), label: :latest_index
+      IO.inspect Log.latest_term(state.log), label: :latest_term
+      IO.inspect "-------------------------------------------------------"
+    end
     state = %__MODULE__{state | leader_id: append_entries.leader_id}
 
     if Log.latest_index(state.log) == append_entries.prev_log_index && Log.latest_term(state.log) == append_entries.prev_log_term do
