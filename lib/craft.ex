@@ -77,9 +77,9 @@ defmodule Craft do
 
   def state(name, nodes) do
     Enum.into(nodes, %{}, fn node ->
-      {
-        {node, {Consensus.name(name), node} |> :sys.get_state()},
-        {node, {Craft.Machine.name(name), node} |> :sys.get_state()}
+      {node,
+        consensus: {Consensus.name(name), node} |> :sys.get_state(),
+        machine: {Craft.Machine.name(name), node} |> :sys.get_state()
       }
     end)
   end

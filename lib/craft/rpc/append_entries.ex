@@ -15,10 +15,6 @@ defmodule Craft.RPC.AppendEntries do
   def new(%LeaderState{} = state, to_node) do
     next_index = Map.get(state.next_indices, to_node)
     prev_log_index = next_index - 1
-    if to_node == :"8204@127.0.0.1" do
-      IO.inspect to_node
-      IO.inspect state
-    end
     {:ok, %Entry{term: prev_log_term}} = Log.fetch(state.log, prev_log_index)
     entries = Log.fetch_from(state.log, next_index)
 

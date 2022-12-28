@@ -15,7 +15,7 @@ defmodule LogReplicationTest do
     [nodes: ClusterNodes.spawn_nodes(5)]
   end
 
-  test "leader rewinds follower logs", %{nodes: nodes} do
+  test "leader rewinds follower logs, and fast-forwards them up to its own", %{nodes: nodes} do
     shared_log =
       Log.new(nil, Log.MapLog)
       |> Log.append(%Log.Entry{term: 0})
@@ -48,11 +48,16 @@ defmodule LogReplicationTest do
 
     {:ok, name, nexus} = TestHelper.start_group(states)
 
-    expected_leader = List.first(nodes)
-    assert %Nexus.State{leader: ^expected_leader, term: 5} = wait_until(nexus, :group_stable)
+    leader = List.first(nodes)
+    stray_follower = List.last(nodes)
+    assert %Nexus.State{leader: ^leader, term: 5} = wait_until(nexus, :group_stable)
 
-    Craft.state(name, nodes)
-    |> IO.inspect
+    states = Craft.state(name, nodes)
+
+    {:leader, leader_state} = get_in(states, [leader, :consensus])
+    {:follower, stray_follower_state} = get_in(states, [stray_follower, :consensus])
+
+    assert stray_follower_state.log == leader_state.log
 
     Craft.stop_group(name, nodes)
     Nexus.stop(nexus)
