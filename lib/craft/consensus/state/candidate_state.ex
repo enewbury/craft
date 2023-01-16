@@ -1,32 +1,22 @@
 defmodule Craft.Consensus.CandidateState do
-  alias Craft.Consensus
+  alias Craft.Consensus.State
   alias Craft.RPC.RequestVote
 
   defstruct [
-    :name,
-    :other_nodes,
-    {:current_term, -1},
-    :log,
-    :leader_id,
-
-    :nexus_pid,
-
     num_votes: 1,
     received_votes_from: MapSet.new(),
-
-    commit_index: 0
   ]
 
-  def new(state) do
-    %__MODULE__{
-      name: state.name,
-      other_nodes: state.other_nodes,
+  def new(%State{} = state) do
+    %State{
+      state |
       current_term: state.current_term + 1,
-      log: state.log,
-      nexus_pid: state.nexus_pid,
-      leader_id: state.leader_id,
-      commit_index: state.commit_index
+      mode_state: %__MODULE__{}
     }
+  end
+
+  def record_vote(%State{} = state, %RequestVote.Results{} = results) do
+    %State{state | mode_state: record_vote(state.mode_state, results)}
   end
 
   def record_vote(%__MODULE__{} = state, %RequestVote.Results{} = results) do
@@ -41,7 +31,25 @@ defmodule Craft.Consensus.CandidateState do
     end
   end
 
-  def won_election?(%__MODULE__{} = state) do
-    Consensus.quorum_reached?(state, state.num_votes)
+  def election_result(%State{} = state) do
+    election_result(state, state.mode_state)
+  end
+
+  def election_result(%State{} = state, %__MODULE__{} = candidate_state) do
+    num_members = length(state.other_nodes) + 1
+    quorum_needed = div(num_members, 2) + 1
+
+    num_voted_no = MapSet.size(candidate_state.received_votes_from) - candidate_state.num_votes
+
+    cond do
+      candidate_state.num_votes >= quorum_needed ->
+        :won
+
+      num_voted_no >= quorum_needed ->
+        :lost
+
+      true ->
+        :pending
+    end
   end
 end

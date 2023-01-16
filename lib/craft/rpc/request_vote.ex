@@ -1,35 +1,36 @@
 defmodule Craft.RPC.RequestVote do
-  alias Craft.Consensus.CandidateState
+  alias Craft.Consensus.State
 
   defstruct [
     :term,
     :candidate_id,
     :last_log_index,
-    :last_log_term
+    :last_log_term,
+    :pre_vote
   ]
 
-  def new(%CandidateState{current_term: term}) do
+  def new(%State{} = state, pre_vote: pre_vote) do
     %__MODULE__{
-      term: term,
-      candidate_id: node()
+      term: state.current_term,
+      candidate_id: node(),
+      pre_vote: pre_vote
     }
   end
 
   defmodule Results do
-    alias Craft.Consensus.CandidateState
-    alias Craft.Consensus.FollowerState
-
     defstruct [
       :term,
       :from,
-      :vote_granted
+      :vote_granted,
+      :pre_vote
     ]
 
-    def new(%state_type{} = state, vote_granted) when state_type in [FollowerState, CandidateState] do
+    def new(%State{} = state, pre_vote, vote_granted) do
       %__MODULE__{
         term: state.current_term,
         from: node(),
-        vote_granted: vote_granted
+        vote_granted: vote_granted,
+        pre_vote: pre_vote
       }
     end
   end

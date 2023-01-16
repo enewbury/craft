@@ -7,7 +7,7 @@ defmodule Craft.Nexus do
   """
   use GenServer
 
-  alias Craft.Consensus.CandidateState
+  alias Craft.Consensus.State, as: ConsensusState
   alias Craft.RPC.AppendEntries
 
   defmodule State do
@@ -104,7 +104,7 @@ defmodule Craft.Nexus do
     {:noreply, state}
   end
 
-  def handle_info({:trace, _time, from, :leader, :enter, :candidate, %CandidateState{current_term: current_term}}, state) do
+  def handle_info({:trace, _time, from, :leader, :enter, :candidate, %ConsensusState{current_term: current_term}}, state) do
     state = State.leader_elected(state, from, current_term)
 
     {:noreply, state}

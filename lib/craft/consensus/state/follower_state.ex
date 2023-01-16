@@ -1,72 +1,58 @@
 defmodule Craft.Consensus.FollowerState do
+  alias Craft.Consensus.State
   alias Craft.Log
   alias Craft.RPC.AppendEntries
   alias Craft.RPC.RequestVote
 
-  defstruct [
-    :name,
-    :other_nodes,
-    {:current_term, -1},
-    :log,
+  defstruct [:voted_for]
 
-    :voted_for,
-    :leader_id,
-
-    :nexus_pid,
-
-    commit_index: 0
-  ]
-
-  def new(state) do
-    %__MODULE__{
-      name: state.name,
-      other_nodes: state.other_nodes,
-      current_term: state.current_term,
-      log: state.log,
-      nexus_pid: state.nexus_pid,
-      commit_index: state.commit_index
-    }
+  def new(%State{} = state) do
+    %State{state | mode_state: %__MODULE__{}}
   end
 
-  # vote 'no' for lower term candidates
-  def vote(%__MODULE__{current_term: current_term} = state, %RequestVote{term: term}) when term < current_term, do: {false, state}
-
-  # maybe vote for candidate in our term if we haven't voted for anyone else
-  def vote(%__MODULE__{voted_for: nil, current_term: term} = state, %RequestVote{term: term} = request_vote) do
-    their_log_more_up_to_date =
-      request_vote.last_log_term > Log.latest_term(state.log) ||
-      (
-        request_vote.last_log_term == Log.latest_term(state.log) &&
+  def vote_for?(%State{} = state, %RequestVote{} = request_vote) do
+    request_vote.last_log_term > Log.latest_term(state.log) ||
+    (
+      request_vote.last_log_term == Log.latest_term(state.log) &&
         request_vote.last_log_index >= Log.latest_index(state.log)
-      )
+    )
+  end
 
-    if their_log_more_up_to_date do
-      {true, %__MODULE__{state | voted_for: request_vote.candidate_id}}
+  def vote(%State{} = state, %RequestVote{} = request_vote) do
+    {vote, follower_state} = vote(state, state.mode_state, request_vote)
+
+    {vote, %State{state | mode_state: follower_state}}
+  end
+
+  def vote(%State{} = state, %__MODULE__{voted_for: nil} = follower_state, %RequestVote{} = request_vote) do
+    if vote_for?(state, request_vote) do
+      {true, %__MODULE__{follower_state | voted_for: request_vote.candidate_id}}
     else
       {false, state}
     end
   end
 
   # repeat vote if asked
-  def vote(%__MODULE__{} = state, %RequestVote{} = request_vote) do
-    {state.voted_for == request_vote.candidate_id, state}
+  def vote(%State{}, %__MODULE__{} = follower_state, %RequestVote{} = request_vote) do
+    {follower_state.voted_for == request_vote.candidate_id, follower_state}
   end
 
-  def append_entries(%__MODULE__{current_term: current_term} = state, %AppendEntries{term: term}) when term < current_term, do: {false, state}
+
+  def append_entries(%State{current_term: current_term} = state, %AppendEntries{term: term}) when term < current_term, do: {false, state}
 
   #TODO: store latest log entry index/term in state so we can pattern match instead of querying the log module?
   # plenty of optimizations to be had here
-  def append_entries(%__MODULE__{} = state, %AppendEntries{} = append_entries) do
-    state = %__MODULE__{state | leader_id: append_entries.leader_id}
+  def append_entries(%State{} = state, %AppendEntries{} = append_entries) do
+    state = %State{state | leader_id: append_entries.leader_id}
 
     if Log.latest_index(state.log) == append_entries.prev_log_index && Log.latest_term(state.log) == append_entries.prev_log_term do
       log = Log.append(state.log, append_entries.entries)
 
-      state = %__MODULE__{state | log: log, commit_index: min(append_entries.leader_commit, Log.latest_index(log))}
+      state = %State{state | log: log, commit_index: min(append_entries.leader_commit, Log.latest_index(log))}
 
       {true, state}
     else
-      {false, %__MODULE__{state | log: Log.rewind(state.log, append_entries.prev_log_index)}}
+      {false, %State{state | log: Log.rewind(state.log, append_entries.prev_log_index)}}
     end
   end
 end

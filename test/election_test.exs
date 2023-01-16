@@ -1,8 +1,8 @@
-defmodule LogReplicationTest do
+defmodule ElectionTest do
   use ExUnit.Case
   alias Craft.Consensus.CandidateState
   alias Craft.Consensus.FollowerState
-  alias Craft.Log
+  alias Craft.Log.MapLog
   alias Craft.Nexus
 
   alias Craft.SimpleMachine
@@ -15,7 +15,32 @@ defmodule LogReplicationTest do
     [nodes: ClusterNodes.spawn_nodes(5)]
   end
 
-  test "leader rewinds follower logs, and fast-forwards them up to its own", %{nodes: nodes} do
+  test "pre-chosen candidate becomes leader", %{nodes: nodes} do
+    log = Craft.Log.new(nil, MapLog)
+
+    states =
+      Enum.zip(
+        nodes,
+        [
+          %CandidateState{log: log},
+          %FollowerState{log: log},
+          %FollowerState{log: log},
+          %FollowerState{log: log},
+          %FollowerState{log: log}
+        ]
+      )
+
+    expected_leader = List.first(nodes)
+
+    {:ok, name, nexus} = TestHelper.start_group(states)
+
+    assert %Nexus.State{leader: ^expected_leader, term: 0} = wait_until(nexus, :group_stable)
+
+    Craft.stop_group(name, nodes)
+    Nexus.stop(nexus)
+  end
+
+  test "5.4.1 election restriction", %{nodes: nodes} do
     shared_log =
       Log.new(nil, Log.MapLog)
       |> Log.append(%Log.Entry{term: 0})

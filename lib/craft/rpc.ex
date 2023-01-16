@@ -2,9 +2,7 @@ defmodule Craft.RPC do
   @moduledoc false
 
   alias Craft.Consensus
-  alias Craft.Consensus.FollowerState
-  alias Craft.Consensus.CandidateState
-  alias Craft.Consensus.LeaderState
+  alias Craft.Consensus.State
   alias Craft.RPC.RequestVote
   alias Craft.RPC.AppendEntries
 
@@ -13,8 +11,8 @@ defmodule Craft.RPC do
   # end
 
   # TODO: parallelize
-  def request_vote(%CandidateState{} = state) do
-    request_vote = RequestVote.new(state)
+  def request_vote(state, pre_vote: pre_vote) do
+    request_vote = RequestVote.new(state, pre_vote: pre_vote)
 
     for to_node <- state.other_nodes do
       send_message(request_vote, to_node, state)
@@ -23,12 +21,12 @@ defmodule Craft.RPC do
 
   def respond_vote(%RequestVote{} = request_vote, vote_granted, state) do
     state
-    |> RequestVote.Results.new(vote_granted)
+    |> RequestVote.Results.new(request_vote.pre_vote, vote_granted)
     |> send_message(request_vote.candidate_id, state)
   end
 
   # TODO: parallelize
-  def append_entries(%LeaderState{} = state) do
+  def append_entries(%State{} = state) do
     for to_node <- state.other_nodes do
       state
       |> AppendEntries.new(to_node)
@@ -36,7 +34,7 @@ defmodule Craft.RPC do
     end
   end
 
-  def respond_append_entries(%AppendEntries{} = append_entries, success, %FollowerState{} = state) do
+  def respond_append_entries(%AppendEntries{} = append_entries, success, %State{} = state) do
     state
     |> AppendEntries.Results.new(success)
     |> send_message(append_entries.leader_id, state)

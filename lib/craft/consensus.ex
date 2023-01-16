@@ -1,8 +1,20 @@
 defmodule Craft.Consensus do
   @moduledoc false
 
-  alias Craft.Consensus.CandidateState
+  #
+  # follower -> lonely follower -> pre vote -> candidate -> leader
+  #
+  # follower: happily following leader
+  # lonely follower: hasn't heart from leader in a while, would be willing to vote 'yes' in a pre-vote
+  # pre-vote follower: follower that's initiated a pre-vote
+  # candidate: follower that's called an election after a successful majority pre-vote
+  # leader: candidate that's won majority vote
+  #
+
+  alias Craft.Consensus.State
   alias Craft.Consensus.FollowerState
+  alias Craft.Consensus.LonelyFollowerState
+  alias Craft.Consensus.CandidateState
   alias Craft.Consensus.LeaderState
   alias Craft.Log
   alias Craft.Log.Entry
@@ -15,12 +27,11 @@ defmodule Craft.Consensus do
 
   @behaviour :gen_statem
 
-  @follower_timeout 1500
-  @follower_jitter 1500
-  @election_timeout 1500
-  @election_jitter 1500
-  @heartbeat_interval 1400
+  @heartbeat_interval 1000
+  @follower_lonely_timeout @heartbeat_interval + 300
+  @election_timeout 1500 # amount of time to wait for votes before concluding that the election has failed
 
+  defp jitter(max \\ 1500), do: :rand.uniform(max)
 
   #
   # API
@@ -78,11 +89,12 @@ defmodule Craft.Consensus do
         {:ok, :ready_to_test, data}
       end
       def ready_to_test(:enter, _, _data), do: :keep_state_and_data
+      def ready_to_test(:cast, :run, %LonelyFollowerState{} = data), do: {:next_state, :lonely_follower, data, []}
       def ready_to_test(:cast, :run, %FollowerState{} = data), do: {:next_state, :follower, data, []}
       def ready_to_test(:cast, :run, %CandidateState{} = data), do: {:next_state, :candidate, data, []}
       def ready_to_test(:cast, :run, %LeaderState{} = data), do: {:next_state, :leader, data, []}
       def ready_to_test({:call, _from}, :catch_up, data), do: {:keep_state_and_data, [:postpone]}
-      for state <- [:follower, :candidate, :leader] do
+      for state <- [:follower, :lonely_follower, :prevote, :candidate, :leader] do
         def unquote(state)(event, msg, data) do
           send(data.nexus_pid, {:trace, DateTime.utc_now(), node(), unquote(state), event, msg, data})
           apply(Craft.Consensus, unquote(state), [event, msg, data])
@@ -95,13 +107,15 @@ defmodule Craft.Consensus do
     Logger.metadata(name: args.name, node: node())
 
     data =
-      %FollowerState{
+      %State{
         name: args.name,
         other_nodes: args.other_nodes,
         log: Log.new(args.name, args.log_module)
       }
 
-    {:ok, :follower, data}
+    Logger.info("started")
+
+    {:ok, :lonely_follower, data}
   end
 
   def child_spec(args) do
@@ -111,45 +125,131 @@ defmodule Craft.Consensus do
     }
   end
 
+  #
+  # Lonely Follower
+  #
+
+  def lonely_follower(:enter, _previous_state, data) do
+    data = LonelyFollowerState.new(data)
+
+    Logger.info("became lonely", logger_metadata(data))
+
+    {:keep_state, data, [{:state_timeout, jitter(), :begin_pre_vote}]}
+  end
+
+  def lonely_follower(:state_timeout, :begin_pre_vote, data) do
+    Logger.info("pre-vote started", logger_metadata(data))
+
+    RPC.request_vote(data, pre_vote: true)
+
+    {:keep_state_and_data, [{:state_timeout, @election_timeout, :election_failed}]}
+  end
+
+  def lonely_follower(:state_timeout, :election_failed, data) do
+    Logger.info("pre-vote failed, repeating state", logger_metadata(data))
+
+    :repeat_state_and_data
+  end
+
+  # if we receive a message with a higher term, bump our term and return to follower state
+  #
+  # this would have been implemented as a `:postpone`, but :gen_statem doesn't process postpones for :repeat_state so we have to fake it
+  def lonely_follower(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term > current_term do
+    data = LonelyFollowerState.new(%State{data | current_term: term})
+
+    lonely_follower(:cast, msg, data)
+  end
+
+
+  def lonely_follower(:cast, %RequestVote{pre_vote: true} = request_vote, data) do
+    vote_granted = FollowerState.vote_for?(data, request_vote)
+
+    Logger.info("considering pre-voting for #{request_vote.candidate_id}", logger_metadata(data))
+
+    RPC.respond_vote(request_vote, vote_granted, data)
+
+    {:keep_state, data}
+  end
+
+  def lonely_follower(:cast, %RequestVote{pre_vote: false} = request_vote, data) do
+    {vote_granted, data} = LonelyFollowerState.vote(data, request_vote)
+
+    Logger.info("considering voting for #{request_vote.candidate_id}", logger_metadata(data))
+
+    RPC.respond_vote(request_vote, vote_granted, data)
+
+    {:keep_state, data}
+  end
+
+  def lonely_follower(:cast, %RequestVote.Results{pre_vote: true} = results, data) do
+    if results.vote_granted do
+      Logger.info("pre-vote granted by #{results.from}", logger_metadata(data))
+    else
+      Logger.info("pre-vote denied by #{results.from}", logger_metadata(data))
+    end
+
+    data = LonelyFollowerState.record_vote(data, results)
+
+    case LonelyFollowerState.election_result(data) do
+      :won ->
+        {:next_state, :candidate, data}
+
+      :lost ->
+        :repeat_state_and_data
+
+      :pending ->
+        {:keep_state, data}
+    end
+  end
+
+  def lonely_follower(:cast, %AppendEntries{}, data) do
+    {:next_state, :follower, data, [:postpone]}
+  end
+
+  def lonely_follower({:call, from}, :catch_up, data) do
+    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.log}}]};
+  end
+
+  #
+  # Follower
+  #
 
   def follower(:enter, _previous_state, data) do
     data = FollowerState.new(data)
 
     Logger.info("became follower", logger_metadata(data))
 
-    {:keep_state, data, [follower_state_timeout()]}
+    {:keep_state, data, [become_lonely_follower_timeout()]}
   end
-  def follower(:state_timeout, :become_candidate, data), do: {:next_state, :candidate, data}
+  def follower(:state_timeout, :become_lonely, data), do: {:next_state, :lonely_follower, data}
 
   # if we receive a message with a higher term, bump our term and process the message
   #
   # this would have been implemented as a `:postpone`, but :gen_statem doesn't process postpones for :repeat_state so we have to fake it
-  def follower(:cast, %{term: term} = msg, %FollowerState{current_term: current_term} = data) when term > current_term do
+  def follower(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term > current_term do
     # wipe voted_for etc...
-    data = FollowerState.new(%FollowerState{data | current_term: term})
+    data = FollowerState.new(%State{data | current_term: term})
 
     follower(:cast, msg, data)
   end
 
-  # maybe vote for candidate
-  def follower(:cast, %RequestVote{} = request_vote, data) do
+  # followers are happy with the leader, they vote "no" in pre-votes
+  def follower(:cast, %RequestVote{pre_vote: true} = request_vote, data) do
+    Logger.info("denying pre-vote to #{request_vote.candidate_id}", logger_metadata(data))
+
+    RPC.respond_vote(request_vote, false, data)
+
+    :keep_state_and_data
+  end
+
+  def follower(:cast, %RequestVote{pre_vote: false} = request_vote, data) do
     {vote_granted, data} = FollowerState.vote(data, request_vote)
 
-    Logger.info("considering voting for #{request_vote.candidate_id}", logger_metadata(data))
+    Logger.info("considering pre-voting for #{request_vote.candidate_id}", logger_metadata(data))
 
     RPC.respond_vote(request_vote, vote_granted, data)
 
-    #
-    # reset timer if we grant vote to give candidate a sec to take leadership
-    #
-    # if our timer pops immediately after granting a vote, we'll become a candidate
-    # and cause an unnecessary election
-    #
-    if vote_granted do
-      {:keep_state, data, [follower_state_timeout()]}
-    else
-      {:keep_state, data}
-    end
+    {:keep_state, data}
   end
 
   # hear leader heartbeat and append entries if necessary
@@ -165,7 +265,7 @@ defmodule Craft.Consensus do
 
     Logger.debug("leader heartbeat from #{append_entries.leader_id}, restarting timer", logger_metadata(data))
 
-    {:keep_state, data, [follower_state_timeout()]}
+    {:keep_state, data, [become_lonely_follower_timeout()]}
   end
 
   def follower(:cast, {:command, {caller_pid, _ref} = id, _command}, data) do
@@ -184,32 +284,36 @@ defmodule Craft.Consensus do
     :keep_state_and_data
   end
 
+  #
+  # Candidate
+  #
+
   # become candidate and request votes from all other members
   def candidate(:enter, _previous_state, data) do
-    election_timeout = @election_timeout + :rand.uniform(@election_jitter)
+    election_timeout = @election_timeout + jitter()
     data = CandidateState.new(data)
 
     Logger.info("became candidate", logger_metadata(data))
 
-    RPC.request_vote(data)
+    RPC.request_vote(data, pre_vote: false)
 
     {:keep_state, data, [{:state_timeout, election_timeout, :election_failed}]}
   end
   def candidate(:state_timeout, :election_failed, data) do
-    Logger.info("repeating state", logger_metadata(data))
+    Logger.info("election failed, repeating state", logger_metadata(data))
 
     :repeat_state_and_data
   end
 
   # ignore messages from earlier terms
-  def candidate(:cast, %{term: term} = msg, %CandidateState{current_term: current_term} = data) when term < current_term do
-    Logger.info("ignoring message #{inspect msg} from #{msg.candidate_id} for earlier term #{term}", logger_metadata(data))
+  def candidate(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term < current_term do
+    Logger.info("ignoring message #{inspect msg} for earlier term #{term}", logger_metadata(data))
 
     :keep_state_and_data
   end
 
   # become follower if any message from a higher term arrives
-  def candidate(:cast, %{term: term} = msg, %CandidateState{current_term: current_term} = data) when term > current_term, do: become_follower(msg, data)
+  def candidate(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term > current_term, do: become_follower(msg, data)
 
   # refuse to vote for another candidate
   def candidate(:cast, %RequestVote{} = request_vote, data) do
@@ -235,10 +339,15 @@ defmodule Craft.Consensus do
 
     data = CandidateState.record_vote(data, results)
 
-    if CandidateState.won_election?(data) do
-      {:next_state, :leader, data}
-    else
-      {:keep_state, data}
+    case CandidateState.election_result(data) do
+      :won ->
+        {:next_state, :leader, data}
+
+      :lost ->
+        :repeat_state_and_data
+
+      :pending ->
+        {:keep_state, data}
     end
   end
 
@@ -264,13 +373,16 @@ defmodule Craft.Consensus do
     :keep_state_and_data
   end
 
+  #
+  # Leader
+  #
 
   def leader(:enter, _previous_state, data) do
     data = LeaderState.new(data)
 
     entry = %Entry{term: data.current_term}
     log = Log.append(data.log, entry)
-    data = %LeaderState{data | log: log}
+    data = %State{data | log: log}
 
     Logger.info("became leader", logger_metadata(data))
 
@@ -286,14 +398,14 @@ defmodule Craft.Consensus do
   end
 
   # ignore any messages from earlier terms
-  def leader(:cast, %{term: term} = msg, %LeaderState{current_term: current_term} = data) when term < current_term do
+  def leader(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term < current_term do
     Logger.info("ignoring message #{inspect msg} for earlier term #{term}", logger_metadata(data))
 
     :keep_state_and_data
   end
 
   # become follower if any message from a higher term arrives
-  def leader(:cast, %{term: term} = msg, %LeaderState{current_term: current_term} = data) when term > current_term, do: become_follower(msg, data)
+  def leader(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term > current_term, do: become_follower(msg, data)
 
   # ignore superfluous votes from when we were a candidate
   def leader(:cast, %RequestVote.Results{}, _data), do: :keep_state_and_data
@@ -320,9 +432,9 @@ defmodule Craft.Consensus do
     log = Log.append(data.log, entry)
 
     entry_index = Log.latest_index(log)
-    client_requests = Map.put(data.client_requests, entry_index, id)
+    client_requests = Map.put(data.mode_state.client_requests, entry_index, id)
 
-    {:keep_state, %LeaderState{data | log: log, client_requests: client_requests}}
+    {:keep_state, %State{data | log: log, mode_state: %LeaderState{data.mode_state | client_requests: client_requests}}}
   end
 
   def leader(type, msg, data) do
@@ -332,30 +444,31 @@ defmodule Craft.Consensus do
   end
 
 
-  defp logger_metadata(%state{current_term: term}, extras \\ []) do
+  defp logger_metadata(%State{} = state, extras \\ []) do
     color =
-      case state do
-        FollowerState ->
+      case state.mode_state do
+        %FollowerState{} ->
           :cyan
 
-        CandidateState ->
+        {_, _} ->
+          :yellow
+
+        %CandidateState{} ->
           :blue
 
-        LeaderState ->
+        %LeaderState{} ->
           :green
       end
 
-    Keyword.merge([term: term, ansi_color: color], extras)
+    Keyword.merge([term: state.current_term, ansi_color: color], extras)
   end
 
-  defp follower_state_timeout do
-    follower_timeout = @follower_timeout + :rand.uniform(@follower_jitter)
-
-    {:state_timeout, follower_timeout, :become_candidate}
+  defp become_lonely_follower_timeout do
+    {:state_timeout, @follower_lonely_timeout, :become_lonely}
   end
 
   defp become_follower(%{term: term} = msg, data) do
-    Logger.info("received message #{inspect msg} from #{msg.from} from later term #{term}, becoming/remaining follower", logger_metadata(data))
+    Logger.info("received message #{inspect msg} from later term #{term}, becoming/remaining follower", logger_metadata(data))
 
     {:next_state, :follower, %{data | current_term: term}, [:postpone]}
   end
