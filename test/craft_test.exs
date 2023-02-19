@@ -2,6 +2,7 @@ defmodule CraftTest do
   use ExUnit.Case
   alias Craft.Consensus.CandidateState
   alias Craft.Consensus.FollowerState
+  alias Craft.Consensus.State
   alias Craft.Log.MapLog
   alias Craft.Nexus
 
@@ -28,11 +29,11 @@ defmodule CraftTest do
       Enum.zip(
         nodes,
         [
-          %CandidateState{log: log},
-          %FollowerState{log: log},
-          %FollowerState{log: log},
-          %FollowerState{log: log},
-          %FollowerState{log: log}
+          CandidateState.new(%State{log: log}),
+          FollowerState.new(%State{log: log}),
+          FollowerState.new(%State{log: log}),
+          FollowerState.new(%State{log: log}),
+          FollowerState.new(%State{log: log})
         ]
       )
 

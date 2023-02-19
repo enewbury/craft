@@ -33,6 +33,10 @@ defmodule Craft.Consensus.LeaderState do
     # find the highest uncommitted match index shared by a majority of servers
     # this can be optimized to some degree (mapset, gb_tree, etc...)
     # also optimized by pre-computing quorum requirement and storing in state
+    #
+    # when we become leader, match indexes work their way up from zero non-uniformly
+    # so it's entirely possible that we don't find a quorum of followers with a match index
+    # until match indexes work their way up to parity
     highest_uncommitted_match_index =
       state.mode_state.match_indices
       |> Map.values()

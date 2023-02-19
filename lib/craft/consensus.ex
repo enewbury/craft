@@ -89,11 +89,10 @@ defmodule Craft.Consensus do
         {:ok, :ready_to_test, data}
       end
       def ready_to_test(:enter, _, _data), do: :keep_state_and_data
-      def ready_to_test(:cast, :run, %LonelyFollowerState{} = data), do: {:next_state, :lonely_follower, data, []}
-      def ready_to_test(:cast, :run, %FollowerState{} = data), do: {:next_state, :follower, data, []}
-      def ready_to_test(:cast, :run, %CandidateState{} = data), do: {:next_state, :candidate, data, []}
-      def ready_to_test(:cast, :run, %LeaderState{} = data), do: {:next_state, :leader, data, []}
-      def ready_to_test({:call, _from}, :catch_up, data), do: {:keep_state_and_data, [:postpone]}
+      def ready_to_test(:cast, :run, %State{mode_state: %FollowerState{}} = data), do: {:next_state, :follower, data, []}
+      def ready_to_test(:cast, :run, %State{mode_state: %CandidateState{}} = data), do: {:next_state, :candidate, data, []}
+      def ready_to_test(:cast, :run, %State{mode_state: %LeaderState{}} = data), do: {:next_state, :leader, data, []}
+      def ready_to_test({:call, _from}, :catch_up, _data), do: {:keep_state_and_data, [:postpone]}
       for state <- [:follower, :lonely_follower, :prevote, :candidate, :leader] do
         def unquote(state)(event, msg, data) do
           send(data.nexus_pid, {:trace, DateTime.utc_now(), node(), unquote(state), event, msg, data})

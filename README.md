@@ -10,4 +10,5 @@ todo:
 - querying (dirty [leader, follower], linearizable command-based read)
   - may not need log entry for linearizable read... (leader receives read request, notes at what log index it should take place, when that log index is committed, responds to read as of that index)
   - leases like cockroachdb?
-- pre-vote
+
+3.10 leadership transfer extension

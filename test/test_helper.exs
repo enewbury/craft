@@ -1,6 +1,7 @@
 defmodule Craft.TestHelper do
   alias Craft.Consensus
   alias Craft.Consensus.FollowerState
+  alias Craft.Consensus.State
   alias Craft.Log
   alias Craft.SimpleMachine
 
@@ -51,11 +52,12 @@ defmodule Craft.TestHelper do
   def start_group(nodes, machine) do
     nodes
     |> Enum.map(fn node ->
-      {node, %FollowerState{log: Craft.Log.new(nil, Log.MapLog)}}
+      state = FollowerState.new(%State{log: Craft.Log.new(nil, Log.MapLog)})
+
+      {node, state}
     end)
     |> start_group(machine)
   end
 end
-
 
 ExUnit.start()

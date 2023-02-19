@@ -2,6 +2,7 @@ defmodule LogReplicationTest do
   use ExUnit.Case
   alias Craft.Consensus.CandidateState
   alias Craft.Consensus.FollowerState
+  alias Craft.Consensus.State
   alias Craft.Log
   alias Craft.Nexus
 
@@ -37,12 +38,12 @@ defmodule LogReplicationTest do
       Enum.zip(
         nodes,
         [
-          %CandidateState{log: leader_log},
-          %FollowerState{log: leader_log},
-          %FollowerState{log: leader_log},
-          %FollowerState{log: leader_log},
+          CandidateState.new(%State{log: leader_log}),
+          FollowerState.new(%State{log: leader_log}),
+          FollowerState.new(%State{log: leader_log}),
+          FollowerState.new(%State{log: leader_log}),
 
-          %FollowerState{log: stray_follower_log}
+          FollowerState.new(%State{log: stray_follower_log})
         ]
       )
 

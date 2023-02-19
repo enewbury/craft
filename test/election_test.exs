@@ -2,6 +2,8 @@ defmodule ElectionTest do
   use ExUnit.Case
   alias Craft.Consensus.CandidateState
   alias Craft.Consensus.FollowerState
+  alias Craft.Consensus.State
+  alias Craft.Log
   alias Craft.Log.MapLog
   alias Craft.Nexus
 
@@ -22,11 +24,11 @@ defmodule ElectionTest do
       Enum.zip(
         nodes,
         [
-          %CandidateState{log: log},
-          %FollowerState{log: log},
-          %FollowerState{log: log},
-          %FollowerState{log: log},
-          %FollowerState{log: log}
+          CandidateState.new(%State{log: log}),
+          FollowerState.new(%State{log: log}),
+          FollowerState.new(%State{log: log}),
+          FollowerState.new(%State{log: log}),
+          FollowerState.new(%State{log: log})
         ]
       )
 
@@ -62,12 +64,12 @@ defmodule ElectionTest do
       Enum.zip(
         nodes,
         [
-          %CandidateState{log: leader_log},
-          %FollowerState{log: leader_log},
-          %FollowerState{log: leader_log},
-          %FollowerState{log: leader_log},
+          CandidateState.new(%State{log: leader_log}),
+          FollowerState.new(%State{log: leader_log}),
+          FollowerState.new(%State{log: leader_log}),
+          FollowerState.new(%State{log: leader_log}),
 
-          %FollowerState{log: stray_follower_log}
+          FollowerState.new(%State{log: stray_follower_log})
         ]
       )
 
