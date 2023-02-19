@@ -6,7 +6,8 @@ defmodule Craft.Machine do
   alias Craft.Consensus.FollowerState
   alias Craft.Consensus.LeaderState
   alias Craft.Log
-  alias Craft.Log.Entry
+  alias Craft.Log.EmptyEntry
+  alias Craft.Log.CommandEntry
 
   @type private :: any()
 
@@ -95,10 +96,10 @@ defmodule Craft.Machine do
         case Log.fetch(log, index) do
           # `nil` commands are for craft's internal use (0th log entry or log entries when a new leader is elected)
           # so we don't tell the machine about them
-          {:ok, %Entry{command: nil}} ->
+          {:ok, %EmptyEntry{}} ->
             private
 
-          {:ok, %Entry{command: command}} ->
+          {:ok, %CommandEntry{command: command}} ->
             {reply, side_effects, private} =
               case state.module.command(command, index, private) do
                 {reply, private} ->

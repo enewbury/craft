@@ -1,18 +1,18 @@
 defmodule Craft.Log.MapLog do
-  alias Craft.Log.Entry
+  alias Craft.Log.EmptyEntry
 
   @behaviour Craft.Log
 
   @impl true
   def new(_group_name) do
-    append(%{}, [%Entry{term: -1}])
+    append(%{}, [%EmptyEntry{term: -1}])
   end
 
   @impl true
   def latest_term(map) do
-    %Entry{term: term} = Map.fetch!(map, latest_index(map))
-
-    term
+    map
+    |> Map.fetch!(latest_index(map))
+    |> Map.fetch!(:term)
   end
 
   @impl true

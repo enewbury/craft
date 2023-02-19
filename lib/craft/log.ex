@@ -1,5 +1,5 @@
 defmodule Craft.Log do
-  alias Craft.Log.Entry
+  alias Craft.Log.CommandEntry
 
   # this module is kinda like a bastardized mix of a behaviour and a protocol
   #
@@ -14,13 +14,15 @@ defmodule Craft.Log do
   # so yeah, if you have a better idea how to do this, holler at me please. :)
   #
 
+  @type entry :: CommandEntry.t() | AddMemberEntry.t() | RemoveMemberEntry.t()
+
   #TODO: proper typespecs
   @callback new(group_name :: String.t()) :: any()
   @callback latest_term(any()) :: integer()
   @callback latest_index(any()) :: integer()
-  @callback fetch(any(), index :: integer()) :: Entry.t()
-  @callback fetch_from(any(), index :: integer()) :: [Entry.t()]
-  @callback append(any(), [Entry.t()]) :: any()
+  @callback fetch(any(), index :: integer()) :: entry()
+  @callback fetch_from(any(), index :: integer()) :: [entry()]
+  @callback append(any(), [entry()]) :: any()
   @callback rewind(any(), index :: integer()) :: any() # remove all long entries after index
 
   defstruct [
@@ -32,7 +34,7 @@ defmodule Craft.Log do
   # Craft requires that log implementations are initialized at following point:
   #
   # last_applied: 0
-  # log: 0 -> Entry{term: -1, command: nil}
+  # log: 0 -> CommandEntry{term: -1, command: nil}
   #
   # this makes the rest of the codebase a lot simpler
   #

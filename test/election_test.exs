@@ -45,20 +45,20 @@ defmodule ElectionTest do
   test "5.4.1 election restriction", %{nodes: nodes} do
     shared_log =
       Log.new(nil, Log.MapLog)
-      |> Log.append(%Log.Entry{term: 0})
-      |> Log.append(%Log.Entry{term: 1})
+      |> Log.append(%Log.CommandEntry{term: 0})
+      |> Log.append(%Log.CommandEntry{term: 1})
 
     leader_log =
       shared_log
-      |> Log.append(%Log.Entry{term: 4, command: {:put, :a, 1}})
-      |> Log.append(%Log.Entry{term: 4, command: {:put, :b, 2}})
+      |> Log.append(%Log.CommandEntry{term: 4, command: {:put, :a, 1}})
+      |> Log.append(%Log.CommandEntry{term: 4, command: {:put, :b, 2}})
 
     stray_follower_log =
       shared_log
-      |> Log.append(%Log.Entry{term: 2, command: {:put, :a, 1}})
-      |> Log.append(%Log.Entry{term: 2, command: {:put, :b, 1}})
-      |> Log.append(%Log.Entry{term: 3, command: {:put, :c, 1}})
-      |> Log.append(%Log.Entry{term: 3, command: {:put, :d, 1}})
+      |> Log.append(%Log.CommandEntry{term: 2, command: {:put, :a, 1}})
+      |> Log.append(%Log.CommandEntry{term: 2, command: {:put, :b, 1}})
+      |> Log.append(%Log.CommandEntry{term: 3, command: {:put, :c, 1}})
+      |> Log.append(%Log.CommandEntry{term: 3, command: {:put, :d, 1}})
 
     states =
       Enum.zip(

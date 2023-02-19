@@ -1,4 +1,4 @@
-defmodule Craft.Log.Entry do
+defmodule Craft.Log.CommandEntry do
   defstruct [
     :term,
     :command

@@ -29,6 +29,10 @@ defmodule Craft do
     end
   end
 
+  def add_member(name, node, cluster_node) do
+
+  end
+
   defdelegate start_member(name, nodes, machine, opts), to: Craft.MemberSupervisor
   defdelegate stop_member(name), to: Craft.MemberSupervisor
 

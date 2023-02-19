@@ -17,7 +17,8 @@ defmodule Craft.Consensus do
   alias Craft.Consensus.CandidateState
   alias Craft.Consensus.LeaderState
   alias Craft.Log
-  alias Craft.Log.Entry
+  alias Craft.Log.EmptyEntry
+  alias Craft.Log.CommandEntry
   alias Craft.Machine
   alias Craft.RPC
   alias Craft.RPC.AppendEntries
@@ -379,7 +380,7 @@ defmodule Craft.Consensus do
   def leader(:enter, _previous_state, data) do
     data = LeaderState.new(data)
 
-    entry = %Entry{term: data.current_term}
+    entry = %EmptyEntry{term: data.current_term}
     log = Log.append(data.log, entry)
     data = %State{data | log: log}
 
@@ -427,7 +428,7 @@ defmodule Craft.Consensus do
   end
 
   def leader(:cast, {:command, id, command}, data) do
-    entry = %Entry{term: data.current_term, command: command}
+    entry = %CommandEntry{term: data.current_term, command: command}
     log = Log.append(data.log, entry)
 
     entry_index = Log.latest_index(log)
