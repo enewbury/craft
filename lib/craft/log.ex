@@ -1,5 +1,7 @@
 defmodule Craft.Log do
+  alias Craft.Log.EmptyEntry
   alias Craft.Log.CommandEntry
+  alias Craft.Log.NewConfigurationEntry
 
   # this module is kinda like a bastardized mix of a behaviour and a protocol
   #
@@ -14,7 +16,7 @@ defmodule Craft.Log do
   # so yeah, if you have a better idea how to do this, holler at me please. :)
   #
 
-  @type entry :: CommandEntry.t() | AddMemberEntry.t() | RemoveMemberEntry.t()
+  @type entry :: EmptyEntry.t() | CommandEntry.t() | NewConfigurationEntry.t()
 
   #TODO: proper typespecs
   @callback new(group_name :: String.t()) :: any()
@@ -43,6 +45,7 @@ defmodule Craft.Log do
       module: log_module,
       private: log_module.new(group_name)
     }
+    |> append(%EmptyEntry{term: -1})
   end
 
   def latest_term(%__MODULE__{module: module, private: private}) do

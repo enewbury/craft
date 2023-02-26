@@ -1,19 +1,22 @@
 defmodule Craft.Consensus.LeaderState do
   alias Craft.Consensus
   alias Craft.Consensus.State
+  alias Craft.Consensus.State.Configuration
   alias Craft.Log
+  alias Craft.Log.NewConfigurationEntry
   alias Craft.RPC.AppendEntries
 
   defstruct [
     :next_indices,
     :match_indices,
-    client_requests: %{}
+    :membership_change_request_from,
+    client_requests: %{},
   ]
 
   def new(%State{} = state) do
     next_index = Log.latest_index(state.log) + 1
-    next_indices = Map.new(state.other_nodes, &{&1, next_index})
-    match_indices = Map.new(state.other_nodes, &{&1, 0})
+    next_indices = state |> State.other_nodes() |> Map.new(&{&1, next_index})
+    match_indices = state |> State.other_nodes() |> Map.new(&{&1, 0})
 
     %State{
       state |
@@ -22,6 +25,36 @@ defmodule Craft.Consensus.LeaderState do
         next_indices: next_indices,
         match_indices: match_indices,
       }
+    }
+  end
+
+  def config_change_in_progress?(%State{} = state) do
+    state.log
+    |> Log.fetch_from(state.commit_index)
+    |> Enum.any?(fn
+      %NewConfigurationEntry{} -> true
+      _ -> false
+    end)
+  end
+
+  def add_node(%State{} = state, node) do
+    non_voting_nodes = MapSet.put(state.configuration.non_voting_nodes, node)
+
+    put_in(state.configuration.non_voting_nodes, non_voting_nodes)
+  end
+
+  def remove_node(%State{} = state, node) do
+    voting_nodes = MapSet.delete(state.configuration.voting_nodes, node)
+    non_voting_nodes = MapSet.delete(state.configuration.non_voting_nodes, node)
+
+    %State{
+      state |
+      configuration:
+        %Configuration{
+          state.configuration|
+          voting_nodes: voting_nodes,
+          non_voting_nodes: non_voting_nodes,
+        }
     }
   end
 

@@ -12,3 +12,4 @@ todo:
   - leases like cockroachdb?
 
 3.10 leadership transfer extension
+4.2.1 server catch up "rounds" hueristic

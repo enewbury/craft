@@ -4,6 +4,8 @@ defmodule Craft.Consensus.FollowerState do
   alias Craft.RPC.AppendEntries
   alias Craft.RPC.RequestVote
 
+  require Logger
+
   defstruct [:voted_for]
 
   def new(%State{} = state) do
@@ -38,21 +40,30 @@ defmodule Craft.Consensus.FollowerState do
   end
 
 
-  def append_entries(%State{current_term: current_term} = state, %AppendEntries{term: term}) when term < current_term, do: {false, state}
+  def append_entries(%State{current_term: current_term} = state, %AppendEntries{term: term} = append_entries) when term < current_term do
+    Logger.info("denying #{inspect append_entries} for earlier term #{term}", State.logger_metadata(state))
+
+    {false, state}
+  end
 
   #TODO: store latest log entry index/term in state so we can pattern match instead of querying the log module?
   # plenty of optimizations to be had here
-  def append_entries(%State{} = state, %AppendEntries{} = append_entries) do
+  def append_entries(%State{} = state, %AppendEntries{prev_log_term: prev_log_term} = append_entries) do
     state = %State{state | leader_id: append_entries.leader_id}
 
-    if Log.latest_index(state.log) == append_entries.prev_log_index && Log.latest_term(state.log) == append_entries.prev_log_term do
-      log = Log.append(state.log, append_entries.entries)
+    case Log.fetch(state.log, append_entries.prev_log_index) do
+      {:ok, %{term: ^prev_log_term}} ->
+        log =
+          state.log
+          |> Log.rewind(append_entries.prev_log_index)
+          |> Log.append(append_entries.entries)
 
-      state = %State{state | log: log, commit_index: min(append_entries.leader_commit, Log.latest_index(log))}
+        state = %State{state | log: log, commit_index: min(append_entries.leader_commit, Log.latest_index(log))}
 
-      {true, state}
-    else
-      {false, %State{state | log: Log.rewind(state.log, append_entries.prev_log_index)}}
+        {true, state}
+
+      _ ->
+        {false, %State{state | log: Log.rewind(state.log, append_entries.prev_log_index)}}
     end
   end
 end

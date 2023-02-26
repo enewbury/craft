@@ -12,6 +12,7 @@ defmodule Craft.Consensus do
   #
 
   alias Craft.Consensus.State
+  alias Craft.Consensus.State.Configuration
   alias Craft.Consensus.FollowerState
   alias Craft.Consensus.LonelyFollowerState
   alias Craft.Consensus.CandidateState
@@ -19,12 +20,15 @@ defmodule Craft.Consensus do
   alias Craft.Log
   alias Craft.Log.EmptyEntry
   alias Craft.Log.CommandEntry
+  alias Craft.Log.NewConfigurationEntry
   alias Craft.Machine
   alias Craft.RPC
   alias Craft.RPC.AppendEntries
   alias Craft.RPC.RequestVote
 
   require Logger
+
+  import State, only: [logger_metadata: 1]
 
   @behaviour :gen_statem
 
@@ -55,6 +59,14 @@ defmodule Craft.Consensus do
     end
   end
 
+  def state(name, node) do
+    :gen_statem.call({name(name), node}, :state)
+  end
+
+  def get_configuration(name, node) do
+    :gen_statem.call({name(name), node}, :get_configuration)
+  end
+
   def name(name), do: Module.concat(__MODULE__, name)
 
   # called after the machine restarts to get any committed entries that need to be applied
@@ -62,12 +74,8 @@ defmodule Craft.Consensus do
     :gen_statem.call({name(name), node()}, :catch_up)
   end
 
-  # TODO: pre-compute quorum and store in state
   def quorum_reached?(state, num) do
-    num_members = length(state.other_nodes) + 1
-    quorum_needed = div(num_members, 2) + 1
-
-    num >= quorum_needed
+    num >= State.quorum_needed(state)
   end
 
   #
@@ -109,7 +117,7 @@ defmodule Craft.Consensus do
     data =
       %State{
         name: args.name,
-        other_nodes: args.other_nodes,
+        configuration: Configuration.new(args.nodes),
         log: Log.new(args.name, args.log_module)
       }
 
@@ -132,7 +140,7 @@ defmodule Craft.Consensus do
   def lonely_follower(:enter, _previous_state, data) do
     data = LonelyFollowerState.new(data)
 
-    Logger.info("became lonely", logger_metadata(data))
+    Logger.info("became lonely follower", logger_metadata(data))
 
     {:keep_state, data, [{:state_timeout, jitter(), :begin_pre_vote}]}
   end
@@ -206,8 +214,18 @@ defmodule Craft.Consensus do
     {:next_state, :follower, data, [:postpone]}
   end
 
+  def lonely_follower(:cast, {:command, {caller_pid, _ref} = id, _command}, data) do
+    send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
+
+    :keep_state_and_data
+  end
+
   def lonely_follower({:call, from}, :catch_up, data) do
-    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.log}}]};
+    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.log}}]}
+  end
+
+  def lonely_follower({:call, from}, _request, data) do
+    {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
   end
 
   #
@@ -245,7 +263,7 @@ defmodule Craft.Consensus do
   def follower(:cast, %RequestVote{pre_vote: false} = request_vote, data) do
     {vote_granted, data} = FollowerState.vote(data, request_vote)
 
-    Logger.info("considering pre-voting for #{request_vote.candidate_id}", logger_metadata(data))
+    Logger.info("considering voting for #{request_vote.candidate_id}", logger_metadata(data))
 
     RPC.respond_vote(request_vote, vote_granted, data)
 
@@ -275,7 +293,11 @@ defmodule Craft.Consensus do
   end
 
   def follower({:call, from}, :catch_up, data) do
-    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.log}}]};
+    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.log}}]}
+  end
+
+  def follower({:call, from}, _request, data) do
+    {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
   end
 
   def follower(type, msg, data) do
@@ -317,7 +339,7 @@ defmodule Craft.Consensus do
 
   # refuse to vote for another candidate
   def candidate(:cast, %RequestVote{} = request_vote, data) do
-    Logger.info("denying vote to other candidate #{request_vote.candidate_id}", logger_metadata(data))
+    Logger.info("denying #{(if request_vote.pre_vote, do: "pre-", else: "")} vote to #{request_vote.candidate_id}", logger_metadata(data))
 
     RPC.respond_vote(request_vote, false, data)
 
@@ -361,10 +383,13 @@ defmodule Craft.Consensus do
     :keep_state_and_data
   end
 
-  # this should only happen in test, it'd be nice to throw a Mix.env() assertion in here,
-  # but Mix isn't available in releases.
+  # this should only happen in test, it'd be nice to throw an assertion in here,
   def candidate({:call, from}, :catch_up, data) do
-    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.log}}]};
+    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.log}}]}
+  end
+
+  def candidate({:call, from}, _request, data) do
+    {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
   end
 
   def candidate(type, msg, data) do
@@ -437,30 +462,45 @@ defmodule Craft.Consensus do
     {:keep_state, %State{data | log: log, mode_state: %LeaderState{data.mode_state | client_requests: client_requests}}}
   end
 
+  def leader({:call, from}, :get_configuration, data) do
+    {:keep_state_and_data, [{:reply, from, {:ok, data.mode_state.configuration}}]}
+  end
+
+  def leader({:call, from}, {:add_member, node}, data) do
+    if LeaderState.config_change_in_progress?(data) do
+      {:keep_state_and_data, [{:reply, from, {:error, :config_change_in_progress}}]}
+    else
+      data = LeaderState.add_node(data, node)
+
+      entry =
+        %NewConfigurationEntry{
+          term: data.current_term,
+          configuration: data.configuration
+        }
+
+      log = Log.append(data.log, entry)
+
+      data =
+        %State{
+          data |
+          log: log,
+          mode_state:
+            %LeaderState{
+              data.mode_state |
+              membership_change_request_from: from
+            }
+        }
+
+      # FIXME: reply :ok to data.mode_state.membership_change_request_from when member
+      # is caught up
+      {:keep_state, data}
+    end
+  end
+
   def leader(type, msg, data) do
     Logger.info("ignoring #{inspect type} message #{inspect msg}", logger_metadata(data))
 
     :keep_state_and_data
-  end
-
-
-  defp logger_metadata(%State{} = state, extras \\ []) do
-    color =
-      case state.mode_state do
-        %FollowerState{} ->
-          :cyan
-
-        {_, _} ->
-          :yellow
-
-        %CandidateState{} ->
-          :blue
-
-        %LeaderState{} ->
-          :green
-      end
-
-    Keyword.merge([term: state.current_term, ansi_color: color], extras)
   end
 
   defp become_lonely_follower_timeout do

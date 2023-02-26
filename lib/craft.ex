@@ -29,14 +29,30 @@ defmodule Craft do
     end
   end
 
-  def add_member(name, node, cluster_node) do
+  def add_member(name, node, cluster_nodes) do
+    :pong = Node.ping(node)
+    {:module, Craft} = :rpc.call(node, Code, :ensure_loaded, [Craft])
 
+
+    {:ok, configuration} = with_leader_redirect(name, cluster_nodes, &Consensus.get_configuration(name, &1))
+    |> IO.inspect
+
+    # the nodes we provide to the new member here will eventually be overwritten when
+    # the new member processes the NewConfirgurationEntry as it catches up to the leader
+    #
+    # TODO: be ok with the member already being started (maybe it wasn't able to catch up fast enough last time)
+    #
+    # {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, cluster_nodes, machine, opts])
   end
 
   defdelegate start_member(name, nodes, machine, opts), to: Craft.MemberSupervisor
   defdelegate stop_member(name), to: Craft.MemberSupervisor
 
   def command(command, name, nodes, opts \\ []) do
+    with_leader_redirect(name, nodes, &Consensus.command(name, &1, command), opts)
+  end
+
+  defp with_leader_redirect(name, nodes, func, opts \\ []) do
     redirect_once = Keyword.pop(opts, :redirect_once, true)
 
     node =
@@ -49,13 +65,13 @@ defmodule Craft do
       end
 
     # let the user deal with redirecting the request to the leader, we may implement
-    # redirection strategies later (e.e.  try all nodes, redirect N times, etc...)
-    case Consensus.command(name, node, command) do
+    # redirection strategies later (e.g.  try all nodes, redirect N times, etc...)
+    case func.(node) do
       {:error, {:not_leader, leader}} ->
         Craft.LeaderCache.put(name, leader)
         if redirect_once do
           opts = Keyword.put(opts, :redirect_once, false)
-          command(command, name, nodes, opts)
+          with_leader_redirect(name, nodes, opts, func)
         else
           {:error, {:not_leader, leader}}
         end
@@ -63,6 +79,7 @@ defmodule Craft do
       reply ->
         reply
     end
+
   end
 
   def step_down(name, node) do

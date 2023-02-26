@@ -14,7 +14,7 @@ defmodule Craft.RPC do
   def request_vote(state, pre_vote: pre_vote) do
     request_vote = RequestVote.new(state, pre_vote: pre_vote)
 
-    for to_node <- state.other_nodes do
+    for to_node <- State.other_voting_nodes(state) do
       send_message(request_vote, to_node, state)
     end
   end
@@ -27,7 +27,7 @@ defmodule Craft.RPC do
 
   # TODO: parallelize
   def append_entries(%State{} = state) do
-    for to_node <- state.other_nodes do
+    for to_node <- State.other_nodes(state) do
       state
       |> AppendEntries.new(to_node)
       |> send_message(to_node, state)

@@ -36,9 +36,7 @@ defmodule Craft.Consensus.CandidateState do
   end
 
   def election_result(%State{} = state, %__MODULE__{} = candidate_state) do
-    num_members = length(state.other_nodes) + 1
-    quorum_needed = div(num_members, 2) + 1
-
+    quorum_needed = State.quorum_needed(state)
     num_voted_no = MapSet.size(candidate_state.received_votes_from) - candidate_state.num_votes
 
     cond do

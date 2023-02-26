@@ -1,11 +1,9 @@
 defmodule Craft.Log.MapLog do
-  alias Craft.Log.EmptyEntry
-
   @behaviour Craft.Log
 
   @impl true
   def new(_group_name) do
-    append(%{}, [%EmptyEntry{term: -1}])
+    %{}
   end
 
   @impl true
@@ -44,7 +42,7 @@ defmodule Craft.Log.MapLog do
   end
 
   @impl true
-  def rewind(map, index) when index < map_size(map) do
+  def rewind(map, index) when index + 1 < map_size(map) do
     map
     |> Map.delete(latest_index(map))
     |> rewind(index)

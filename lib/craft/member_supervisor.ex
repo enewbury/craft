@@ -9,11 +9,6 @@ defmodule Craft.MemberSupervisor do
 
   @impl Supervisor
   def init(args) do
-    args =
-      args
-      |> Map.delete(:nodes)
-      |> Map.put(:other_nodes, List.delete(args.nodes, node()))
-
     {consensus_args, machine_args} =
       case args do
         # for testing
