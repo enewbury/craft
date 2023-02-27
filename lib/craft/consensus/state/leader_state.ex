@@ -1,9 +1,9 @@
 defmodule Craft.Consensus.LeaderState do
   alias Craft.Consensus
   alias Craft.Consensus.State
-  alias Craft.Consensus.State.Configuration
+  alias Craft.Consensus.State.Members
   alias Craft.Log
-  alias Craft.Log.NewConfigurationEntry
+  alias Craft.Log.MembershipEntry
   alias Craft.RPC.AppendEntries
 
   defstruct [
@@ -32,30 +32,17 @@ defmodule Craft.Consensus.LeaderState do
     state.log
     |> Log.fetch_from(state.commit_index)
     |> Enum.any?(fn
-      %NewConfigurationEntry{} -> true
+      %MembershipEntry{} -> true
       _ -> false
     end)
   end
 
   def add_node(%State{} = state, node) do
-    non_voting_nodes = MapSet.put(state.configuration.non_voting_nodes, node)
-
-    put_in(state.configuration.non_voting_nodes, non_voting_nodes)
+    %State{state | members: Members.add_member(state.members, node)}
   end
 
   def remove_node(%State{} = state, node) do
-    voting_nodes = MapSet.delete(state.configuration.voting_nodes, node)
-    non_voting_nodes = MapSet.delete(state.configuration.non_voting_nodes, node)
-
-    %State{
-      state |
-      configuration:
-        %Configuration{
-          state.configuration|
-          voting_nodes: voting_nodes,
-          non_voting_nodes: non_voting_nodes,
-        }
-    }
+    %State{state | members: Members.remove_member(state.members, node)}
   end
 
   def handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: true} = results) do

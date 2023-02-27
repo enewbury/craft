@@ -2,25 +2,22 @@ defmodule Craft.Consensus do
   @moduledoc false
 
   #
-  # follower -> lonely follower -> pre vote -> candidate -> leader
+  # follower -> lonely follower -> candidate -> leader
   #
   # follower: happily following leader
   # lonely follower: hasn't heart from leader in a while, would be willing to vote 'yes' in a pre-vote
-  # pre-vote follower: follower that's initiated a pre-vote
   # candidate: follower that's called an election after a successful majority pre-vote
   # leader: candidate that's won majority vote
   #
 
   alias Craft.Consensus.State
-  alias Craft.Consensus.State.Configuration
   alias Craft.Consensus.FollowerState
   alias Craft.Consensus.LonelyFollowerState
   alias Craft.Consensus.CandidateState
   alias Craft.Consensus.LeaderState
   alias Craft.Log
-  alias Craft.Log.EmptyEntry
   alias Craft.Log.CommandEntry
-  alias Craft.Log.NewConfigurationEntry
+  alias Craft.Log.MembershipEntry
   alias Craft.Machine
   alias Craft.RPC
   alias Craft.RPC.AppendEntries
@@ -63,8 +60,8 @@ defmodule Craft.Consensus do
     :gen_statem.call({name(name), node}, :state)
   end
 
-  def get_configuration(name, node) do
-    :gen_statem.call({name(name), node}, :get_configuration)
+  def configuration(name, node) do
+    :gen_statem.call({name(name), node}, :configuration)
   end
 
   def name(name), do: Module.concat(__MODULE__, name)
@@ -102,7 +99,7 @@ defmodule Craft.Consensus do
       def ready_to_test(:cast, :run, %State{mode_state: %CandidateState{}} = data), do: {:next_state, :candidate, data, []}
       def ready_to_test(:cast, :run, %State{mode_state: %LeaderState{}} = data), do: {:next_state, :leader, data, []}
       def ready_to_test({:call, _from}, :catch_up, _data), do: {:keep_state_and_data, [:postpone]}
-      for state <- [:follower, :lonely_follower, :prevote, :candidate, :leader] do
+      for state <- [:follower, :lonely_follower, :candidate, :leader] do
         def unquote(state)(event, msg, data) do
           send(data.nexus_pid, {:trace, DateTime.utc_now(), node(), unquote(state), event, msg, data})
           apply(Craft.Consensus, unquote(state), [event, msg, data])
@@ -114,12 +111,7 @@ defmodule Craft.Consensus do
   def init(args) do
     Logger.metadata(name: args.name, node: node())
 
-    data =
-      %State{
-        name: args.name,
-        configuration: Configuration.new(args.nodes),
-        log: Log.new(args.name, args.log_module)
-      }
+    data = State.new(args.name, args.nodes, args.log_module)
 
     Logger.info("started")
 
@@ -405,7 +397,20 @@ defmodule Craft.Consensus do
   def leader(:enter, _previous_state, data) do
     data = LeaderState.new(data)
 
-    entry = %EmptyEntry{term: data.current_term}
+    #
+    # when the cluster starts up, each node is explicitly given the same configuration to
+    # hold in-memory to bootstrap the cluster.
+    #
+    # however, we need to store the current config in the log so that when nodes restart,
+    # they have a way to determine what the current config is (walk backwards from the end of the
+    # log looking for the most recent config)
+    #
+    entry =
+      %MembershipEntry{
+        term: data.current_term,
+        members: data.members
+      }
+
     log = Log.append(data.log, entry)
     data = %State{data | log: log}
 
@@ -462,8 +467,16 @@ defmodule Craft.Consensus do
     {:keep_state, %State{data | log: log, mode_state: %LeaderState{data.mode_state | client_requests: client_requests}}}
   end
 
-  def leader({:call, from}, :get_configuration, data) do
-    {:keep_state_and_data, [{:reply, from, {:ok, data.mode_state.configuration}}]}
+  def leader({:call, from}, :configuration, data) do
+    {:ok, machine_module} = Machine.module(data)
+
+    config = %{
+      members: data.members,
+      machine_module: machine_module,
+      log_module: data.log.module
+    }
+
+    {:keep_state_and_data, [{:reply, from, {:ok, config}}]}
   end
 
   def leader({:call, from}, {:add_member, node}, data) do
@@ -473,9 +486,9 @@ defmodule Craft.Consensus do
       data = LeaderState.add_node(data, node)
 
       entry =
-        %NewConfigurationEntry{
+        %MembershipEntry{
           term: data.current_term,
-          configuration: data.configuration
+          members: data.members
         }
 
       log = Log.append(data.log, entry)

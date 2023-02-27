@@ -33,16 +33,18 @@ defmodule Craft do
     :pong = Node.ping(node)
     {:module, Craft} = :rpc.call(node, Code, :ensure_loaded, [Craft])
 
-
-    {:ok, configuration} = with_leader_redirect(name, cluster_nodes, &Consensus.get_configuration(name, &1))
-    |> IO.inspect
+    {:ok, %{
+        members: members,
+        machine_module: machine_module,
+        log_module: log_module
+     }} = with_leader_redirect(name, cluster_nodes, &Consensus.configuration(name, &1))
 
     # the nodes we provide to the new member here will eventually be overwritten when
-    # the new member processes the NewConfirgurationEntry as it catches up to the leader
+    # the new member processes the MembershipEntry as it catches up to the leader
     #
     # TODO: be ok with the member already being started (maybe it wasn't able to catch up fast enough last time)
     #
-    # {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, cluster_nodes, machine, opts])
+    # {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, cluster_nodes, machine_module, []])
   end
 
   defdelegate start_member(name, nodes, machine, opts), to: Craft.MemberSupervisor
@@ -71,7 +73,7 @@ defmodule Craft do
         Craft.LeaderCache.put(name, leader)
         if redirect_once do
           opts = Keyword.put(opts, :redirect_once, false)
-          with_leader_redirect(name, nodes, opts, func)
+          with_leader_redirect(name, nodes, func, opts)
         else
           {:error, {:not_leader, leader}}
         end

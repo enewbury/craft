@@ -29,7 +29,7 @@ defmodule Craft.MemberSupervisor do
     Supervisor.init(children, strategy: :one_for_all)
   end
 
-  def start_member(name, nodes, machine, opts) do
+  def start_member(name, nodes, machine, opts \\ []) do
     args =
       opts
       |> Map.new()

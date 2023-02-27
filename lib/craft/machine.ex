@@ -6,8 +6,9 @@ defmodule Craft.Machine do
   alias Craft.Consensus.FollowerState
   alias Craft.Consensus.LeaderState
   alias Craft.Log
-  alias Craft.Log.EmptyEntry
   alias Craft.Log.CommandEntry
+  alias Craft.Log.EmptyEntry
+  alias Craft.Log.MembershipEntry
 
   @type private :: any()
 
@@ -29,6 +30,12 @@ defmodule Craft.Machine do
 
   def start_link(args) do
     GenServer.start_link(__MODULE__, args, name: name(args.name))
+  end
+
+  def module(%ConsensusState{} = state) do
+    state.name
+    |> name()
+    |> GenServer.call(:module)
   end
 
   # FIXME: document that for persistent machines, the commit index and the
@@ -94,9 +101,10 @@ defmodule Craft.Machine do
     private =
       Enum.reduce(last_applied_log_index..new_commit_index//1, state.private, fn index, private ->
         case Log.fetch(log, index) do
-          # `nil` commands are for craft's internal use (0th log entry or log entries when a new leader is elected)
-          # so we don't tell the machine about them
           {:ok, %EmptyEntry{}} ->
+            private
+
+          {:ok, %MembershipEntry{}} ->
             private
 
           {:ok, %CommandEntry{command: command}} ->
@@ -129,6 +137,11 @@ defmodule Craft.Machine do
       end)
 
     {:noreply, %State{state | private: private, last_applied: new_commit_index}}
+  end
+
+  @impl true
+  def handle_call(:module, _from, state) do
+    {:reply, {:ok, state.module}, state}
   end
 
   defmacro __using__(opts) do

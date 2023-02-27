@@ -2,10 +2,11 @@ defmodule Craft.Consensus.State do
   alias Craft.Consensus.FollowerState
   alias Craft.Consensus.CandidateState
   alias Craft.Consensus.LeaderState
+  alias Craft.Log
 
   defstruct [
     :name,
-    :configuration,
+    :members,
     :log,
     :nexus_pid,
     :leader_id,
@@ -15,40 +16,60 @@ defmodule Craft.Consensus.State do
     :mode_state
   ]
 
-  defmodule Configuration do
+  defmodule Members do
     defstruct [
-      :voting_nodes,
-      # non-voting query replicas or nodes that are new to the cluster that are
-      # still catching up
+      # non-voting query nodes or nodes that are new to the cluster that are still catching up
       :non_voting_nodes,
-
-      # the application current state machine, will be used for machine upgrades later
-      # :machine
+      :voting_nodes
     ]
 
-    def new(voting_nodes, non_voting_nodes \\ []) do
+    def new(voting_nodes, non_voting_members \\ []) do
       %__MODULE__{
         voting_nodes: MapSet.new(voting_nodes),
-        non_voting_nodes: MapSet.new(non_voting_nodes)
+        non_voting_nodes: MapSet.new(non_voting_members)
+      }
+    end
+
+    # members are initially non-voting while they catch up
+    def add_member(%__MODULE__{} = members, node) do
+      %__MODULE__{
+        members |
+        non_voting_nodes: MapSet.put(members.non_voting_nodes, node)
+      }
+    end
+
+    def remove_member(%__MODULE__{} = members, node) do
+      %__MODULE__{
+        members |
+        voting_nodes: MapSet.delete(members.voting_nodes, node),
+        non_voting_nodes: MapSet.delete(members.non_voting_nodes, node)
       }
     end
   end
 
+  def new(name, nodes, log_module) do
+    %__MODULE__{
+      name: name,
+      members: Members.new(nodes),
+      log: Log.new(name, log_module)
+    }
+  end
+
   # TODO: pre-compute quorum and cache
   def quorum_needed(%__MODULE__{} = state) do
-    num_members = MapSet.size(state.configuration.voting_nodes) + 1
+    num_members = MapSet.size(state.members.voting_nodes) + 1
 
     div(num_members, 2) + 1
   end
 
   def other_voting_nodes(%__MODULE__{} = state) do
-    MapSet.delete(state.configuration.voting_nodes, node())
+    MapSet.delete(state.members.voting_nodes, node())
   end
 
   # TODO: pre-compute and cache
   def other_nodes(%__MODULE__{} = state) do
-    state.configuration.voting_nodes
-    |> MapSet.union(state.configuration.non_voting_nodes)
+    state.members.voting_nodes
+    |> MapSet.union(state.members.non_voting_nodes)
     |> MapSet.delete(node())
   end
 

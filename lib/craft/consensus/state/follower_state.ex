@@ -1,6 +1,7 @@
 defmodule Craft.Consensus.FollowerState do
   alias Craft.Consensus.State
   alias Craft.Log
+  alias Craft.Log.MembershipEntry
   alias Craft.RPC.AppendEntries
   alias Craft.RPC.RequestVote
 
@@ -60,7 +61,15 @@ defmodule Craft.Consensus.FollowerState do
 
         state = %State{state | log: log, commit_index: min(append_entries.leader_commit, Log.latest_index(log))}
 
-        {true, state}
+        append_entries.entries
+        |> Enum.reverse()
+        |> Enum.find_value({true, state}, fn
+          %MembershipEntry{members: members} ->
+            {true, %State{state | members: members}}
+
+          _ ->
+            false
+        end)
 
       _ ->
         {false, %State{state | log: Log.rewind(state.log, append_entries.prev_log_index)}}

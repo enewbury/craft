@@ -1,7 +1,7 @@
 defmodule Craft.Log do
   alias Craft.Log.EmptyEntry
   alias Craft.Log.CommandEntry
-  alias Craft.Log.NewConfigurationEntry
+  alias Craft.Log.MembershipEntry
 
   # this module is kinda like a bastardized mix of a behaviour and a protocol
   #
@@ -16,7 +16,7 @@ defmodule Craft.Log do
   # so yeah, if you have a better idea how to do this, holler at me please. :)
   #
 
-  @type entry :: EmptyEntry.t() | CommandEntry.t() | NewConfigurationEntry.t()
+  @type entry :: EmptyEntry.t() | CommandEntry.t() | MembershipEntry.t()
 
   #TODO: proper typespecs
   @callback new(group_name :: String.t()) :: any()
