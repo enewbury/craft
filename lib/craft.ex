@@ -2,7 +2,7 @@ defmodule Craft do
   alias Craft.Consensus
   alias Craft.Log.MapLog
 
-  #FIXME
+  # FIXME
   @type command :: any()
   @type reply :: any()
   @type side_effects :: any()
@@ -22,7 +22,7 @@ defmodule Craft do
   end
 
   def stop_group(name, nodes) do
-    #TODO: ask group for its nodes instead of relying on user to pass in the correct set of nodes
+    # TODO: ask group for its nodes instead of relying on user to pass in the correct set of nodes
 
     for node <- nodes do
       :ok = :rpc.call(node, Craft, :stop_member, [name])
@@ -31,20 +31,27 @@ defmodule Craft do
 
   def add_member(name, node, cluster_nodes) do
     :pong = Node.ping(node)
-    {:module, Craft} = :rpc.call(node, Code, :ensure_loaded, [Craft])
 
-    {:ok, %{
-        members: members,
-        machine_module: machine_module,
-        log_module: log_module
+    {:ok,
+     %{
+       members: members,
+       machine_module: machine_module,
+       log_module: log_module
      }} = with_leader_redirect(name, cluster_nodes, &Consensus.configuration(name, &1))
 
+    {:module, Craft} = :rpc.call(node, Code, :ensure_loaded, [Craft])
+    {:module, ^machine_module} = :rpc.call(node, Code, :ensure_loaded, [machine_module])
+    {:module, ^log_module} = :rpc.call(node, Code, :ensure_loaded, [log_module])
+
+    :ok = with_leader_redirect(name, cluster_nodes, &Consensus.add_member(name, &1, node))
+
+    #
     # the nodes we provide to the new member here will eventually be overwritten when
     # the new member processes the MembershipEntry as it catches up to the leader
     #
     # TODO: be ok with the member already being started (maybe it wasn't able to catch up fast enough last time)
     #
-    # {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, cluster_nodes, machine_module, []])
+    {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, members.voting_nodes, machine_module, [log_module: log_module]])
   end
 
   defdelegate start_member(name, nodes, machine, opts), to: Craft.MemberSupervisor
@@ -71,6 +78,7 @@ defmodule Craft do
     case func.(node) do
       {:error, {:not_leader, leader}} ->
         Craft.LeaderCache.put(name, leader)
+
         if redirect_once do
           opts = Keyword.put(opts, :redirect_once, false)
           with_leader_redirect(name, nodes, func, opts)
@@ -81,7 +89,6 @@ defmodule Craft do
       reply ->
         reply
     end
-
   end
 
   def step_down(name, node) do
@@ -91,19 +98,18 @@ defmodule Craft do
   defdelegate start_dev_test_cluster(num \\ 5), to: Craft.Test.ClusterNodes, as: :spawn_nodes
 
   def start_dev_consensus_group(nodes) do
-    :crypto.strong_rand_bytes(3)
-    |> Base.encode16()
-    |> start_group(nodes, Craft.SimpleMachine)
+    name = :crypto.strong_rand_bytes(3) |> Base.encode16()
 
-    :ok
+    start_group(name, nodes, Craft.SimpleMachine)
+
+    name
   end
 
   def state(name, nodes) do
     Enum.into(nodes, %{}, fn node ->
       {node,
-        consensus: {Consensus.name(name), node} |> :sys.get_state(),
-        machine: {Craft.Machine.name(name), node} |> :sys.get_state()
-      }
+       consensus: {Consensus.name(name), node} |> :sys.get_state(),
+       machine: {Craft.Machine.name(name), node} |> :sys.get_state()}
     end)
   end
 end

@@ -23,14 +23,14 @@ defmodule Craft.Consensus.LeaderState do
       leader_id: node(),
       mode_state: %__MODULE__{
         next_indices: next_indices,
-        match_indices: match_indices,
+        match_indices: match_indices
       }
     }
   end
 
   def config_change_in_progress?(%State{} = state) do
     state.log
-    |> Log.fetch_from(state.commit_index)
+    |> Log.fetch_from(state.commit_index + 1)
     |> Enum.any?(fn
       %MembershipEntry{} -> true
       _ -> false
@@ -38,11 +38,30 @@ defmodule Craft.Consensus.LeaderState do
   end
 
   def add_node(%State{} = state, node) do
-    %State{state | members: Members.add_member(state.members, node)}
+    next_index = Log.latest_index(state.log) + 1
+    next_indices = Map.put(state.mode_state.next_indices, node, next_index)
+    match_indices = Map.put(state.mode_state.match_indices, node, 0)
+
+    mode_state =
+      %__MODULE__{
+        next_indices: next_indices,
+        match_indices: match_indices
+      }
+
+    %State{state | members: Members.add_member(state.members, node), mode_state: mode_state}
   end
 
   def remove_node(%State{} = state, node) do
-    %State{state | members: Members.remove_member(state.members, node)}
+    next_indices = Map.delete(state.mode_state.next_indices, node)
+    match_indices = Map.delete(state.mode_state.match_indices, node)
+
+    mode_state =
+      %__MODULE__{
+        next_indices: next_indices,
+        match_indices: match_indices
+      }
+
+    %State{state | members: Members.remove_member(state.members, node), mode_state: mode_state}
   end
 
   def handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: true} = results) do

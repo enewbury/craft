@@ -64,12 +64,16 @@ defmodule Craft.Consensus do
     :gen_statem.call({name(name), node}, :configuration)
   end
 
-  def name(name), do: Module.concat(__MODULE__, name)
+  def add_member(name, node, member) do
+    :gen_statem.call({name(name), node}, {:add_member, member})
+  end
 
   # called after the machine restarts to get any committed entries that need to be applied
   def catch_up(name) do
     :gen_statem.call({name(name), node()}, :catch_up)
   end
+
+  def name(name), do: Module.concat(__MODULE__, name)
 
   def quorum_reached?(state, num) do
     num >= State.quorum_needed(state)
@@ -506,7 +510,7 @@ defmodule Craft.Consensus do
 
       # FIXME: reply :ok to data.mode_state.membership_change_request_from when member
       # is caught up
-      {:keep_state, data}
+      {:keep_state, data, [{:reply, from, :ok}]}
     end
   end
 
