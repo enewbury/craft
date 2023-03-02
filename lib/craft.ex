@@ -106,7 +106,11 @@ defmodule Craft do
   end
 
   def state(name, nodes) do
-    Enum.into(nodes, %{}, fn node ->
+    {:ok, %{members: members}} = with_leader_redirect(name, nodes, &Consensus.configuration(name, &1))
+
+    members.voting_nodes
+    |> MapSet.union(members.non_voting_nodes)
+    |> Enum.into(%{}, fn node ->
       {node,
        consensus: {Consensus.name(name), node} |> :sys.get_state(),
        machine: {Craft.Machine.name(name), node} |> :sys.get_state()}
