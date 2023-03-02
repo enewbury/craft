@@ -43,7 +43,9 @@ defmodule Craft do
     {:module, ^machine_module} = :rpc.call(node, Code, :ensure_loaded, [machine_module])
     {:module, ^log_module} = :rpc.call(node, Code, :ensure_loaded, [log_module])
 
-    :ok = with_leader_redirect(name, cluster_nodes, &Consensus.add_member(name, &1, node))
+    {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, members.voting_nodes, machine_module, [log_module: log_module]])
+
+    with_leader_redirect(name, cluster_nodes, &Consensus.add_member(name, &1, node))
 
     #
     # the nodes we provide to the new member here will eventually be overwritten when
@@ -51,7 +53,6 @@ defmodule Craft do
     #
     # TODO: be ok with the member already being started (maybe it wasn't able to catch up fast enough last time)
     #
-    {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, members.voting_nodes, machine_module, [log_module: log_module]])
   end
 
   defdelegate start_member(name, nodes, machine, opts), to: Craft.MemberSupervisor

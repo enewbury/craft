@@ -45,6 +45,14 @@ defmodule Craft.Consensus.State do
         non_voting_nodes: MapSet.delete(members.non_voting_nodes, node)
       }
     end
+
+    def allow_node_to_vote(%__MODULE__{} = members, node) do
+      %__MODULE__{
+        members |
+        voting_nodes: MapSet.put(members.voting_nodes, node),
+        non_voting_nodes: MapSet.delete(members.non_voting_nodes, node)
+      }
+    end
   end
 
   def new(name, nodes, log_module) do

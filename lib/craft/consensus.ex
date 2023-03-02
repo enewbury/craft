@@ -11,10 +11,12 @@ defmodule Craft.Consensus do
   #
 
   alias Craft.Consensus.State
+  alias Craft.Consensus.State.Members
   alias Craft.Consensus.FollowerState
   alias Craft.Consensus.LonelyFollowerState
   alias Craft.Consensus.CandidateState
   alias Craft.Consensus.LeaderState
+  alias Craft.Consensus.LeaderState.MembershipChange
   alias Craft.Log
   alias Craft.Log.CommandEntry
   alias Craft.Log.MembershipEntry
@@ -409,14 +411,7 @@ defmodule Craft.Consensus do
     # they have a way to determine what the current config is (walk backwards from the end of the
     # log looking for the most recent config)
     #
-    entry =
-      %MembershipEntry{
-        term: data.current_term,
-        members: data.members
-      }
-
-    log = Log.append(data.log, entry)
-    data = %State{data | log: log}
+    data = %State{data | log: Log.append(data.log, MembershipEntry.new(data))}
 
     Logger.info("became leader", logger_metadata(data))
 
@@ -452,7 +447,21 @@ defmodule Craft.Consensus do
       Machine.commit_index_bumped(data)
     end
 
-    {:keep_state, data}
+    # the node that's being added to the group has caught up
+    case data.mode_state do
+      %LeaderState{membership_change: %MembershipChange{action: :add, node: node, from: from}} ->
+        if Log.latest_index(data.log) - 1 == Map.get(data.mode_state.next_indices, node) do
+          data = %State{data | members: Members.allow_node_to_vote(data.members, node)}
+          data = %State{data | log: Log.append(data.log, MembershipEntry.new(data))}
+
+          {:keep_state, data, [{:reply, from, :ok}]}
+        else
+          {:keep_state, data}
+        end
+
+      _ ->
+        {:keep_state, data}
+    end
   end
 
   def leader(:cast, :step_down, data) do
@@ -487,7 +496,7 @@ defmodule Craft.Consensus do
     if LeaderState.config_change_in_progress?(data) do
       {:keep_state_and_data, [{:reply, from, {:error, :config_change_in_progress}}]}
     else
-      data = LeaderState.add_node(data, node)
+      data = LeaderState.add_node(data, node, from)
 
       entry =
         %MembershipEntry{
@@ -495,22 +504,9 @@ defmodule Craft.Consensus do
           members: data.members
         }
 
-      log = Log.append(data.log, entry)
+      data = %State{data | log: Log.append(data.log, entry)}
 
-      data =
-        %State{
-          data |
-          log: log,
-          mode_state:
-            %LeaderState{
-              data.mode_state |
-              membership_change_request_from: from
-            }
-        }
-
-      # FIXME: reply :ok to data.mode_state.membership_change_request_from when member
-      # is caught up
-      {:keep_state, data, [{:reply, from, :ok}]}
+      {:keep_state, data}
     end
   end
 

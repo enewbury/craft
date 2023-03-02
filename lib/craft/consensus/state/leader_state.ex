@@ -9,9 +9,14 @@ defmodule Craft.Consensus.LeaderState do
   defstruct [
     :next_indices,
     :match_indices,
-    :membership_change_request_from,
+    :membership_change,
     client_requests: %{},
   ]
+
+  defmodule MembershipChange do
+    # action: :add | :remove
+    defstruct [:action, :node, :from]
+  end
 
   def new(%State{} = state) do
     next_index = Log.latest_index(state.log) + 1
@@ -37,28 +42,34 @@ defmodule Craft.Consensus.LeaderState do
     end)
   end
 
-  def add_node(%State{} = state, node) do
+  def add_node(%State{} = state, node, from) do
     next_index = Log.latest_index(state.log) + 1
     next_indices = Map.put(state.mode_state.next_indices, node, next_index)
     match_indices = Map.put(state.mode_state.match_indices, node, 0)
 
+    membership_change = %MembershipChange{action: :add, node: node, from: from}
+
     mode_state =
       %__MODULE__{
         next_indices: next_indices,
-        match_indices: match_indices
+        match_indices: match_indices,
+        membership_change: membership_change
       }
 
     %State{state | members: Members.add_member(state.members, node), mode_state: mode_state}
   end
 
-  def remove_node(%State{} = state, node) do
+  def remove_node(%State{} = state, node, from) do
     next_indices = Map.delete(state.mode_state.next_indices, node)
     match_indices = Map.delete(state.mode_state.match_indices, node)
+
+    membership_change = %MembershipChange{action: :remove, node: node, from: from}
 
     mode_state =
       %__MODULE__{
         next_indices: next_indices,
-        match_indices: match_indices
+        match_indices: match_indices,
+        membership_change: membership_change
       }
 
     %State{state | members: Members.remove_member(state.members, node), mode_state: mode_state}
