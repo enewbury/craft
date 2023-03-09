@@ -48,4 +48,17 @@ defmodule Craft.Log.MapLog do
     |> rewind(index)
   end
   def rewind(map, _index), do: map
+
+  @impl true
+  def reverse_find(map, fun) do
+    Enum.find_value(latest_index(map)..0, fn i ->
+      {:ok, entry} = fetch(map, i)
+
+      if fun.(entry) do
+        entry
+      else
+        false
+      end
+    end)
+  end
 end

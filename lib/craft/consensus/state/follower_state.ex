@@ -54,6 +54,9 @@ defmodule Craft.Consensus.FollowerState do
 
     case Log.fetch(state.log, append_entries.prev_log_index) do
       {:ok, %{term: ^prev_log_term}} ->
+
+        rewound_entries = Log.fetch_from(state.log, append_entries.prev_log_index + 1)
+
         log =
           state.log
           |> Log.rewind(append_entries.prev_log_index)
@@ -61,15 +64,33 @@ defmodule Craft.Consensus.FollowerState do
 
         state = %State{state | log: log, commit_index: min(append_entries.leader_commit, Log.latest_index(log))}
 
-        append_entries.entries
-        |> Enum.reverse()
-        |> Enum.find_value({true, state}, fn
+        new_membership_entry =
+          append_entries.entries
+          |> Enum.reverse()
+          |> Enum.find(fn
+            %MembershipEntry{} ->
+              true
+
+            _ ->
+              false
+          end)
+
+        case new_membership_entry do
           %MembershipEntry{members: members} ->
             {true, %State{state | members: members}}
 
-          _ ->
-            false
-        end)
+          # if the entries that we've rewound contained a membership entry, and the incoming entries from the
+          # leader don't include a new membership entry, we need to look back through the log until we find one
+          # to determine the current cluster membership (section 4.1)
+          nil ->
+            Enum.find_value(rewound_entries, {true, state}, fn
+              %MembershipEntry{members: members} ->
+                {true, %State{state | members: members}}
+
+              _ ->
+                false
+            end)
+        end
 
       _ ->
         {false, %State{state | log: Log.rewind(state.log, append_entries.prev_log_index)}}

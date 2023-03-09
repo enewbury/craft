@@ -447,12 +447,24 @@ defmodule Craft.Consensus do
       Machine.commit_index_bumped(data)
     end
 
-    # the node that's being added to the group has caught up
-    case data.mode_state do
-      %LeaderState{membership_change: %MembershipChange{action: :add, node: node, from: from}} ->
+    data =
+      Enum.reduce(data.members.catching_up_nodes, data, fn node, data ->
         if Log.latest_index(data.log) - 1 == Map.get(data.mode_state.next_indices, node) do
+          Logger.info("node #{inspect node} has caught up", logger_metadata(data))
+
           data = %State{data | members: Members.allow_node_to_vote(data.members, node)}
-          data = %State{data | log: Log.append(data.log, MembershipEntry.new(data))}
+
+          %State{data | log: Log.append(data.log, MembershipEntry.new(data))}
+        else
+          data
+        end
+      end)
+
+    case data.mode_state do
+      %LeaderState{membership_change: %MembershipChange{action: :add, from: from}} ->
+        # the configuration change has been acknowledged by a majority of the cluster
+        if Log.latest_index(data.log) >= data.commit_index do
+          data = %State{data | mode_state: %LeaderState{data.mode_state | membership_change: nil}}
 
           {:keep_state, data, [{:reply, from, :ok}]}
         else

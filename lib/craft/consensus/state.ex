@@ -18,29 +18,34 @@ defmodule Craft.Consensus.State do
 
   defmodule Members do
     defstruct [
-      # non-voting query nodes or nodes that are new to the cluster that are still catching up
+      :catching_up_nodes,
       :non_voting_nodes,
       :voting_nodes
     ]
 
     def new(voting_nodes, non_voting_members \\ []) do
       %__MODULE__{
+        catching_up_nodes: MapSet.new(),
         voting_nodes: MapSet.new(voting_nodes),
         non_voting_nodes: MapSet.new(non_voting_members)
       }
     end
 
-    # members are initially non-voting while they catch up
     def add_member(%__MODULE__{} = members, node) do
+      if MapSet.member?(members.voting_nodes, node) or MapSet.member?(members.non_voting_nodes, node) do
+        raise "member already added"
+      end
+
       %__MODULE__{
         members |
-        non_voting_nodes: MapSet.put(members.non_voting_nodes, node)
+        catching_up_nodes: MapSet.put(members.catching_up_nodes, node)
       }
     end
 
     def remove_member(%__MODULE__{} = members, node) do
       %__MODULE__{
         members |
+        catching_up_nodes: MapSet.delete(members.catching_up_nodes, node),
         voting_nodes: MapSet.delete(members.voting_nodes, node),
         non_voting_nodes: MapSet.delete(members.non_voting_nodes, node)
       }
@@ -50,6 +55,7 @@ defmodule Craft.Consensus.State do
       %__MODULE__{
         members |
         voting_nodes: MapSet.put(members.voting_nodes, node),
+        catching_up_nodes: MapSet.delete(members.catching_up_nodes, node),
         non_voting_nodes: MapSet.delete(members.non_voting_nodes, node)
       }
     end
@@ -77,6 +83,7 @@ defmodule Craft.Consensus.State do
   # TODO: pre-compute and cache
   def other_nodes(%__MODULE__{} = state) do
     state.members.voting_nodes
+    |> MapSet.union(state.members.catching_up_nodes)
     |> MapSet.union(state.members.non_voting_nodes)
     |> MapSet.delete(node())
   end

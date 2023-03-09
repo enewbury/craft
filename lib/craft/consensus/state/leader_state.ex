@@ -18,6 +18,9 @@ defmodule Craft.Consensus.LeaderState do
     defstruct [:action, :node, :from]
   end
 
+  # FIXME: if config_change_in_progress, reconstruct :membership_change?
+  # this may need to happen after new leader figures out the commit index
+  # may need to have stored the :membership_change in the MembershipEntry
   def new(%State{} = state) do
     next_index = Log.latest_index(state.log) + 1
     next_indices = state |> State.other_nodes() |> Map.new(&{&1, next_index})

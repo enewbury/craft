@@ -26,6 +26,7 @@ defmodule Craft.Log do
   @callback fetch_from(any(), index :: integer()) :: [entry()]
   @callback append(any(), [entry()]) :: any()
   @callback rewind(any(), index :: integer()) :: any() # remove all long entries after index
+  @callback reverse_find(any(), fun()) :: entry() | nil
 
   defstruct [
     :module,
@@ -79,5 +80,9 @@ defmodule Craft.Log do
 
   def rewind(%__MODULE__{module: module, private: private} = log, index) do
     %__MODULE__{log | private: module.rewind(private, index)}
+  end
+
+  def reverse_find(%__MODULE__{module: module, private: private} = log, fun) do
+    %__MODULE__{log | private: module.reverse_search(private, fun)}
   end
 end
