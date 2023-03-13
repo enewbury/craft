@@ -90,8 +90,19 @@ defmodule Craft.Consensus.LeaderState do
     # when we become leader, match indexes work their way up from zero non-uniformly
     # so it's entirely possible that we don't find a quorum of followers with a match index
     # until match indexes work their way up to parity
+    #
+    # this node (the leader), might not be voting in majorities if it is removing itself
+    # from the cluster (section 4.2.2)
+    #
+    match_indices_for_commitment =
+      if Members.this_node_can_vote?(state.members) do
+        Map.put(state.mode_state.match_indices, node(), Log.latest_index(state.log))
+      else
+        state.mode_state.match_indices
+      end
+
     highest_uncommitted_match_index =
-      state.mode_state.match_indices
+      match_indices_for_commitment
       |> Map.values()
       |> Enum.filter(fn index -> index >= state.commit_index end)
       |> Enum.uniq()

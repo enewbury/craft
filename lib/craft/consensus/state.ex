@@ -59,6 +59,10 @@ defmodule Craft.Consensus.State do
         non_voting_nodes: MapSet.delete(members.non_voting_nodes, node)
       }
     end
+
+    def this_node_can_vote?(%__MODULE__{} = members) do
+      MapSet.member?(members.voting_nodes, node())
+    end
   end
 
   def new(name, nodes, log_module) do

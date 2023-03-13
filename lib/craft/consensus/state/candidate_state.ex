@@ -1,9 +1,10 @@
 defmodule Craft.Consensus.CandidateState do
   alias Craft.Consensus.State
+  alias Craft.Consensus.State.Members
   alias Craft.RPC.RequestVote
 
   defstruct [
-    num_votes: 1,
+    num_votes: 0,
     received_votes_from: MapSet.new(),
   ]
 
@@ -11,7 +12,10 @@ defmodule Craft.Consensus.CandidateState do
     %State{
       state |
       current_term: state.current_term + 1,
-      mode_state: %__MODULE__{}
+      mode_state: %__MODULE__{
+        # this node might not be voting in majorities if it is being removed from the cluster (section 4.2.2)
+        num_votes: (if Members.this_node_can_vote?(state.members), do: 1, else: 0)
+      }
     }
   end
 
