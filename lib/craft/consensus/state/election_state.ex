@@ -1,4 +1,4 @@
-defmodule Craft.Consensus.CandidateState do
+defmodule Craft.Consensus.ElectionState do
   alias Craft.Consensus.State
   alias Craft.Consensus.State.Members
   alias Craft.RPC.RequestVote
@@ -9,13 +9,9 @@ defmodule Craft.Consensus.CandidateState do
   ]
 
   def new(%State{} = state) do
-    %State{
-      state |
-      current_term: state.current_term + 1,
-      mode_state: %__MODULE__{
-        # this node might not be voting in majorities if it is being removed from the cluster (section 4.2.2)
-        num_votes: (if Members.this_node_can_vote?(state.members), do: 1, else: 0)
-      }
+    %__MODULE__{
+      # this node might not be voting in majorities if it is being removed from the cluster (section 4.2.2)
+      num_votes: (if Members.this_node_can_vote?(state.members), do: 1, else: 0)
     }
   end
 
@@ -39,12 +35,12 @@ defmodule Craft.Consensus.CandidateState do
     election_result(state, state.mode_state)
   end
 
-  def election_result(%State{} = state, %__MODULE__{} = candidate_state) do
+  def election_result(%State{} = state, %__MODULE__{} = election_state) do
     quorum_needed = State.quorum_needed(state)
-    num_voted_no = MapSet.size(candidate_state.received_votes_from) - candidate_state.num_votes
+    num_voted_no = MapSet.size(election_state.received_votes_from) - election_state.num_votes
 
     cond do
-      candidate_state.num_votes >= quorum_needed ->
+      election_state.num_votes >= quorum_needed ->
         :won
 
       num_voted_no >= quorum_needed ->

@@ -6,7 +6,8 @@ defmodule Craft.RPC.RequestVote do
     :candidate_id,
     :last_log_index,
     :last_log_term,
-    :pre_vote
+    :pre_vote,
+    # :leadership_transfer # section 4.2.3
   ]
 
   def new(%State{} = state, pre_vote: pre_vote) do

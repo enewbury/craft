@@ -29,8 +29,6 @@ defmodule Craft.RPC.AppendEntries do
   end
 
   defmodule Results do
-    alias Craft.Consensus.FollowerState
-
     defstruct [
       :term,
       :from,
@@ -38,7 +36,7 @@ defmodule Craft.RPC.AppendEntries do
       :latest_index # if successful, the follower's latest index
     ]
 
-    def new(%State{mode_state: %FollowerState{}} = state, success) do
+    def new(%State{mode_state: nil} = state, success) do
       %__MODULE__{
         term: state.current_term,
         from: node(),

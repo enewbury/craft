@@ -7,6 +7,6 @@ config :logger,
 config :logger, :console,
   level: :info,
   format: "[$level] $metadata$message\n",
-  metadata: [:name, :t, :node, :term]
+  metadata: [:name, :t, :term, :node]
 
 #import_config "#{config_env()}.exs"

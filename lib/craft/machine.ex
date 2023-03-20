@@ -3,7 +3,6 @@ defmodule Craft.Machine do
 
   alias Craft.Consensus
   alias Craft.Consensus.State, as: ConsensusState
-  alias Craft.Consensus.FollowerState
   alias Craft.Consensus.LeaderState
   alias Craft.Log
   alias Craft.Log.CommandEntry
@@ -56,7 +55,7 @@ defmodule Craft.Machine do
     |> GenServer.cast({:commit_index_bumped, state.commit_index, state.log, state.mode_state.client_requests})
   end
 
-  def commit_index_bumped(%ConsensusState{mode_state: %FollowerState{}} = state) do
+  def commit_index_bumped(%ConsensusState{mode_state: nil} = state) do
     state.name
     |> name()
     |> GenServer.cast({:commit_index_bumped, state.commit_index, state.log})
