@@ -7,14 +7,18 @@ defmodule Craft.RPC.RequestVote do
     :last_log_index,
     :last_log_term,
     :pre_vote,
-    # :leadership_transfer # section 4.2.3
+    :leadership_transfer # section 4.2.3
   ]
 
-  def new(%State{} = state, pre_vote: pre_vote) do
+  def new(%State{} = state, opts) do
+    pre_vote = Keyword.get(opts, :pre_vote, false)
+    leadership_transfer = Keyword.get(opts, :leadership_transfer, false)
+
     %__MODULE__{
       term: state.current_term,
       candidate_id: node(),
-      pre_vote: pre_vote
+      pre_vote: pre_vote,
+      leadership_transfer: leadership_transfer
     }
   end
 

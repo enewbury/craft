@@ -2,6 +2,7 @@ defmodule Craft.Consensus.State do
   alias Craft.Consensus.ElectionState
   alias Craft.Consensus.LeaderState
   alias Craft.Consensus.LonelyState
+  alias Craft.Consensus.FollowerState
   alias Craft.Log
 
   defstruct [
@@ -100,12 +101,11 @@ defmodule Craft.Consensus.State do
 
     color =
       case state.mode_state do
-        # follower
-        nil ->
-          :cyan
-
         %LonelyState{} ->
           :light_red
+
+        %FollowerState{} ->
+          :cyan
 
         %ElectionState{} ->
           :blue

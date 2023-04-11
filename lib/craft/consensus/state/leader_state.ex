@@ -10,12 +10,41 @@ defmodule Craft.Consensus.LeaderState do
     :next_indices,
     :match_indices,
     :membership_change,
-    client_requests: %{},
+    :leadership_transfer,
+    client_requests: %{}
   ]
 
   defmodule MembershipChange do
     # action: :add | :remove
-    defstruct [:action, :node, :from]
+    defstruct [:action, :node, :from, :log_index]
+  end
+
+  defmodule LeadershipTransfer do
+    defstruct [
+      :current_candidate,
+      :from,
+      candidates: MapSet.new()
+    ]
+
+    def new(transfer_to, from) do
+      %__MODULE__{current_candidate: transfer_to, from: from}
+    end
+
+    def new(%State{} = state) do
+      %__MODULE__{candidates: state.members.voting_nodes}
+      |> next_transfer_candidate()
+    end
+
+    def next_transfer_candidate(%__MODULE__{} = leadership_transfer) do
+      if Enum.empty?(leadership_transfer.candidates) do
+        :error
+      else
+        candidate = Enum.random(leadership_transfer.candidates)
+        candidates = MapSet.delete(leadership_transfer.candidates, candidate)
+
+        %__MODULE__{leadership_transfer | current_candidate: candidate, candidates: candidates}
+      end
+    end
   end
 
   # FIXME: if config_change_in_progress, reconstruct :membership_change?
@@ -45,12 +74,12 @@ defmodule Craft.Consensus.LeaderState do
     end)
   end
 
-  def add_node(%State{} = state, node, from) do
+  def add_node(%State{} = state, node, from, log_index) do
     next_index = Log.latest_index(state.log) + 1
     next_indices = Map.put(state.mode_state.next_indices, node, next_index)
     match_indices = Map.put(state.mode_state.match_indices, node, 0)
 
-    membership_change = %MembershipChange{action: :add, node: node, from: from}
+    membership_change = %MembershipChange{action: :add, node: node, from: from, log_index: log_index}
 
     mode_state =
       %__MODULE__{
@@ -62,11 +91,11 @@ defmodule Craft.Consensus.LeaderState do
     %State{state | members: Members.add_member(state.members, node), mode_state: mode_state}
   end
 
-  def remove_node(%State{} = state, node, from) do
+  def remove_node(%State{} = state, node, from, log_index) do
     next_indices = Map.delete(state.mode_state.next_indices, node)
     match_indices = Map.delete(state.mode_state.match_indices, node)
 
-    membership_change = %MembershipChange{action: :remove, node: node, from: from}
+    membership_change = %MembershipChange{action: :remove, node: node, from: from, log_index: log_index}
 
     mode_state =
       %__MODULE__{
@@ -127,5 +156,13 @@ defmodule Craft.Consensus.LeaderState do
     next_indices = Map.update!(state.mode_state.next_indices, results.from, fn next_index -> next_index - 1 end)
 
     %State{state | mode_state: %__MODULE__{state.mode_state | next_indices: next_indices}}
+  end
+
+  def transfer_leadership(%State{} = state) do
+    put_in(state.mode_state.leadership_transfer, LeadershipTransfer.new(state))
+  end
+
+  def transfer_leadership(%State{} = state, to_member, from \\ nil) do
+    put_in(state.mode_state.leadership_transfer, LeadershipTransfer.new(to_member, from))
   end
 end

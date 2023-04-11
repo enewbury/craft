@@ -11,8 +11,8 @@ defmodule Craft.RPC do
   # end
 
   # TODO: parallelize
-  def request_vote(state, pre_vote: pre_vote) do
-    request_vote = RequestVote.new(state, pre_vote: pre_vote)
+  def request_vote(state, opts) do
+    request_vote = RequestVote.new(state, opts)
 
     for to_node <- State.other_voting_nodes(state) do
       send_message(request_vote, to_node, state)

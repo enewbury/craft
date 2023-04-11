@@ -6,7 +6,7 @@ defmodule Craft.Log.MembershipEntry do
     :members
   ]
 
-  def new(%State{} = state, change \\ nil) do
+  def new(%State{} = state) do
     %__MODULE__{
       term: state.current_term,
       members: state.members
