@@ -12,9 +12,9 @@ defmodule Craft.Consensus do
 
   alias Craft.Consensus.State
   alias Craft.Consensus.State.Members
-  alias Craft.Consensus.ElectionState
   alias Craft.Consensus.LonelyState
   alias Craft.Consensus.FollowerState
+  alias Craft.Consensus.CandidateState
   alias Craft.Consensus.LeaderState
   alias Craft.Consensus.LeaderState.LeadershipTransfer
   alias Craft.Consensus.LeaderState.MembershipChange
@@ -50,7 +50,23 @@ defmodule Craft.Consensus do
     id = {self(), make_ref()}
 
     # FIXME: use call instead
-    :gen_statem.cast({name(name), node}, {:command, id, command})
+    :gen_statem.cast({name(name), node}, {:machine_command, id, command})
+
+    receive do
+      {^id, reply} ->
+        reply
+
+      after
+        timeout ->
+          {:error, :timeout}
+    end
+  end
+
+  def cast_user_command(name, node, msg, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+    id = {self(), make_ref()}
+
+    :gen_statem.cast({name(name), node}, {:user_command, id, msg})
 
     receive do
       {^id, reply} ->
@@ -76,6 +92,10 @@ defmodule Craft.Consensus do
 
   def remove_member(name, node, member) do
     :gen_statem.call({name(name), node}, {:remove_member, member})
+  end
+
+  def transfer_leadership(name, node, to_node) do
+    cast_user_command(name, node, {:transfer_leadership, to_node})
   end
 
   # called after the machine restarts to get any committed entries that need to be applied
@@ -230,7 +250,13 @@ defmodule Craft.Consensus do
     {:next_state, :follower, data, [:postpone]}
   end
 
-  def lonely(:cast, {:command, {caller_pid, _ref} = id, _command}, data) do
+  def lonely(:cast, {:user_command, {caller_pid, _ref} = id, _command}, data) do
+    send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
+
+    :keep_state_and_data
+  end
+
+  def lonely(:cast, {:machine_command, {caller_pid, _ref} = id, _command}, data) do
     send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
 
     :keep_state_and_data
@@ -352,13 +378,19 @@ defmodule Craft.Consensus do
     if append_entries.leadership_transfer &&
       append_entries.leadership_transfer.latest_index == Log.latest_index(data.log) &&
       append_entries.leadership_transfer.latest_term == Log.latest_term(data.log) do
-      {:next_state, :candidate, data, []}
+      {:next_state, :candidate, {data, append_entries.leadership_transfer.from}}
     else
       {:keep_state, data, [become_lonely_timeout()]}
     end
   end
 
-  def follower(:cast, {:command, {caller_pid, _ref} = id, _command}, data) do
+  def follower(:cast, {:user_command, {caller_pid, _ref} = id, _command}, data) do
+    send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
+
+    :keep_state_and_data
+  end
+
+  def follower(:cast, {:machine_command, {caller_pid, _ref} = id, _command}, data) do
     send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
 
     :keep_state_and_data
@@ -382,22 +414,25 @@ defmodule Craft.Consensus do
   # Candidate
   #
 
-  def candidate(:enter, previous_state, data) do
-    election_timeout = @election_timeout + jitter()
-    data =
-      %State{
-        data |
-        current_term: data.current_term + 1,
-        mode_state: ElectionState.new(data)
-      }
+  def candidate(:enter, :follower, {data, leadership_transfer_request_id}) do
+    data = CandidateState.new(data, leadership_transfer_request_id)
+
+    Logger.info("became candidate, initiating leadership transfer election", logger_metadata(data))
+
+    RPC.request_vote(data, leadership_transfer: true)
+
+    # TODO: if election fails, send :error to leadership_transfer_request_id
+    {:keep_state, data, [{:state_timeout, @election_timeout + jitter(), :election_failed}]}
+  end
+
+  def candidate(:enter, _previous_state, data) do
+    data = CandidateState.new(data)
 
     Logger.info("became candidate", logger_metadata(data))
-    if previous_state == :follower, do: Logger.info("initiating leadership transfer election", logger_metadata(data))
 
-    # if our last state was :follower, rather than :lonely, this is a leadership transfer election
-    RPC.request_vote(data, pre_vote: false, leadership_transfer: previous_state == :follower)
+    RPC.request_vote(data)
 
-    {:keep_state, data, [{:state_timeout, election_timeout, :election_failed}]}
+    {:keep_state, data, [{:state_timeout, @election_timeout + jitter(), :election_failed}]}
   end
   def candidate(:state_timeout, :election_failed, data) do
     Logger.info("election failed, repeating state", logger_metadata(data))
@@ -437,9 +472,9 @@ defmodule Craft.Consensus do
       Logger.info("vote denied by #{results.from}", logger_metadata(data))
     end
 
-    data = put_in(data.mode_state, ElectionState.record_vote(data.mode_state, results))
+    data = CandidateState.record_vote(data, results)
 
-    case ElectionState.election_result(data) do
+    case CandidateState.election_result(data) do
       :won ->
         {:next_state, :leader, data}
 
@@ -455,7 +490,13 @@ defmodule Craft.Consensus do
   # we should still try to redirect commands to the old leader, in case it is
   # actually is legitimate and we're incorrect. (e.g. we're isolated from the
   # other nodes and they're happily carrying on without us)
-  def candidate(:cast, {:command, {caller_pid, _ref} = id, _command}, data) do
+  def candidate(:cast, {:user_command, {caller_pid, _ref} = id, _command}, data) do
+    send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
+
+    :keep_state_and_data
+  end
+
+  def candidate(:cast, {:machine_command, {caller_pid, _ref} = id, _command}, data) do
     send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
 
     :keep_state_and_data
@@ -479,6 +520,14 @@ defmodule Craft.Consensus do
   #
   # Leader
   #
+
+  def leader(:enter, previous_state, %State{mode_state: %CandidateState{leadership_transfer_request_id: {caller_pid, _ref} = id}} = data) do
+    send(caller_pid, {id, :ok})
+
+    data = put_in(data.mode_state.leadership_transfer_request_id, nil)
+
+    leader(:enter, previous_state, data)
+  end
 
   def leader(:enter, _previous_state, data) do
     data = LeaderState.new(data)
@@ -578,13 +627,28 @@ defmodule Craft.Consensus do
     {:next_state, :lonely, data, []}
   end
 
-  def leader(:cast, {:command, {caller_pid, _ref} = id, _command}, %State{mode_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
+  def leader(:cast, {:user_command, {caller_pid, _ref} = id, {:transfer_leadership, to_node}}, data) do
+    if Members.can_vote?(data.members, to_node) do
+      data = LeaderState.transfer_leadership(data, to_node, id)
+      actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :user_requested}]
+
+      RPC.append_entries(data)
+
+      {:keep_state, data, actions}
+    else
+      send(caller_pid, {id, {:error, :not_voting_member}})
+
+      :keep_state_and_data
+    end
+  end
+
+  def leader(:cast, {:machine_command, {caller_pid, _ref} = id, _command}, %State{mode_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
     send(caller_pid, {id, {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}})
 
     :keep_state_and_data
   end
 
-  def leader(:cast, {:command, id, command}, data) do
+  def leader(:cast, {:machine_command, id, command}, data) do
     entry = %CommandEntry{term: data.current_term, command: command}
     log = Log.append(data.log, entry)
 

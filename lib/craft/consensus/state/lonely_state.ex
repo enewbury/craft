@@ -30,7 +30,7 @@ defmodule Craft.Consensus.LonelyState do
     put_in(state.mode_state.pre_vote_state, ElectionState.record_vote(state.mode_state.pre_vote_state, results))
   end
 
-  def pre_vote_election_result(%State{mode_state: election_state} = state) do
-    ElectionState.election_result(state, election_state.pre_vote_state)
+  def pre_vote_election_result(%State{} = state) do
+    ElectionState.election_result(state, state.mode_state.pre_vote_state)
   end
 end

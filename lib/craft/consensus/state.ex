@@ -1,5 +1,5 @@
 defmodule Craft.Consensus.State do
-  alias Craft.Consensus.ElectionState
+  alias Craft.Consensus.CandidateState
   alias Craft.Consensus.LeaderState
   alias Craft.Consensus.LonelyState
   alias Craft.Consensus.FollowerState
@@ -61,8 +61,12 @@ defmodule Craft.Consensus.State do
       }
     end
 
+    def can_vote?(%__MODULE__{} = members, member) do
+      MapSet.member?(members.voting_nodes, member)
+    end
+
     def this_node_can_vote?(%__MODULE__{} = members) do
-      MapSet.member?(members.voting_nodes, node())
+      can_vote?(members, node())
     end
   end
 
@@ -107,7 +111,7 @@ defmodule Craft.Consensus.State do
         %FollowerState{} ->
           :cyan
 
-        %ElectionState{} ->
+        %CandidateState{} ->
           :blue
 
         %LeaderState{} ->

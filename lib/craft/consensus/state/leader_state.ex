@@ -21,8 +21,8 @@ defmodule Craft.Consensus.LeaderState do
 
   defmodule LeadershipTransfer do
     defstruct [
+      :from, # {pid, ref}, from Consensus.cast, for transmission to the new leader via AppenEntries
       :current_candidate,
-      :from,
       candidates: MapSet.new()
     ]
 

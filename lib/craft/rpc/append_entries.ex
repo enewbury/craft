@@ -18,7 +18,8 @@ defmodule Craft.RPC.AppendEntries do
   defmodule LeadershipTransfer do
     defstruct [
       :latest_index,
-      :latest_term
+      :latest_term,
+      :from # {pid, ref}, from Consensus.cast
     ]
   end
 
@@ -30,8 +31,9 @@ defmodule Craft.RPC.AppendEntries do
 
     leadership_transfer =
       case state.mode_state.leadership_transfer do
-        %LeaderState.LeadershipTransfer{current_candidate: ^to_node} ->
+        %LeaderState.LeadershipTransfer{current_candidate: ^to_node} = transfer ->
           %LeadershipTransfer{
+            from: transfer.from,
             latest_index: Log.latest_index(state.log),
             latest_term: Log.latest_term(state.log)
           }

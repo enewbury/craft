@@ -59,6 +59,10 @@ defmodule Craft do
     with_leader_redirect(name, cluster_nodes, &Consensus.remove_member(name, &1, node))
   end
 
+  def transfer_leadership(name, to_node, cluster_nodes) do
+    with_leader_redirect(name, cluster_nodes, &Consensus.transfer_leadership(name, &1, to_node))
+  end
+
   defdelegate start_member(name, nodes, machine, opts), to: Craft.MemberSupervisor
   defdelegate stop_member(name), to: Craft.MemberSupervisor
 

@@ -10,7 +10,7 @@ defmodule Craft.RPC.RequestVote do
     :leadership_transfer # section 4.2.3
   ]
 
-  def new(%State{} = state, opts) do
+  def new(%State{} = state, opts \\ []) do
     pre_vote = Keyword.get(opts, :pre_vote, false)
     leadership_transfer = Keyword.get(opts, :leadership_transfer, false)
 
