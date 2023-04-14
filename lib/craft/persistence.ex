@@ -1,4 +1,4 @@
-defmodule Craft.Log do
+defmodule Craft.Persistence do
   alias Craft.Log.EmptyEntry
   alias Craft.Log.CommandEntry
   alias Craft.Log.MembershipEntry
@@ -10,7 +10,7 @@ defmodule Craft.Log do
   # to instantiate it for us, we want to do that at init-time for the consensus process
   #
   # but it's a protocol in the sense that:
-  # it'd just be nice to call (e.g.) Log.last_term(t()) and not have to carry the module
+  # it'd just be nice to call (e.g.) Persistence.latest_term(t()) and not have to carry the module
   # name around with us and wrap/unwrap it
   #
   # so yeah, if you have a better idea how to do this, holler at me please. :)
@@ -36,18 +36,37 @@ defmodule Craft.Log do
   #
   # Craft requires that log implementations are initialized at following point:
   #
-  # last_applied: 0
-  # log: 0 -> CommandEntry{term: -1, command: nil}
+  # log: 0 -> EmptyEntry{term: -1}
   #
   # this makes the rest of the codebase a lot simpler
   #
-  def new(group_name, log_module) do
+  def new(group_name, {module, args}) do
     %__MODULE__{
-      module: log_module,
-      private: log_module.new(group_name)
+      module: module,
+      private: module.new(group_name, args)
     }
     |> append(%EmptyEntry{term: -1})
   end
+
+  # Consensus Metadata
+
+  def voted_for(%__MODULE__{module: module, private: private}, voted_for) do
+    module.voted_for(private, voted_for)
+  end
+
+  def voted_for(%__MODULE__{module: module, private: private}) do
+    module.voted_for(private)
+  end
+
+  def current_term(%__MODULE__{module: module, private: private}, current_term) do
+    module.current_term(private, current_term)
+  end
+
+  def current_term(%__MODULE__{module: module, private: private}) do
+    module.current_term(private)
+  end
+
+  # Log
 
   def latest_term(%__MODULE__{module: module, private: private}) do
     module.latest_term(private)
@@ -55,14 +74,6 @@ defmodule Craft.Log do
 
   def latest_index(%__MODULE__{module: module, private: private}) do
     module.latest_index(private)
-  end
-
-  def last_applied(%__MODULE__{module: module, private: private}) do
-    module.last_applied(private)
-  end
-
-  def increment_last_applied(%__MODULE__{module: module, private: private}) do
-    module.increment_last_applied(private)
   end
 
   def fetch(%__MODULE__{module: module, private: private}, index) do
@@ -73,16 +84,16 @@ defmodule Craft.Log do
     module.fetch_from(private, index)
   end
 
-  def append(%__MODULE__{module: module, private: private} = log, entries) when is_list(entries) do
-    %__MODULE__{log | private: module.append(private, entries)}
+  def append(%__MODULE__{module: module, private: private} = persistence, entries) when is_list(entries) do
+    %__MODULE__{persistence | private: module.append(private, entries)}
   end
-  def append(log, entry), do: append(log, [entry])
+  def append(persistence, entry), do: append(persistence, [entry])
 
-  def rewind(%__MODULE__{module: module, private: private} = log, index) do
-    %__MODULE__{log | private: module.rewind(private, index)}
+  def rewind(%__MODULE__{module: module, private: private} = persistence, index) do
+    %__MODULE__{persistence | private: module.rewind(private, index)}
   end
 
-  def reverse_find(%__MODULE__{module: module, private: private} = log, fun) do
-    %__MODULE__{log | private: module.reverse_search(private, fun)}
+  def reverse_find(%__MODULE__{module: module, private: private} = persistence, fun) do
+    %__MODULE__{persistence | private: module.reverse_search(private, fun)}
   end
 end

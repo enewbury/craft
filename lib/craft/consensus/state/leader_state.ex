@@ -2,7 +2,7 @@ defmodule Craft.Consensus.LeaderState do
   alias Craft.Consensus
   alias Craft.Consensus.State
   alias Craft.Consensus.State.Members
-  alias Craft.Log
+  alias Craft.Persistence
   alias Craft.Log.MembershipEntry
   alias Craft.RPC.AppendEntries
 
@@ -51,7 +51,7 @@ defmodule Craft.Consensus.LeaderState do
   # this may need to happen after new leader figures out the commit index
   # may need to have stored the :membership_change in the MembershipEntry
   def new(%State{} = state) do
-    next_index = Log.latest_index(state.log) + 1
+    next_index = Persistence.latest_index(state.persistence) + 1
     next_indices = state |> State.other_nodes() |> Map.new(&{&1, next_index})
     match_indices = state |> State.other_nodes() |> Map.new(&{&1, 0})
 
@@ -66,8 +66,8 @@ defmodule Craft.Consensus.LeaderState do
   end
 
   def config_change_in_progress?(%State{} = state) do
-    state.log
-    |> Log.fetch_from(state.commit_index + 1)
+    state.persistence
+    |> Persistence.fetch_from(state.commit_index + 1)
     |> Enum.any?(fn
       %MembershipEntry{} -> true
       _ -> false
@@ -75,7 +75,7 @@ defmodule Craft.Consensus.LeaderState do
   end
 
   def add_node(%State{} = state, node, from, log_index) do
-    next_index = Log.latest_index(state.log) + 1
+    next_index = Persistence.latest_index(state.persistence) + 1
     next_indices = Map.put(state.mode_state.next_indices, node, next_index)
     match_indices = Map.put(state.mode_state.match_indices, node, 0)
 
@@ -125,7 +125,7 @@ defmodule Craft.Consensus.LeaderState do
     #
     match_indices_for_commitment =
       if Members.this_node_can_vote?(state.members) do
-        Map.put(state.mode_state.match_indices, node(), Log.latest_index(state.log))
+        Map.put(state.mode_state.match_indices, node(), Persistence.latest_index(state.persistence))
       else
         state.mode_state.match_indices
       end
@@ -143,7 +143,7 @@ defmodule Craft.Consensus.LeaderState do
       end)
 
     with false <- is_nil(highest_uncommitted_match_index),
-      {:ok, entry} <- Log.fetch(state.log, highest_uncommitted_match_index),
+      {:ok, entry} <- Persistence.fetch(state.persistence, highest_uncommitted_match_index),
       true <- entry.term == state.current_term do
       %State{state | commit_index: highest_uncommitted_match_index}
     else

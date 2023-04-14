@@ -3,12 +3,12 @@ defmodule Craft.Consensus.State do
   alias Craft.Consensus.LeaderState
   alias Craft.Consensus.LonelyState
   alias Craft.Consensus.FollowerState
-  alias Craft.Log
+  alias Craft.Persistence
 
   defstruct [
     :name,
     :members,
-    :log,
+    :persistence,
     :nexus_pid,
     :leader_id,
     {:current_term, -1},
@@ -70,11 +70,11 @@ defmodule Craft.Consensus.State do
     end
   end
 
-  def new(name, nodes, log_module) do
+  def new(name, nodes, persistence) do
     %__MODULE__{
       name: name,
       members: Members.new(nodes),
-      log: Log.new(name, log_module)
+      persistence: Persistence.new(name, persistence)
     }
   end
 

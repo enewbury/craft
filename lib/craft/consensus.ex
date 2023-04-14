@@ -18,7 +18,7 @@ defmodule Craft.Consensus do
   alias Craft.Consensus.LeaderState
   alias Craft.Consensus.LeaderState.LeadershipTransfer
   alias Craft.Consensus.LeaderState.MembershipChange
-  alias Craft.Log
+  alias Craft.Persistence
   alias Craft.Log.CommandEntry
   alias Craft.Log.MembershipEntry
   alias Craft.Machine
@@ -112,10 +112,10 @@ defmodule Craft.Consensus do
   def vote_for?(%State{current_term: current_term}, %RequestVote{term: term}) when term < current_term, do: false
 
   def vote_for?(%State{} = state, %RequestVote{} = request_vote) do
-    request_vote.last_log_term > Log.latest_term(state.log) ||
+    request_vote.last_log_term > Persistence.latest_term(state.persistence) ||
     (
-      request_vote.last_log_term == Log.latest_term(state.log) &&
-        request_vote.last_log_index >= Log.latest_index(state.log)
+      request_vote.last_log_term == Persistence.latest_term(state.persistence) &&
+        request_vote.last_log_index >= Persistence.latest_index(state.persistence)
     )
   end
 
@@ -129,33 +129,33 @@ defmodule Craft.Consensus do
     :gen_statem.start_link({:local, name(args.name)}, __MODULE__, args, [])
   end
 
-  if Mix.env() == :test do
-    defoverridable start_link: 1
-    def start_link(state), do: :gen_statem.start_link({:local, name(state.name)}, Craft.Consensus.Tracer, state, [])
-    defmodule Tracer do
-      @moduledoc ":erlang.trace/3 can't guarantee delivery order between traces messages and messages that this process sends, so we decorate instead"
-      defdelegate callback_mode, to: Craft.Consensus
-      def init(data) when is_struct(data) do
-        {:ok, :ready_to_test, data}
-      end
-      def ready_to_test(:enter, _, _data), do: :keep_state_and_data
-      def ready_to_test(:cast, :run, %State{mode_state: %FollowerState{}} = data), do: {:next_state, :follower, data, []}
-      def ready_to_test(:cast, :run, %State{mode_state: %CandidateState{}} = data), do: {:next_state, :candidate, data, []}
-      def ready_to_test(:cast, :run, %State{mode_state: %LeaderState{}} = data), do: {:next_state, :leader, data, []}
-      def ready_to_test({:call, _from}, :catch_up, _data), do: {:keep_state_and_data, [:postpone]}
-      for state <- [:follower, :lonely, :candidate, :leader] do
-        def unquote(state)(event, msg, data) do
-          send(data.nexus_pid, {:trace, DateTime.utc_now(), node(), unquote(state), event, msg, data})
-          apply(Craft.Consensus, unquote(state), [event, msg, data])
-        end
-      end
-    end
-  end
+  # if Mix.env() == :test do
+  #   defoverridable start_link: 1
+  #   def start_link(state), do: :gen_statem.start_link({:local, name(state.name)}, Craft.Consensus.Tracer, state, [])
+  #   defmodule Tracer do
+  #     @moduledoc ":erlang.trace/3 can't guarantee delivery order between traces messages and messages that this process sends, so we decorate instead"
+  #     defdelegate callback_mode, to: Craft.Consensus
+  #     def init(data) when is_struct(data) do
+  #       {:ok, :ready_to_test, data}
+  #     end
+  #     def ready_to_test(:enter, _, _data), do: :keep_state_and_data
+  #     def ready_to_test(:cast, :run, %State{mode_state: %FollowerState{}} = data), do: {:next_state, :follower, data, []}
+  #     def ready_to_test(:cast, :run, %State{mode_state: %CandidateState{}} = data), do: {:next_state, :candidate, data, []}
+  #     def ready_to_test(:cast, :run, %State{mode_state: %LeaderState{}} = data), do: {:next_state, :leader, data, []}
+  #     def ready_to_test({:call, _from}, :catch_up, _data), do: {:keep_state_and_data, [:postpone]}
+  #     for state <- [:follower, :lonely, :candidate, :leader] do
+  #       def unquote(state)(event, msg, data) do
+  #         send(data.nexus_pid, {:trace, DateTime.utc_now(), node(), unquote(state), event, msg, data})
+  #         apply(Craft.Consensus, unquote(state), [event, msg, data])
+  #       end
+  #     end
+  #   end
+  # end
 
   def init(args) do
     Logger.metadata(name: args.name, node: node())
 
-    data = State.new(args.name, args.nodes, args.log_module)
+    data = State.new(args.name, args.nodes, args.persistence)
 
     Logger.info("started")
 
@@ -263,7 +263,7 @@ defmodule Craft.Consensus do
   end
 
   def lonely({:call, from}, :catch_up, data) do
-    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.log}}]}
+    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.persistence}}]}
   end
 
   def lonely({:call, from}, _request, data) do
@@ -323,16 +323,16 @@ defmodule Craft.Consensus do
     data = %State{data | leader_id: append_entries.leader_id}
 
     {success, data} =
-      case Log.fetch(data.log, append_entries.prev_log_index) do
+      case Persistence.fetch(data.persistence, append_entries.prev_log_index) do
         {:ok, %{term: ^prev_log_term}} ->
-          rewound_entries = Log.fetch_from(data.log, append_entries.prev_log_index + 1)
+          rewound_entries = Persistence.fetch_from(data.persistence, append_entries.prev_log_index + 1)
 
-          log =
-            data.log
-            |> Log.rewind(append_entries.prev_log_index)
-            |> Log.append(append_entries.entries)
+          persistence =
+            data.persistence
+            |> Persistence.rewind(append_entries.prev_log_index)
+            |> Persistence.append(append_entries.entries)
 
-          data = %State{data | log: log, commit_index: min(append_entries.leader_commit, Log.latest_index(log))}
+          data = %State{data | persistence: persistence, commit_index: min(append_entries.leader_commit, Persistence.latest_index(persistence))}
 
           new_membership_entry =
             append_entries.entries
@@ -363,7 +363,7 @@ defmodule Craft.Consensus do
           end
 
         _ ->
-          {false, %State{data | log: Log.rewind(data.log, append_entries.prev_log_index)}}
+          {false, %State{data | persistence: Persistence.rewind(data.persistence, append_entries.prev_log_index)}}
       end
 
     Logger.debug("leader heartbeat from #{append_entries.leader_id}, restarting timer", logger_metadata(data))
@@ -376,8 +376,8 @@ defmodule Craft.Consensus do
 
     # leader told us to take over leadership when our log is caught up
     if append_entries.leadership_transfer &&
-      append_entries.leadership_transfer.latest_index == Log.latest_index(data.log) &&
-      append_entries.leadership_transfer.latest_term == Log.latest_term(data.log) do
+      append_entries.leadership_transfer.latest_index == Persistence.latest_index(data.persistence) &&
+      append_entries.leadership_transfer.latest_term == Persistence.latest_term(data.persistence) do
       {:next_state, :candidate, {data, append_entries.leadership_transfer.from}}
     else
       {:keep_state, data, [become_lonely_timeout()]}
@@ -397,7 +397,7 @@ defmodule Craft.Consensus do
   end
 
   def follower({:call, from}, :catch_up, data) do
-    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.log}}]}
+    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.persistence}}]}
   end
 
   def follower({:call, from}, _request, data) do
@@ -504,7 +504,7 @@ defmodule Craft.Consensus do
 
   # this should only happen in test, it'd be nice to throw an assertion in here,
   def candidate({:call, from}, :catch_up, data) do
-    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.log}}]}
+    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.persistence}}]}
   end
 
   def candidate({:call, from}, _request, data) do
@@ -540,7 +540,7 @@ defmodule Craft.Consensus do
     # they have a way to determine what the current config is (walk backwards from the end of the
     # log looking for the most recent config)
     #
-    data = %State{data | log: Log.append(data.log, MembershipEntry.new(data))}
+    data = %State{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
 
     Logger.info("became leader", logger_metadata(data))
 
@@ -588,12 +588,12 @@ defmodule Craft.Consensus do
 
     data =
       Enum.reduce(data.members.catching_up_nodes, data, fn node, data ->
-        if Log.latest_index(data.log) - 1 == Map.get(data.mode_state.next_indices, node) do
+        if Persistence.latest_index(data.persistence) - 1 == Map.get(data.mode_state.next_indices, node) do
           Logger.info("node #{inspect node} has caught up", logger_metadata(data))
 
           data = %State{data | members: Members.allow_node_to_vote(data.members, node)}
 
-          %State{data | log: Log.append(data.log, MembershipEntry.new(data))}
+          %State{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
         else
           data
         end
@@ -650,12 +650,12 @@ defmodule Craft.Consensus do
 
   def leader(:cast, {:machine_command, id, command}, data) do
     entry = %CommandEntry{term: data.current_term, command: command}
-    log = Log.append(data.log, entry)
+    persistence = Persistence.append(data.persistence, entry)
 
-    entry_index = Log.latest_index(log)
+    entry_index = Persistence.latest_index(persistence)
     client_requests = Map.put(data.mode_state.client_requests, entry_index, id)
 
-    {:keep_state, %State{data | log: log, mode_state: %LeaderState{data.mode_state | client_requests: client_requests}}}
+    {:keep_state, %State{data | persistence: persistence, mode_state: %LeaderState{data.mode_state | client_requests: client_requests}}}
   end
 
   def leader({:call, from}, _msg, %State{mode_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
@@ -668,7 +668,7 @@ defmodule Craft.Consensus do
     config = %{
       members: data.members,
       machine_module: machine_module,
-      log_module: data.log.module
+      log_module: data.persistence.module
     }
 
     {:keep_state_and_data, [{:reply, from, {:ok, config}}]}
@@ -678,7 +678,7 @@ defmodule Craft.Consensus do
     if LeaderState.config_change_in_progress?(data) do
       {:keep_state_and_data, [{:reply, from, {:error, :config_change_in_progress}}]}
     else
-      data = LeaderState.add_node(data, node, from, Log.latest_index(data.log) + 1)
+      data = LeaderState.add_node(data, node, from, Persistence.latest_index(data.persistence) + 1)
 
       entry =
         %MembershipEntry{
@@ -686,7 +686,7 @@ defmodule Craft.Consensus do
           members: data.members
         }
 
-      data = %State{data | log: Log.append(data.log, entry)}
+      data = %State{data | persistence: Persistence.append(data.persistence, entry)}
 
       {:keep_state, data}
     end
@@ -696,7 +696,7 @@ defmodule Craft.Consensus do
     if LeaderState.config_change_in_progress?(data) do
       {:keep_state_and_data, [{:reply, from, {:error, :config_change_in_progress}}]}
     else
-      data = LeaderState.remove_node(data, node, from, Log.latest_index(data.log) + 1)
+      data = LeaderState.remove_node(data, node, from, Persistence.latest_index(data.persistence) + 1)
 
       entry =
         %MembershipEntry{
@@ -704,7 +704,7 @@ defmodule Craft.Consensus do
           members: data.members
         }
 
-      data = %State{data | log: Log.append(data.log, entry)}
+      data = %State{data | persistence: Persistence.append(data.persistence, entry)}
 
       {:keep_state, data}
     end

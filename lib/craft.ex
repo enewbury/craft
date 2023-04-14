@@ -1,6 +1,5 @@
 defmodule Craft do
   alias Craft.Consensus
-  alias Craft.Log.MapLog
 
   # FIXME
   @type command :: any()
@@ -10,7 +9,8 @@ defmodule Craft do
   @type query() :: any()
   @type log_index() :: non_neg_integer()
 
-  def start_group(name, nodes, machine, opts \\ [log_module: MapLog]) do
+  # opts: [:log_module | :data_dir, ...]
+  def start_group(name, nodes, machine, opts \\ []) do
     for node <- nodes do
       :pong = Node.ping(node)
       {:module, Craft} = :rpc.call(node, Code, :ensure_loaded, [Craft])

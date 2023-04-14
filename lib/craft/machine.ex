@@ -5,7 +5,7 @@ defmodule Craft.Machine do
   alias Craft.Consensus.State, as: ConsensusState
   alias Craft.Consensus.LeaderState
   alias Craft.Consensus.FollowerState
-  alias Craft.Log
+  alias Craft.Persistence
   alias Craft.Log.CommandEntry
   alias Craft.Log.EmptyEntry
   alias Craft.Log.MembershipEntry
@@ -53,13 +53,13 @@ defmodule Craft.Machine do
   def commit_index_bumped(%ConsensusState{mode_state: %LeaderState{}} = state) do
     state.name
     |> name()
-    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.log, state.mode_state.client_requests})
+    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence, state.mode_state.client_requests})
   end
 
   def commit_index_bumped(%ConsensusState{mode_state: %FollowerState{}} = state) do
     state.name
     |> name()
-    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.log})
+    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence})
   end
 
   @impl true
@@ -100,7 +100,7 @@ defmodule Craft.Machine do
 
     private =
       Enum.reduce(last_applied_log_index..new_commit_index//1, state.private, fn index, private ->
-        case Log.fetch(log, index) do
+        case Persistence.fetch(log, index) do
           {:ok, %EmptyEntry{}} ->
             private
 

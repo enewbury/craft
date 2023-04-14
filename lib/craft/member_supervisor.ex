@@ -1,6 +1,8 @@
 defmodule Craft.MemberSupervisor do
   @moduledoc false
 
+  alias Craft.Persistence.MapPersistence
+
   use Supervisor
 
   def start_link(args) do
@@ -29,6 +31,8 @@ defmodule Craft.MemberSupervisor do
     Supervisor.init(children, strategy: :one_for_all)
   end
 
+  # TODO: :data_dir implied {RocksDBPersistence, data_dir: data_dir}
+  # allow passing :persistence key has a {module, args} tuple
   def start_member(name, nodes, machine, opts \\ []) do
     args =
       opts
@@ -36,6 +40,8 @@ defmodule Craft.MemberSupervisor do
       |> Map.put(:name, name)
       |> Map.put(:nodes, nodes)
       |> Map.put(:machine, machine)
+      |> Map.put(:persistence, {MapPersistence, []})
+      # |> Map.put(:persistence, {RocksDBPersistence, data_dir: File.cwd!()})
 
     DynamicSupervisor.start_child(Craft.Supervisor, {__MODULE__, args})
   end

@@ -1,8 +1,8 @@
-defmodule Craft.Log.MapLog do
-  @behaviour Craft.Log
+defmodule Craft.Persistence.MapPersistence do
+  @behaviour Craft.Persistence
 
   @impl true
-  def new(_group_name) do
+  def new(_group_name, []) do
     %{}
   end
 
