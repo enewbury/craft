@@ -108,47 +108,52 @@ defmodule Craft.Consensus.LeaderState do
   end
 
   def handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: true} = results) do
-    match_indices = Map.put(state.mode_state.match_indices, results.from, results.latest_index)
-    next_indices = Map.put(state.mode_state.next_indices, results.from, results.latest_index + 1)
-    state = %State{state | mode_state: %__MODULE__{state.mode_state | next_indices: next_indices, match_indices: match_indices}}
+    # accounts for the possibility of stale AppendEntries results (due to pathological network reordering)
+    # and also avoids work when no follower log appends took place
+    if results.latest_index > state.mode_state.match_indices[results.from] do
+      match_indices = Map.put(state.mode_state.match_indices, results.from, results.latest_index)
+      next_indices = Map.put(state.mode_state.next_indices, results.from, results.latest_index + 1)
+      state = %State{state | mode_state: %__MODULE__{state.mode_state | next_indices: next_indices, match_indices: match_indices}}
+      # find the highest uncommitted match index shared by a majority of servers
+      # this can be optimized to some degree (mapset, gb_tree, etc...)
+      # also optimized by pre-computing quorum requirement and storing in state
+      #
+      # when we become leader, match indexes work their way up from zero non-uniformly
+      # so it's entirely possible that we don't find a quorum of followers with a match index
+      # until match indexes work their way up to parity
+      #
+      # this node (the leader), might not be voting in majorities if it is removing itself
+      # from the cluster (section 4.2.2)
+      #
+      match_indices_for_commitment =
+        if Members.this_node_can_vote?(state.members) do
+          Map.put(state.mode_state.match_indices, node(), Persistence.latest_index(state.persistence))
+        else
+          state.mode_state.match_indices
+        end
 
-    # find the highest uncommitted match index shared by a majority of servers
-    # this can be optimized to some degree (mapset, gb_tree, etc...)
-    # also optimized by pre-computing quorum requirement and storing in state
-    #
-    # when we become leader, match indexes work their way up from zero non-uniformly
-    # so it's entirely possible that we don't find a quorum of followers with a match index
-    # until match indexes work their way up to parity
-    #
-    # this node (the leader), might not be voting in majorities if it is removing itself
-    # from the cluster (section 4.2.2)
-    #
-    match_indices_for_commitment =
-      if Members.this_node_can_vote?(state.members) do
-        Map.put(state.mode_state.match_indices, node(), Persistence.latest_index(state.persistence))
+      highest_uncommitted_match_index =
+        match_indices_for_commitment
+        |> Map.values()
+        |> Enum.filter(fn index -> index >= state.commit_index end)
+        |> Enum.uniq()
+        |> Enum.sort()
+        |> Enum.reverse()
+        |> Enum.find(fn index ->
+          num_members_with_index = Enum.count(state.mode_state.match_indices, fn {_node, match_index} -> match_index >= index end)
+          Consensus.quorum_reached?(state, num_members_with_index)
+        end)
+
+      with false <- is_nil(highest_uncommitted_match_index),
+           {:ok, entry} <- Persistence.fetch(state.persistence, highest_uncommitted_match_index),
+           true <- entry.term == state.current_term do
+        %State{state | commit_index: highest_uncommitted_match_index}
       else
-        state.mode_state.match_indices
+        _ ->
+          state
       end
-
-    highest_uncommitted_match_index =
-      match_indices_for_commitment
-      |> Map.values()
-      |> Enum.filter(fn index -> index >= state.commit_index end)
-      |> Enum.uniq()
-      |> Enum.sort()
-      |> Enum.reverse()
-      |> Enum.find(fn index ->
-        num_members_with_index = Enum.count(state.mode_state.match_indices, fn {_node, match_index} -> match_index >= index end)
-        Consensus.quorum_reached?(state, num_members_with_index)
-      end)
-
-    with false <- is_nil(highest_uncommitted_match_index),
-      {:ok, entry} <- Persistence.fetch(state.persistence, highest_uncommitted_match_index),
-      true <- entry.term == state.current_term do
-      %State{state | commit_index: highest_uncommitted_match_index}
     else
-      _ ->
-        state
+      state
     end
   end
 

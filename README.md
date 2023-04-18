@@ -11,6 +11,8 @@ todo:
   - leases like cockroachdb?
 - fix Craft top-level API, designate group by {name, nodes} rather than separate args
 
-3.10 leadership transfer extension
 4.2.1 server catch up "rounds" hueristic
 CheckQuorum
+
+done:
+3.10 leadership transfer extension
