@@ -9,6 +9,7 @@ defmodule Craft.Consensus.LeaderState do
   defstruct [
     :next_indices,
     :match_indices,
+    :last_heartbeat_replies_at, # for CheckQuorum voting members only
     :membership_change,
     :leadership_transfer,
     client_requests: %{}
@@ -54,13 +55,15 @@ defmodule Craft.Consensus.LeaderState do
     next_index = Persistence.latest_index(state.persistence) + 1
     next_indices = state |> State.other_nodes() |> Map.new(&{&1, next_index})
     match_indices = state |> State.other_nodes() |> Map.new(&{&1, 0})
+    last_heartbeat_replies_at = state |> State.other_voting_nodes() |> Map.new(&{&1, :erlang.monotonic_time(:millisecond)})
 
     %State{
       state |
       leader_id: node(),
       mode_state: %__MODULE__{
         next_indices: next_indices,
-        match_indices: match_indices
+        match_indices: match_indices,
+        last_heartbeat_replies_at: last_heartbeat_replies_at
       }
     }
   end
@@ -83,6 +86,7 @@ defmodule Craft.Consensus.LeaderState do
 
     mode_state =
       %__MODULE__{
+        state.mode_state |
         next_indices: next_indices,
         match_indices: match_indices,
         membership_change: membership_change
@@ -94,14 +98,17 @@ defmodule Craft.Consensus.LeaderState do
   def remove_node(%State{} = state, node, from, log_index) do
     next_indices = Map.delete(state.mode_state.next_indices, node)
     match_indices = Map.delete(state.mode_state.match_indices, node)
+    last_heartbeat_replies_at = Map.delete(state.mode_state.last_heartbeat_replies_at, node)
 
     membership_change = %MembershipChange{action: :remove, node: node, from: from, log_index: log_index}
 
     mode_state =
       %__MODULE__{
+        state.mode_state |
         next_indices: next_indices,
         match_indices: match_indices,
-        membership_change: membership_change
+        membership_change: membership_change,
+        last_heartbeat_replies_at: last_heartbeat_replies_at
       }
 
     %State{state | members: Members.remove_member(state.members, node), mode_state: mode_state}
@@ -169,5 +176,15 @@ defmodule Craft.Consensus.LeaderState do
 
   def transfer_leadership(%State{} = state, to_member, from \\ nil) do
     put_in(state.mode_state.leadership_transfer, LeadershipTransfer.new(to_member, from))
+  end
+
+  def bump_last_heartbeat_reply_at(%State{} = state, member) do
+    if Members.can_vote?(state.members, member) do
+      last_heartbeat_replies_at = Map.put(state.mode_state.last_heartbeat_replies_at, member, :erlang.monotonic_time(:millisecond))
+
+      %State{state | mode_state: %__MODULE__{state.mode_state | last_heartbeat_replies_at: last_heartbeat_replies_at}}
+    else
+      state
+    end
   end
 end

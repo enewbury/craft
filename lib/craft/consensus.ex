@@ -32,7 +32,9 @@ defmodule Craft.Consensus do
 
   @behaviour :gen_statem
 
-  @heartbeat_interval 1000
+  @heartbeat_interval 1000 # ms
+  # max time in the past within which leader must have a successful quorum, or it'll step down
+  @checkquorum_interval @heartbeat_interval * 3
   @lonely_timeout @heartbeat_interval + 300
   # amount of time to wait for votes before concluding that the election has failed
   @election_timeout 1500
@@ -544,7 +546,12 @@ defmodule Craft.Consensus do
 
     Logger.info("became leader", logger_metadata(data))
 
-    {:keep_state, data, [{:state_timeout, 0, :heartbeat}]}
+    actions = [
+      {:state_timeout, 0, :heartbeat},
+      {{:timeout, :check_quorum}, @checkquorum_interval, :check_quorum}
+    ]
+
+    {:keep_state, data, actions}
   end
 
   def leader(:state_timeout, :heartbeat, data) do
@@ -553,6 +560,21 @@ defmodule Craft.Consensus do
     RPC.append_entries(data)
 
     {:keep_state_and_data, [{:state_timeout, @heartbeat_interval, :heartbeat}]}
+  end
+
+  def leader({:timeout, :check_quorum}, :check_quorum, data) do
+    num_replies_in_window =
+      data.mode_state.last_heartbeat_replies_at
+      |> Map.values()
+      |> Enum.filter(fn last_heartbeat_reply_at -> last_heartbeat_reply_at >= :erlang.monotonic_time(:millisecond) - @checkquorum_interval end)
+      |> Enum.count()
+
+    # "+ 1" to include ourself in the quorum
+    if quorum_reached?(data, num_replies_in_window + 1) do
+      {:keep_state_and_data, [{{:timeout, :check_quorum}, @checkquorum_interval, :check_quorum}]}
+    else
+      {:next_state, :lonely, data}
+    end
   end
 
   # ignore any messages from earlier terms
@@ -580,7 +602,10 @@ defmodule Craft.Consensus do
 
   def leader(:cast, %AppendEntries.Results{} = results, data) do
     old_commit_index = data.commit_index
-    data = LeaderState.handle_append_entries_results(data, results)
+    data =
+      data
+      |> LeaderState.handle_append_entries_results(results)
+      |> LeaderState.bump_last_heartbeat_reply_at(results.from)
 
     if data.commit_index > old_commit_index do
       Machine.commit_index_bumped(data)
