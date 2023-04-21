@@ -49,4 +49,16 @@ defmodule Craft.Consensus.State.Members do
   def this_node_can_vote?(%__MODULE__{} = members) do
     can_vote?(members, node())
   end
+
+  def other_voting_nodes(%__MODULE__{} = members) do
+    MapSet.delete(members.voting_nodes, node())
+  end
+
+  # TODO: pre-compute and cache
+  def other_nodes(%__MODULE__{} = members) do
+    members.voting_nodes
+    |> MapSet.union(members.catching_up_nodes)
+    |> MapSet.union(members.non_voting_nodes)
+    |> MapSet.delete(node())
+  end
 end

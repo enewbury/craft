@@ -53,9 +53,9 @@ defmodule Craft.Consensus.State.LeaderState do
   # may need to have stored the :membership_change in the MembershipEntry
   def new(%State{} = state) do
     next_index = Persistence.latest_index(state.persistence) + 1
-    next_indices = state |> State.other_nodes() |> Map.new(&{&1, next_index})
-    match_indices = state |> State.other_nodes() |> Map.new(&{&1, 0})
-    last_heartbeat_replies_at = state |> State.other_voting_nodes() |> Map.new(&{&1, :erlang.monotonic_time(:millisecond)})
+    next_indices = state.members |> Members.other_nodes() |> Map.new(&{&1, next_index})
+    match_indices = state.members |> Members.other_nodes() |> Map.new(&{&1, 0})
+    last_heartbeat_replies_at = state.members |> Members.other_voting_nodes() |> Map.new(&{&1, :erlang.monotonic_time(:millisecond)})
 
     %__MODULE__{
       next_indices: next_indices,

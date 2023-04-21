@@ -113,18 +113,6 @@ defmodule Craft.Consensus.State do
     div(num_members, 2) + 1
   end
 
-  def other_voting_nodes(%__MODULE__{} = state) do
-    MapSet.delete(state.members.voting_nodes, node())
-  end
-
-  # TODO: pre-compute and cache
-  def other_nodes(%__MODULE__{} = state) do
-    state.members.voting_nodes
-    |> MapSet.union(state.members.catching_up_nodes)
-    |> MapSet.union(state.members.non_voting_nodes)
-    |> MapSet.delete(node())
-  end
-
   def logger_metadata(%__MODULE__{} = state, extras \\ []) do
     # color =
     #   node()
