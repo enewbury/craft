@@ -1,11 +1,12 @@
 defmodule Craft.Consensus.State do
-  alias Craft.Consensus.CandidateState
-  alias Craft.Consensus.LeaderState
-  alias Craft.Consensus.LonelyState
-  alias Craft.Consensus.FollowerState
+  alias Craft.Consensus.State.Members
+  alias Craft.Consensus.State.LeaderState
+  alias Craft.Consensus.State.Election
   alias Craft.Persistence
+  alias Craft.RPC.RequestVote
 
   defstruct [
+    :state,
     :name,
     :members,
     :persistence,
@@ -14,61 +15,11 @@ defmodule Craft.Consensus.State do
     {:current_term, -1},
     {:commit_index, 0},
 
-    :mode_state
+    :leader_state,
+    :voted_for, # lonely and follower
+    :election, # lonely and candidate
+    :leadership_transfer_request_id # candidate only
   ]
-
-  defmodule Members do
-    defstruct [
-      :catching_up_nodes,
-      :non_voting_nodes,
-      :voting_nodes
-    ]
-
-    def new(voting_nodes, non_voting_members \\ []) do
-      %__MODULE__{
-        catching_up_nodes: MapSet.new(),
-        voting_nodes: MapSet.new(voting_nodes),
-        non_voting_nodes: MapSet.new(non_voting_members)
-      }
-    end
-
-    def add_member(%__MODULE__{} = members, node) do
-      if MapSet.member?(members.voting_nodes, node) or MapSet.member?(members.non_voting_nodes, node) do
-        raise "member already added"
-      end
-
-      %__MODULE__{
-        members |
-        catching_up_nodes: MapSet.put(members.catching_up_nodes, node)
-      }
-    end
-
-    def remove_member(%__MODULE__{} = members, node) do
-      %__MODULE__{
-        members |
-        catching_up_nodes: MapSet.delete(members.catching_up_nodes, node),
-        voting_nodes: MapSet.delete(members.voting_nodes, node),
-        non_voting_nodes: MapSet.delete(members.non_voting_nodes, node)
-      }
-    end
-
-    def allow_node_to_vote(%__MODULE__{} = members, node) do
-      %__MODULE__{
-        members |
-        voting_nodes: MapSet.put(members.voting_nodes, node),
-        catching_up_nodes: MapSet.delete(members.catching_up_nodes, node),
-        non_voting_nodes: MapSet.delete(members.non_voting_nodes, node)
-      }
-    end
-
-    def can_vote?(%__MODULE__{} = members, member) do
-      MapSet.member?(members.voting_nodes, member)
-    end
-
-    def this_node_can_vote?(%__MODULE__{} = members) do
-      can_vote?(members, node())
-    end
-  end
 
   def new(name, nodes, persistence) do
     %__MODULE__{
@@ -77,6 +28,83 @@ defmodule Craft.Consensus.State do
       persistence: Persistence.new(name, persistence)
     }
   end
+
+  def become_lonely(%__MODULE__{} = state) do
+    %__MODULE__{
+      state |
+      state: :lonely,
+      leader_state: nil,
+      leadership_transfer_request_id: nil,
+      election: Election.new(state.members)
+    }
+  end
+
+  def become_follower(%__MODULE__{} = state) do
+    %__MODULE__{
+      state |
+      state: :follower,
+      leader_state: nil,
+      leadership_transfer_request_id: nil,
+      election: nil
+    }
+  end
+
+  def become_candidate(%__MODULE__{} = state, leadership_transfer_request_id \\ nil) do
+    %__MODULE__{
+      state |
+      state: :candidate,
+      leader_state: nil,
+      leadership_transfer_request_id: leadership_transfer_request_id,
+      election: Election.new(state.members)
+    }
+    |> set_current_term(state.current_term + 1)
+    |> set_voted_for(node())
+  end
+
+  def become_leader(%__MODULE__{} = state) do
+    %__MODULE__{
+      state |
+      state: :leader,
+      leader_id: node(),
+      leader_state: LeaderState.new(state),
+      election: nil
+    }
+  end
+
+  # voting for others
+
+  def vote_for?(%__MODULE__{current_term: current_term}, %RequestVote{term: term}) when term < current_term, do: false
+
+  def vote_for?(%__MODULE__{} = state, %RequestVote{} = request_vote) do
+    request_vote.last_log_term > Persistence.latest_term(state.persistence) ||
+    (request_vote.last_log_term == Persistence.latest_term(state.persistence) &&
+      request_vote.last_log_index >= Persistence.latest_index(state.persistence))
+  end
+
+  def vote(%__MODULE__{voted_for: nil} = state, %RequestVote{} = request_vote) do
+    if vote_for?(state, request_vote) do
+      {true, set_voted_for(state, request_vote.candidate_id)}
+    else
+      {false, state}
+    end
+  end
+
+  # repeat vote if asked
+  def vote(%__MODULE__{} = state, %RequestVote{} = request_vote) do
+    {state.voted_for == request_vote.candidate_id, state}
+  end
+
+  # holding pre-vote and leadership elections
+
+  def record_vote(%__MODULE__{} = state, %RequestVote.Results{} = results) do
+    %__MODULE__{state | election: Election.record_vote(state.election, results)}
+  end
+
+  def election_result(%__MODULE__{} = state) do
+    Election.election_result(state.election, quorum_needed(state))
+  end
+
+
 
   # TODO: pre-compute quorum and cache
   def quorum_needed(%__MODULE__{} = state) do
@@ -104,17 +132,17 @@ defmodule Craft.Consensus.State do
     #   |> IO.ANSI.color()
 
     color =
-      case state.mode_state do
-        %LonelyState{} ->
+      case state.state do
+        :lonely ->
           :light_red
 
-        %FollowerState{} ->
+        :follower ->
           :cyan
 
-        %CandidateState{} ->
+        :candidate ->
           :blue
 
-        %LeaderState{} ->
+        :leader ->
           :green
       end
 
@@ -134,17 +162,16 @@ defmodule Craft.Consensus.State do
 
   def set_voted_for(%__MODULE__{} = state, voted_for) do
     persistence = Persistence.put_voted_for!(state.persistence, voted_for)
-    mode_state = %{state.mode_state | voted_for: voted_for}
 
-    %__MODULE__{state | persistence: persistence, mode_state: mode_state}
+    %__MODULE__{state | persistence: persistence, voted_for: voted_for}
   end
 
-  def restore(%__MODULE__{mode_state: %LonelyState{}} = state) do
-    voted_for = Persistence.get_voted_for!(state.persistence)
-    current_term = Persistence.get_current_term!(state.persistence)
+  # def restore(%__MODULE__{mode_state: %LonelyState{}} = state) do
+  #   voted_for = Persistence.get_voted_for!(state.persistence)
+  #   current_term = Persistence.get_current_term!(state.persistence)
 
-    mode_state = %LonelyState{state.mode_state | voted_for: voted_for}
+  #   mode_state = %LonelyState{state.mode_state | voted_for: voted_for}
 
-    %__MODULE__{state | mode_state: mode_state, current_term: current_term}
-  end
+  #   %__MODULE__{state | mode_state: mode_state, current_term: current_term}
+  # end
 end

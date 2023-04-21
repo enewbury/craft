@@ -1,4 +1,4 @@
-defmodule Craft.Consensus.LeaderState do
+defmodule Craft.Consensus.State.LeaderState do
   alias Craft.Consensus
   alias Craft.Consensus.State
   alias Craft.Consensus.State.Members
@@ -57,14 +57,10 @@ defmodule Craft.Consensus.LeaderState do
     match_indices = state |> State.other_nodes() |> Map.new(&{&1, 0})
     last_heartbeat_replies_at = state |> State.other_voting_nodes() |> Map.new(&{&1, :erlang.monotonic_time(:millisecond)})
 
-    %State{
-      state |
-      leader_id: node(),
-      mode_state: %__MODULE__{
-        next_indices: next_indices,
-        match_indices: match_indices,
-        last_heartbeat_replies_at: last_heartbeat_replies_at
-      }
+    %__MODULE__{
+      next_indices: next_indices,
+      match_indices: match_indices,
+      last_heartbeat_replies_at: last_heartbeat_replies_at
     }
   end
 
@@ -79,48 +75,48 @@ defmodule Craft.Consensus.LeaderState do
 
   def add_node(%State{} = state, node, from, log_index) do
     next_index = Persistence.latest_index(state.persistence) + 1
-    next_indices = Map.put(state.mode_state.next_indices, node, next_index)
-    match_indices = Map.put(state.mode_state.match_indices, node, 0)
+    next_indices = Map.put(state.leader_state.next_indices, node, next_index)
+    match_indices = Map.put(state.leader_state.match_indices, node, 0)
 
     membership_change = %MembershipChange{action: :add, node: node, from: from, log_index: log_index}
 
-    mode_state =
+    leader_state =
       %__MODULE__{
-        state.mode_state |
+        state.leader_state |
         next_indices: next_indices,
         match_indices: match_indices,
         membership_change: membership_change
       }
 
-    %State{state | members: Members.add_member(state.members, node), mode_state: mode_state}
+    %State{state | members: Members.add_member(state.members, node), leader_state: leader_state}
   end
 
   def remove_node(%State{} = state, node, from, log_index) do
-    next_indices = Map.delete(state.mode_state.next_indices, node)
-    match_indices = Map.delete(state.mode_state.match_indices, node)
-    last_heartbeat_replies_at = Map.delete(state.mode_state.last_heartbeat_replies_at, node)
+    next_indices = Map.delete(state.leader_state.next_indices, node)
+    match_indices = Map.delete(state.leader_state.match_indices, node)
+    last_heartbeat_replies_at = Map.delete(state.leader_state.last_heartbeat_replies_at, node)
 
     membership_change = %MembershipChange{action: :remove, node: node, from: from, log_index: log_index}
 
-    mode_state =
+    leader_state =
       %__MODULE__{
-        state.mode_state |
+        state.leader_state |
         next_indices: next_indices,
         match_indices: match_indices,
         membership_change: membership_change,
         last_heartbeat_replies_at: last_heartbeat_replies_at
       }
 
-    %State{state | members: Members.remove_member(state.members, node), mode_state: mode_state}
+    %State{state | members: Members.remove_member(state.members, node), leader_state: leader_state}
   end
 
   def handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: true} = results) do
     # accounts for the possibility of stale AppendEntries results (due to pathological network reordering)
     # and also avoids work when no follower log appends took place
-    if results.latest_index > state.mode_state.match_indices[results.from] do
-      match_indices = Map.put(state.mode_state.match_indices, results.from, results.latest_index)
-      next_indices = Map.put(state.mode_state.next_indices, results.from, results.latest_index + 1)
-      state = %State{state | mode_state: %__MODULE__{state.mode_state | next_indices: next_indices, match_indices: match_indices}}
+    if results.latest_index > state.leader_state.match_indices[results.from] do
+      match_indices = Map.put(state.leader_state.match_indices, results.from, results.latest_index)
+      next_indices = Map.put(state.leader_state.next_indices, results.from, results.latest_index + 1)
+      state = %State{state | leader_state: %__MODULE__{state.leader_state | next_indices: next_indices, match_indices: match_indices}}
       # find the highest uncommitted match index shared by a majority of servers
       # this can be optimized to some degree (mapset, gb_tree, etc...)
       # also optimized by pre-computing quorum requirement and storing in state
@@ -134,9 +130,9 @@ defmodule Craft.Consensus.LeaderState do
       #
       match_indices_for_commitment =
         if Members.this_node_can_vote?(state.members) do
-          Map.put(state.mode_state.match_indices, node(), Persistence.latest_index(state.persistence))
+          Map.put(state.leader_state.match_indices, node(), Persistence.latest_index(state.persistence))
         else
-          state.mode_state.match_indices
+          state.leader_state.match_indices
         end
 
       highest_uncommitted_match_index =
@@ -147,7 +143,7 @@ defmodule Craft.Consensus.LeaderState do
         |> Enum.sort()
         |> Enum.reverse()
         |> Enum.find(fn index ->
-          num_members_with_index = Enum.count(state.mode_state.match_indices, fn {_node, match_index} -> match_index >= index end)
+          num_members_with_index = Enum.count(state.leader_state.match_indices, fn {_node, match_index} -> match_index >= index end)
           Consensus.quorum_reached?(state, num_members_with_index)
         end)
 
@@ -165,24 +161,24 @@ defmodule Craft.Consensus.LeaderState do
   end
 
   def handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: false} = results) do
-    next_indices = Map.update!(state.mode_state.next_indices, results.from, fn next_index -> next_index - 1 end)
+    next_indices = Map.update!(state.leader_state.next_indices, results.from, fn next_index -> next_index - 1 end)
 
-    %State{state | mode_state: %__MODULE__{state.mode_state | next_indices: next_indices}}
+    %State{state | leader_state: %__MODULE__{state.leader_state | next_indices: next_indices}}
   end
 
   def transfer_leadership(%State{} = state) do
-    put_in(state.mode_state.leadership_transfer, LeadershipTransfer.new(state))
+    put_in(state.leader_state.leadership_transfer, LeadershipTransfer.new(state))
   end
 
   def transfer_leadership(%State{} = state, to_member, from \\ nil) do
-    put_in(state.mode_state.leadership_transfer, LeadershipTransfer.new(to_member, from))
+    put_in(state.leader_state.leadership_transfer, LeadershipTransfer.new(to_member, from))
   end
 
   def bump_last_heartbeat_reply_at(%State{} = state, member) do
     if Members.can_vote?(state.members, member) do
-      last_heartbeat_replies_at = Map.put(state.mode_state.last_heartbeat_replies_at, member, :erlang.monotonic_time(:millisecond))
+      last_heartbeat_replies_at = Map.put(state.leader_state.last_heartbeat_replies_at, member, :erlang.monotonic_time(:millisecond))
 
-      %State{state | mode_state: %__MODULE__{state.mode_state | last_heartbeat_replies_at: last_heartbeat_replies_at}}
+      %State{state | leader_state: %__MODULE__{state.leader_state | last_heartbeat_replies_at: last_heartbeat_replies_at}}
     else
       state
     end

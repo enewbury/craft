@@ -3,8 +3,6 @@ defmodule Craft.Machine do
 
   alias Craft.Consensus
   alias Craft.Consensus.State, as: ConsensusState
-  alias Craft.Consensus.LeaderState
-  alias Craft.Consensus.FollowerState
   alias Craft.Persistence
   alias Craft.Log.CommandEntry
   alias Craft.Log.EmptyEntry
@@ -50,13 +48,13 @@ defmodule Craft.Machine do
   # to continue without being blocked by the machine process while it's applying
   # entries
   #
-  def commit_index_bumped(%ConsensusState{mode_state: %LeaderState{}} = state) do
+  def commit_index_bumped(%ConsensusState{state: :leader} = state) do
     state.name
     |> name()
-    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence, state.mode_state.client_requests})
+    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence, state.leader_state.client_requests})
   end
 
-  def commit_index_bumped(%ConsensusState{mode_state: %FollowerState{}} = state) do
+  def commit_index_bumped(%ConsensusState{state: :follower} = state) do
     state.name
     |> name()
     |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence})

@@ -1,8 +1,7 @@
 defmodule Craft.RPC.AppendEntries do
   alias Craft.RPC.AppendEntries.LeadershipTransfer
   alias Craft.Consensus.State
-  alias Craft.Consensus.LeaderState
-  alias Craft.Consensus.FollowerState
+  alias Craft.Consensus.State.LeaderState
   alias Craft.Persistence
 
   defstruct [
@@ -23,14 +22,14 @@ defmodule Craft.RPC.AppendEntries do
     ]
   end
 
-  def new(%State{mode_state: %LeaderState{}} = state, to_node) do
-    next_index = Map.get(state.mode_state.next_indices, to_node)
+  def new(%State{state: :leader} = state, to_node) do
+    next_index = Map.get(state.leader_state.next_indices, to_node)
     prev_log_index = next_index - 1
     {:ok, %{term: prev_log_term}} = Persistence.fetch(state.persistence, prev_log_index)
     entries = Persistence.fetch_from(state.persistence, next_index)
 
     leadership_transfer =
-      case state.mode_state.leadership_transfer do
+      case state.leader_state.leadership_transfer do
         %LeaderState.LeadershipTransfer{current_candidate: ^to_node} = transfer ->
           %LeadershipTransfer{
             from: transfer.from,
@@ -61,7 +60,7 @@ defmodule Craft.RPC.AppendEntries do
       :latest_index # if successful, the follower's latest index
     ]
 
-    def new(%State{mode_state: %FollowerState{}} = state, success) do
+    def new(%State{state: :follower} = state, success) do
       %__MODULE__{
         term: state.current_term,
         from: node(),

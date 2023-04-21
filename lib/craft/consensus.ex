@@ -12,12 +12,9 @@ defmodule Craft.Consensus do
 
   alias Craft.Consensus.State
   alias Craft.Consensus.State.Members
-  alias Craft.Consensus.LonelyState
-  alias Craft.Consensus.FollowerState
-  alias Craft.Consensus.CandidateState
-  alias Craft.Consensus.LeaderState
-  alias Craft.Consensus.LeaderState.LeadershipTransfer
-  alias Craft.Consensus.LeaderState.MembershipChange
+  alias Craft.Consensus.State.LeaderState
+  alias Craft.Consensus.State.LeaderState.LeadershipTransfer
+  alias Craft.Consensus.State.LeaderState.MembershipChange
   alias Craft.Persistence
   alias Craft.Log.CommandEntry
   alias Craft.Log.MembershipEntry
@@ -111,16 +108,6 @@ defmodule Craft.Consensus do
     num >= State.quorum_needed(state)
   end
 
-  def vote_for?(%State{current_term: current_term}, %RequestVote{term: term}) when term < current_term, do: false
-
-  def vote_for?(%State{} = state, %RequestVote{} = request_vote) do
-    request_vote.last_log_term > Persistence.latest_term(state.persistence) ||
-    (
-      request_vote.last_log_term == Persistence.latest_term(state.persistence) &&
-        request_vote.last_log_index >= Persistence.latest_index(state.persistence)
-    )
-  end
-
   #
   # genstatem implementation
   #
@@ -188,8 +175,8 @@ defmodule Craft.Consensus do
   #   {:keep_state, data, [{:state_timeout, jitter(), :begin_pre_vote}]}
   # end
 
-  def lonely(:enter, :follower, data) do
-    data = LonelyState.new(data)
+  def lonely(:enter, _previous_state, data) do
+    data = State.become_lonely(data)
 
     Logger.info("became lonely", logger_metadata(data))
 
@@ -216,14 +203,15 @@ defmodule Craft.Consensus do
   def lonely(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term > current_term do
     data =
       data
+      |> State.become_lonely()
       |> State.set_current_term(term)
-      |> LonelyState.new()
+      |> State.set_voted_for(nil)
 
     lonely(:cast, msg, data)
   end
 
   def lonely(:cast, %RequestVote{pre_vote: true} = request_vote, data) do
-    vote_granted = vote_for?(data, request_vote)
+    vote_granted = State.vote_for?(data, request_vote)
 
     Logger.info("#{if vote_granted, do: "granting", else: "denying"} pre-vote to #{request_vote.candidate_id}", logger_metadata(data))
 
@@ -233,7 +221,7 @@ defmodule Craft.Consensus do
   end
 
   def lonely(:cast, %RequestVote{pre_vote: false} = request_vote, data) do
-    {vote_granted, data} = LonelyState.vote(data, request_vote)
+    {vote_granted, data} = State.vote(data, request_vote)
 
     Logger.info("#{if vote_granted, do: "granting", else: "denying"} vote to #{request_vote.candidate_id}", logger_metadata(data))
 
@@ -245,9 +233,9 @@ defmodule Craft.Consensus do
   def lonely(:cast, %RequestVote.Results{pre_vote: true} = results, data) do
     Logger.info("pre-vote #{if results.vote_granted, do: "granted", else: "denied"} by #{results.from}", logger_metadata(data))
 
-    data = LonelyState.record_pre_vote(data, results)
+    data = State.record_vote(data, results)
 
-    case LonelyState.pre_vote_election_result(data) do
+    case State.election_result(data) do
       :won ->
         {:next_state, :candidate, data}
 
@@ -296,7 +284,7 @@ defmodule Craft.Consensus do
   #
 
   def follower(:enter, _previous_state, data) do
-    data = FollowerState.new(data)
+    data = State.become_follower(data)
 
     Logger.info("became follower", logger_metadata(data))
 
@@ -308,7 +296,7 @@ defmodule Craft.Consensus do
     {vote_granted, data} =
       data
       |> State.set_current_term(term)
-      |> FollowerState.vote(request_vote)
+      |> State.vote(request_vote)
 
     Logger.info("#{if vote_granted, do: "granting", else: "denying"} vote to #{request_vote.candidate_id}", logger_metadata(data))
 
@@ -330,11 +318,15 @@ defmodule Craft.Consensus do
   #
   # this would have been implemented as a `:postpone`, but :gen_statem doesn't process postpones for :repeat_state so we have to fake it
   def follower(:cast, %AppendEntries{term: term} = msg, %State{current_term: current_term} = data) when term > current_term do
-    data = State.set_current_term(data, term)
+    data =
+      data
+      |> State.set_current_term(term)
+      |> State.set_voted_for(nil)
 
     follower(:cast, msg, data)
   end
 
+  # TODO: move most of this into State module?
   def follower(:cast, %AppendEntries{prev_log_term: prev_log_term} = append_entries, data) do
     old_commit_index = data.commit_index
     data = %State{data | leader_id: append_entries.leader_id}
@@ -432,7 +424,7 @@ defmodule Craft.Consensus do
   #
 
   def candidate(:enter, :follower, {data, leadership_transfer_request_id}) do
-    data = CandidateState.new(data, leadership_transfer_request_id)
+    data = State.become_candidate(data, leadership_transfer_request_id)
 
     Logger.info("became candidate, initiating leadership transfer election", logger_metadata(data))
 
@@ -443,7 +435,7 @@ defmodule Craft.Consensus do
   end
 
   def candidate(:enter, _previous_state, data) do
-    data = CandidateState.new(data)
+    data = State.become_candidate(data)
 
     Logger.info("became candidate", logger_metadata(data))
 
@@ -489,9 +481,9 @@ defmodule Craft.Consensus do
       Logger.info("vote denied by #{results.from}", logger_metadata(data))
     end
 
-    data = CandidateState.record_vote(data, results)
+    data = State.record_vote(data, results)
 
-    case CandidateState.election_result(data) do
+    case State.election_result(data) do
       :won ->
         {:next_state, :leader, data}
 
@@ -538,16 +530,16 @@ defmodule Craft.Consensus do
   # Leader
   #
 
-  def leader(:enter, previous_state, %State{mode_state: %CandidateState{leadership_transfer_request_id: {caller_pid, _ref} = id}} = data) do
+  def leader(:enter, previous_state, %State{leadership_transfer_request_id: {caller_pid, _ref} = id} = data) do
     send(caller_pid, {id, :ok})
 
-    data = put_in(data.mode_state.leadership_transfer_request_id, nil)
+    data = %State{data | leadership_transfer_request_id: nil}
 
     leader(:enter, previous_state, data)
   end
 
   def leader(:enter, _previous_state, data) do
-    data = LeaderState.new(data)
+    data = State.become_leader(data)
 
     #
     # when the cluster starts up, each node is explicitly given the same configuration to
@@ -579,7 +571,7 @@ defmodule Craft.Consensus do
 
   def leader({:timeout, :check_quorum}, :check_quorum, data) do
     num_replies_in_window =
-      data.mode_state.last_heartbeat_replies_at
+      data.leader_state.last_heartbeat_replies_at
       |> Map.values()
       |> Enum.filter(fn last_heartbeat_reply_at -> last_heartbeat_reply_at >= :erlang.monotonic_time(:millisecond) - @checkquorum_interval end)
       |> Enum.count()
@@ -603,7 +595,7 @@ defmodule Craft.Consensus do
   def leader(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term > current_term, do: become_follower(msg, data)
 
   def leader(:cast, %RequestVote{pre_vote: true} = request_vote, data) do
-    vote_granted = vote_for?(data, request_vote)
+    vote_granted = State.vote_for?(data, request_vote)
 
     Logger.info("#{if vote_granted, do: "granting", else: "denying"} pre-vote to #{request_vote.candidate_id}", logger_metadata(data))
 
@@ -628,7 +620,7 @@ defmodule Craft.Consensus do
 
     data =
       Enum.reduce(data.members.catching_up_nodes, data, fn node, data ->
-        if Persistence.latest_index(data.persistence) - 1 == Map.get(data.mode_state.next_indices, node) do
+        if Persistence.latest_index(data.persistence) - 1 == Map.get(data.leader_state.next_indices, node) do
           Logger.info("node #{inspect node} has caught up", logger_metadata(data))
 
           data = %State{data | members: Members.allow_node_to_vote(data.members, node)}
@@ -640,9 +632,9 @@ defmodule Craft.Consensus do
       end)
 
     # the membership change has committed
-    with %MembershipChange{} = membership_change <- data.mode_state.membership_change,
+    with %MembershipChange{} = membership_change <- data.leader_state.membership_change,
          true <- data.commit_index >= membership_change.log_index do
-      data = put_in(data.mode_state.membership_change, nil)
+      data = put_in(data.leader_state.membership_change, nil)
       actions = [{:reply, membership_change.from, :ok}]
 
       if membership_change.action == :remove && membership_change.node == node() do
@@ -682,7 +674,7 @@ defmodule Craft.Consensus do
     end
   end
 
-  def leader(:cast, {:machine_command, {caller_pid, _ref} = id, _command}, %State{mode_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
+  def leader(:cast, {:machine_command, {caller_pid, _ref} = id, _command}, %State{leader_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
     send(caller_pid, {id, {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}})
 
     :keep_state_and_data
@@ -693,12 +685,12 @@ defmodule Craft.Consensus do
     persistence = Persistence.append(data.persistence, entry)
 
     entry_index = Persistence.latest_index(persistence)
-    client_requests = Map.put(data.mode_state.client_requests, entry_index, id)
+    client_requests = Map.put(data.leader_state.client_requests, entry_index, id)
 
-    {:keep_state, %State{data | persistence: persistence, mode_state: %LeaderState{data.mode_state | client_requests: client_requests}}}
+    {:keep_state, %State{data | persistence: persistence, leader_state: %LeaderState{data.leader_state | client_requests: client_requests}}}
   end
 
-  def leader({:call, from}, _msg, %State{mode_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
+  def leader({:call, from}, _msg, %State{leader_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
     {:keep_state_and_data, [{:reply, from, {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}}]}
   end
 
