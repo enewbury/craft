@@ -125,4 +125,26 @@ defmodule Craft.Consensus.State do
     # elixir uses the :time keyword, we want a higher resolution timestamp
     Keyword.merge([term: state.current_term, ansi_color: color, t: time], extras)
   end
+
+  def set_current_term(%__MODULE__{} = state, term) do
+    persistence = Persistence.put_current_term!(state.persistence, term)
+
+    %__MODULE__{state | persistence: persistence, current_term: term}
+  end
+
+  def set_voted_for(%__MODULE__{} = state, voted_for) do
+    persistence = Persistence.put_voted_for!(state.persistence, voted_for)
+    mode_state = %{state.mode_state | voted_for: voted_for}
+
+    %__MODULE__{state | persistence: persistence, mode_state: mode_state}
+  end
+
+  def restore(%__MODULE__{mode_state: %LonelyState{}} = state) do
+    voted_for = Persistence.get_voted_for!(state.persistence)
+    current_term = Persistence.get_current_term!(state.persistence)
+
+    mode_state = %LonelyState{state.mode_state | voted_for: voted_for}
+
+    %__MODULE__{state | mode_state: mode_state, current_term: current_term}
+  end
 end

@@ -61,4 +61,14 @@ defmodule Craft.Persistence.MapPersistence do
       end
     end)
   end
+
+  @impl true
+  def put_current_term!(map, _term) do
+    map
+  end
+
+  @impl true
+  def put_voted_for!(map, _voted_for) do
+    map
+  end
 end

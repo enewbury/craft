@@ -19,7 +19,7 @@ defmodule Craft.Persistence do
   @type entry :: EmptyEntry.t() | CommandEntry.t() | MembershipEntry.t()
 
   #TODO: proper typespecs
-  @callback new(group_name :: String.t()) :: any()
+  @callback new(group_name :: String.t(), args :: any()) :: any()
   @callback latest_term(any()) :: integer()
   @callback latest_index(any()) :: integer()
   @callback fetch(any(), index :: integer()) :: entry()
@@ -27,6 +27,8 @@ defmodule Craft.Persistence do
   @callback append(any(), [entry()]) :: any()
   @callback rewind(any(), index :: integer()) :: any() # remove all long entries after index
   @callback reverse_find(any(), fun()) :: entry() | nil
+  @callback put_current_term!(any(), integer()) :: any()
+  @callback put_voted_for!(any(), integer()) :: any()
 
   defstruct [
     :module,
@@ -84,6 +86,7 @@ defmodule Craft.Persistence do
     module.fetch_from(private, index)
   end
 
+  # FIXME: rename to append!
   def append(%__MODULE__{module: module, private: private} = persistence, entries) when is_list(entries) do
     %__MODULE__{persistence | private: module.append(private, entries)}
   end
@@ -95,5 +98,21 @@ defmodule Craft.Persistence do
 
   def reverse_find(%__MODULE__{module: module, private: private} = persistence, fun) do
     %__MODULE__{persistence | private: module.reverse_search(private, fun)}
+  end
+
+  def put_current_term!(%__MODULE__{module: module, private: private} = persistence, term) do
+    %__MODULE__{persistence | private: module.put_current_term!(private, term)}
+  end
+
+  def put_voted_for!(%__MODULE__{module: module, private: private} = persistence, term) do
+    %__MODULE__{persistence | private: module.put_voted_for!(private, term)}
+  end
+
+  def get_current_term!(%__MODULE__{module: module, private: private}) do
+    module.get_current_term!(private)
+  end
+
+  def get_voted_for!(%__MODULE__{module: module, private: private}) do
+    module.get_voted_for!(private)
   end
 end

@@ -15,7 +15,7 @@ defmodule Craft.Consensus.LonelyState do
 
   def vote(%State{mode_state: %__MODULE__{voted_for: nil}} = state, %RequestVote{} = request_vote) do
     if Consensus.vote_for?(state, request_vote) do
-      {true, put_in(state.mode_state.voted_for, request_vote.candidate_id)}
+      {true, State.set_voted_for(state, request_vote.candidate_id)}
     else
       {false, state}
     end

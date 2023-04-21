@@ -179,13 +179,19 @@ defmodule Craft.Consensus do
   # - vote for candidates
   # - hold pre-vote elections as a precursor to becoming a candidate for a true election
   #
+  # def restore(:enter, _previous_state, data) do
+  #   data =
+  #     data
+  #     |> LonelyState.new()
+  #     |> State.restore()
 
-  def lonely(:enter, previous_state, data) do
+  #   {:keep_state, data, [{:state_timeout, jitter(), :begin_pre_vote}]}
+  # end
+
+  def lonely(:enter, :follower, data) do
     data = LonelyState.new(data)
 
-    if previous_state != :lonely do
-      Logger.info("became lonely", logger_metadata(data))
-    end
+    Logger.info("became lonely", logger_metadata(data))
 
     {:keep_state, data, [{:state_timeout, jitter(), :begin_pre_vote}]}
   end
@@ -208,7 +214,12 @@ defmodule Craft.Consensus do
   #
   # this would have been implemented as a `:postpone`, but :gen_statem doesn't process postpones for :repeat_state so we have to fake it
   def lonely(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term > current_term do
-    lonely(:cast, msg, LonelyState.new(%State{data | current_term: term}))
+    data =
+      data
+      |> State.set_current_term(term)
+      |> LonelyState.new()
+
+    lonely(:cast, msg, data)
   end
 
   def lonely(:cast, %RequestVote{pre_vote: true} = request_vote, data) do
@@ -294,8 +305,10 @@ defmodule Craft.Consensus do
   def follower(:state_timeout, :become_lonely, data), do: {:next_state, :lonely, data}
 
   def follower(:cast, %RequestVote{leadership_transfer: true, term: term} = request_vote, %State{current_term: current_term} = data) when term > current_term do
-    data = %State{data | current_term: term}
-    {vote_granted, data} = FollowerState.vote(data, request_vote)
+    {vote_granted, data} =
+      data
+      |> State.set_current_term(term)
+      |> FollowerState.vote(request_vote)
 
     Logger.info("#{if vote_granted, do: "granting", else: "denying"} vote to #{request_vote.candidate_id}", logger_metadata(data))
 
@@ -317,7 +330,9 @@ defmodule Craft.Consensus do
   #
   # this would have been implemented as a `:postpone`, but :gen_statem doesn't process postpones for :repeat_state so we have to fake it
   def follower(:cast, %AppendEntries{term: term} = msg, %State{current_term: current_term} = data) when term > current_term do
-    follower(:cast, msg, %State{data | current_term: term})
+    data = State.set_current_term(data, term)
+
+    follower(:cast, msg, data)
   end
 
   def follower(:cast, %AppendEntries{prev_log_term: prev_log_term} = append_entries, data) do
@@ -748,6 +763,6 @@ defmodule Craft.Consensus do
   defp become_follower(%{term: term} = msg, data) do
     Logger.info("received message #{inspect msg} from later term #{term}, becoming/remaining follower", logger_metadata(data))
 
-    {:next_state, :follower, %{data | current_term: term}, [:postpone]}
+    {:next_state, :follower, State.set_current_term(data, term), [:postpone]}
   end
 end
