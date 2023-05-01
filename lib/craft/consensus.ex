@@ -161,19 +161,11 @@ defmodule Craft.Consensus do
   #
   # Lonely
   #
-  # hasn't heard from a leader in a while, ready to:
+  # hasn't heard from a leader in a while, will:
   #
   # - vote for candidates
   # - hold pre-vote elections as a precursor to becoming a candidate for a true election
   #
-  # def restore(:enter, _previous_state, data) do
-  #   data =
-  #     data
-  #     |> LonelyState.new()
-  #     |> State.restore()
-
-  #   {:keep_state, data, [{:state_timeout, jitter(), :begin_pre_vote}]}
-  # end
 
   def lonely(:enter, _previous_state, data) do
     data = State.become_lonely(data)

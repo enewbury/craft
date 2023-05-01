@@ -1,7 +1,7 @@
 defmodule Craft.MemberSupervisor do
   @moduledoc false
 
-  alias Craft.Persistence.MapPersistence
+  alias Craft.Persistence.RocksDBPersistence
 
   use Supervisor
 
@@ -40,8 +40,7 @@ defmodule Craft.MemberSupervisor do
       |> Map.put(:name, name)
       |> Map.put(:nodes, nodes)
       |> Map.put(:machine, machine)
-      |> Map.put(:persistence, {MapPersistence, []})
-      # |> Map.put(:persistence, {RocksDBPersistence, data_dir: File.cwd!()})
+      |> Map.put(:persistence, {RocksDBPersistence, []})
 
     DynamicSupervisor.start_child(Craft.Supervisor, {__MODULE__, args})
   end

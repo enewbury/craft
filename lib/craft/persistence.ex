@@ -29,6 +29,8 @@ defmodule Craft.Persistence do
   @callback reverse_find(any(), fun()) :: entry() | nil
   @callback put_current_term!(any(), integer()) :: any()
   @callback put_voted_for!(any(), integer()) :: any()
+  @callback get_current_term!(any()) :: integer() | nil
+  @callback get_voted_for!(any()) :: node() | nil
 
   defstruct [
     :module,
@@ -36,7 +38,7 @@ defmodule Craft.Persistence do
   ]
 
   #
-  # Craft requires that log implementations are initialized at following point:
+  # Craft initializes the log with a starter entry, like so:
   #
   # log: 0 -> EmptyEntry{term: -1}
   #

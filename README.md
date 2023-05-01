@@ -3,7 +3,6 @@
 todo:
 - snapshots
 - cluster splitting
-- rocksdb backend
 - smart appendentries intervals for commands (immediate, interval-based batching...)
 - nemesis development
 - querying (dirty [leader, follower], linearizable command-based read)
@@ -15,5 +14,6 @@ todo:
 4.2.1 server catch up "rounds" hueristic
 
 done:
-3.10 leadership transfer extension
-CheckQuorum
+- 3.10 leadership transfer extension
+- CheckQuorum
+- rocksdb backend

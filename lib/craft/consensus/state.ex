@@ -22,10 +22,16 @@ defmodule Craft.Consensus.State do
   ]
 
   def new(name, nodes, persistence) do
+    persistence = Persistence.new(name, persistence)
+    voted_for = Persistence.get_voted_for!(persistence)
+    current_term = Persistence.get_current_term!(persistence) || -1
+
     %__MODULE__{
+      current_term: current_term,
       name: name,
       members: Members.new(nodes),
-      persistence: Persistence.new(name, persistence)
+      persistence: persistence,
+      voted_for: voted_for
     }
   end
 
@@ -153,13 +159,4 @@ defmodule Craft.Consensus.State do
 
     %__MODULE__{state | persistence: persistence, voted_for: voted_for}
   end
-
-  # def restore(%__MODULE__{mode_state: %LonelyState{}} = state) do
-  #   voted_for = Persistence.get_voted_for!(state.persistence)
-  #   current_term = Persistence.get_current_term!(state.persistence)
-
-  #   mode_state = %LonelyState{state.mode_state | voted_for: voted_for}
-
-  #   %__MODULE__{state | mode_state: mode_state, current_term: current_term}
-  # end
 end
