@@ -64,9 +64,9 @@ defmodule Craft.Consensus do
     end
   end
 
-  def state(name, node) do
-    :gen_statem.call({name(name), node}, :state)
-  end
+  # def state(name, node) do
+  #   :gen_statem.call({name(name), node}, :state)
+  # end
 
   def configuration(name, node) do
     :gen_statem.call({name(name), node}, :configuration)
@@ -236,10 +236,6 @@ defmodule Craft.Consensus do
     :keep_state_and_data
   end
 
-  def lonely({:call, from}, {:machine_command, _command}, data) do
-    {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
-  end
-
   def lonely({:call, from}, :catch_up, data) do
     {:keep_state_and_data, [{:reply, from, {data.commit_index, data.persistence}}]}
   end
@@ -376,10 +372,6 @@ defmodule Craft.Consensus do
     :keep_state_and_data
   end
 
-  def follower({:call, from}, {:machine_command, _command}, data) do
-    {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
-  end
-
   def follower({:call, from}, :catch_up, data) do
     {:keep_state_and_data, [{:reply, from, {data.commit_index, data.persistence}}]}
   end
@@ -478,10 +470,6 @@ defmodule Craft.Consensus do
     send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
 
     :keep_state_and_data
-  end
-
-  def candidate({:call, from}, {:machine_command, _command}, data) do
-    {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
   end
 
   # this should only happen in test, it'd be nice to throw an assertion in here,

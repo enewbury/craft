@@ -171,11 +171,8 @@ defmodule Craft.Persistence.RocksDBPersistence do
     decode(val)
   end
 
-  defp encode(term), do: :erlang.term_to_binary(term)
-  defp decode(binary), do: :erlang.binary_to_term(binary)
-
-
-
+  def encode(term), do: :erlang.term_to_binary(term)
+  def decode(binary), do: :erlang.binary_to_term(binary)
 
   def dump(%__MODULE__{} = state) do
     Enum.each([state.metadata_cf, state.log_cf], fn cf ->
@@ -204,6 +201,64 @@ defmodule Craft.Persistence.RocksDBPersistence do
     rescue
       _ ->
       IO.puts(inspect(index) <> " -> " <> inspect(decode(value)))
+    end
+  end
+end
+
+defimpl Inspect, for: Craft.Persistence.RocksDBPersistence do
+  import Inspect.Algebra
+  import Craft.Persistence.RocksDBPersistence, only: [decode: 1]
+
+  def inspect(state, opts) do
+    rows =
+      Enum.flat_map([state.metadata_cf, state.log_cf], fn cf ->
+        {:ok, iterator} = :rocksdb.iterator(state.db, cf, [])
+        {:ok, index, value} = :rocksdb.iterator_move(iterator, :first)
+
+        Stream.repeatedly(fn ->
+          case :rocksdb.iterator_move(iterator, :next) do
+            {:ok, index, value} ->
+              {index, value}
+
+            _ ->
+              :ok = :rocksdb.iterator_close(iterator)
+              :eof
+          end
+        end)
+        |> Stream.take_while(fn
+          :eof ->
+            false
+
+           _ ->
+             true
+        end)
+        |> Enum.concat([{index, value}])
+        |> Enum.map(fn {k, v} ->
+          try do
+            {decode(k), decode(v)}
+          rescue
+            _ ->
+              {k, decode(v)}
+          end
+        end)
+        |> Enum.sort()
+      end)
+
+    concat(["#RocksDBPersistence<",
+            glue(
+              to_doc(Map.from_struct(state), opts),
+              "\n",
+              to_doc(rows, opts)
+            ),
+            ">"])
+  end
+
+  defp dump(index, value) do
+    try do
+      [inspect(decode(index)) <> " -> " <> inspect(decode(value))]
+    rescue
+      _ ->
+        [inspect(index) <> " -> " <> inspect(decode(value))]
     end
   end
 end

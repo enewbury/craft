@@ -103,18 +103,18 @@ defmodule Craft.Machine do
           state.last_applied
       end
 
-    private =
-      Enum.reduce(last_applied_log_index..new_commit_index//1, state.private, fn index, private ->
+    state =
+      Enum.reduce(last_applied_log_index..new_commit_index//1, state, fn index, state ->
         case Persistence.fetch(log, index) do
           {:ok, %EmptyEntry{}} ->
-            private
+            state
 
           {:ok, %MembershipEntry{}} ->
-            private
+            state
 
           {:ok, %CommandEntry{command: command}} ->
             {reply, side_effects, private} =
-              case state.module.command(command, index, private) do
+              case state.module.command(command, index, state.private) do
                 {reply, private} ->
                   {reply, [], private}
 
@@ -122,25 +122,28 @@ defmodule Craft.Machine do
                   {reply, side_effects, private}
               end
 
+            state = %State{state | private: private}
+
             if role == :leader do
-              case Map.fetch(state.client_requests, index) do
-                {:ok, {pid, _ref} = id} ->
-                  send(pid, {id, reply})
-
-                _ ->
-                  :noop
-              end
-
               Enum.each(side_effects, fn {m, f, a} ->
                 spawn(fn -> apply(m, f, a) end)
               end)
-            end
 
-            private
+              case Map.pop(state.client_requests, index) do
+                {{pid, _ref} = id, client_requests} ->
+                  send(pid, {id, reply})
+                  %State{state | client_requests: client_requests}
+
+                _ ->
+                  state
+              end
+            else
+              state
+            end
         end
       end)
 
-    {:noreply, %State{state | private: private, last_applied: new_commit_index}}
+    {:noreply, %State{state | last_applied: new_commit_index}}
   end
 
   @impl true
