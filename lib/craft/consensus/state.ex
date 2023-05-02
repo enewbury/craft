@@ -24,7 +24,7 @@ defmodule Craft.Consensus.State do
   def new(name, nodes, persistence) do
     persistence = Persistence.new(name, persistence)
     voted_for = Persistence.get_voted_for!(persistence)
-    current_term = Persistence.get_current_term!(persistence) || -1
+    current_term = Persistence.get_current_term!(persistence)
 
     %__MODULE__{
       current_term: current_term,

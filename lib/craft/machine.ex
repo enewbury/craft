@@ -20,7 +20,8 @@ defmodule Craft.Machine do
       :name,
       :module,
       :private,
-      last_applied: 0
+      last_applied: 0,
+      client_requests: %{}
     ]
   end
 
@@ -48,16 +49,26 @@ defmodule Craft.Machine do
   # to continue without being blocked by the machine process while it's applying
   # entries
   #
-  def commit_index_bumped(%ConsensusState{state: :leader} = state) do
+  def commit_index_bumped(%ConsensusState{} = state) do
     state.name
     |> name()
-    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence, state.leader_state.client_requests})
+    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence, state.state})
   end
 
-  def commit_index_bumped(%ConsensusState{state: :follower} = state) do
-    state.name
-    |> name()
-    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence})
+  def command(name, node, command, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+    id = {self(), make_ref()}
+
+    GenServer.cast({name(name), node}, {:command, id, command})
+
+    receive do
+      {^id, reply} ->
+        reply
+
+      after
+        timeout ->
+          {:error, :timeout}
+    end
   end
 
   @impl true
@@ -78,15 +89,11 @@ defmodule Craft.Machine do
   def handle_continue(:restore_machine_state, state) do
     {commit_index, log} = Consensus.catch_up(state.name)
 
-    handle_cast({:commit_index_bumped, commit_index, log}, state)
+    handle_cast({:commit_index_bumped, commit_index, log, nil}, state)
   end
 
   @impl true
-  def handle_cast({:commit_index_bumped, new_commit_index, log}, state) do
-    handle_cast({:commit_index_bumped, new_commit_index, log, nil}, state)
-  end
-
-  def handle_cast({:commit_index_bumped, new_commit_index, log, requests}, state) do
+  def handle_cast({:commit_index_bumped, new_commit_index, log, role}, state) do
     last_applied_log_index =
       with true <- state.module.__craft_persistent__(),
            last_applied when is_integer(last_applied) <- state.module.last_applied_log_index(state.private) do
@@ -115,9 +122,8 @@ defmodule Craft.Machine do
                   {reply, side_effects, private}
               end
 
-            # if requests isn't nil, we're the leader
-            if requests do
-              case Map.fetch(requests, index) do
+            if role == :leader do
+              case Map.fetch(state.client_requests, index) do
                 {:ok, {pid, _ref} = id} ->
                   send(pid, {id, reply})
 
@@ -135,6 +141,19 @@ defmodule Craft.Machine do
       end)
 
     {:noreply, %State{state | private: private, last_applied: new_commit_index}}
+  end
+
+  @impl true
+  def handle_cast({:command, {from, _ref} = id, command}, state) do
+    case :gen_statem.call({Consensus.name(state.name), node()}, {:machine_command, command}) do
+      {:ok, index} ->
+        {:noreply, %State{state | client_requests: Map.put(state.client_requests, index, id)}}
+
+      # not leader etc
+      error ->
+        send(from, {id, error})
+        {:noreply, state}
+    end
   end
 
   @impl true

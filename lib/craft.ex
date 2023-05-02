@@ -1,5 +1,6 @@
 defmodule Craft do
   alias Craft.Consensus
+  alias Craft.Machine
 
   # FIXME
   @type command :: any()
@@ -67,7 +68,7 @@ defmodule Craft do
   defdelegate stop_member(name), to: Craft.MemberSupervisor
 
   def command(command, name, nodes, opts \\ []) do
-    with_leader_redirect(name, nodes, &Consensus.command(name, &1, command), opts)
+    with_leader_redirect(name, nodes, &Machine.command(name, &1, command), opts)
   end
 
   defp with_leader_redirect(name, nodes, func, opts \\ []) do
@@ -122,7 +123,7 @@ defmodule Craft do
     |> Enum.into(%{}, fn node ->
       {node,
        consensus: {Consensus.name(name), node} |> :sys.get_state(),
-       machine: {Craft.Machine.name(name), node} |> :sys.get_state()}
+       machine: {Machine.name(name), node} |> :sys.get_state()}
     end)
   end
 end

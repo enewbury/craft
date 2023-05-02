@@ -44,21 +44,8 @@ defmodule Craft.Consensus do
   # API
   #
 
-  def command(name, node, command, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5_000)
-    id = {self(), make_ref()}
-
-    # FIXME: use call instead
-    :gen_statem.cast({name(name), node}, {:machine_command, id, command})
-
-    receive do
-      {^id, reply} ->
-        reply
-
-      after
-        timeout ->
-          {:error, :timeout}
-    end
+  def command(name, node, command) do
+    :gen_statem.call({name(name), node}, {:machine_command, command})
   end
 
   def cast_user_command(name, node, msg, opts \\ []) do
@@ -249,10 +236,8 @@ defmodule Craft.Consensus do
     :keep_state_and_data
   end
 
-  def lonely(:cast, {:machine_command, {caller_pid, _ref} = id, _command}, data) do
-    send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
-
-    :keep_state_and_data
+  def lonely({:call, from}, {:machine_command, _command}, data) do
+    {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
   end
 
   def lonely({:call, from}, :catch_up, data) do
@@ -391,10 +376,8 @@ defmodule Craft.Consensus do
     :keep_state_and_data
   end
 
-  def follower(:cast, {:machine_command, {caller_pid, _ref} = id, _command}, data) do
-    send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
-
-    :keep_state_and_data
+  def follower({:call, from}, {:machine_command, _command}, data) do
+    {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
   end
 
   def follower({:call, from}, :catch_up, data) do
@@ -488,7 +471,7 @@ defmodule Craft.Consensus do
   end
 
   # even though this node doesn't recognize the leader as legitimate anymore,
-  # we should still try to redirect commands to the old leader, in case it is
+  # we should still try to redirect commands to the old leader, in case it
   # actually is legitimate and we're incorrect. (e.g. we're isolated from the
   # other nodes and they're happily carrying on without us)
   def candidate(:cast, {:user_command, {caller_pid, _ref} = id, _command}, data) do
@@ -497,10 +480,8 @@ defmodule Craft.Consensus do
     :keep_state_and_data
   end
 
-  def candidate(:cast, {:machine_command, {caller_pid, _ref} = id, _command}, data) do
-    send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
-
-    :keep_state_and_data
+  def candidate({:call, from}, {:machine_command, _command}, data) do
+    {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
   end
 
   # this should only happen in test, it'd be nice to throw an assertion in here,
@@ -666,20 +647,16 @@ defmodule Craft.Consensus do
     end
   end
 
-  def leader(:cast, {:machine_command, {caller_pid, _ref} = id, _command}, %State{leader_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
-    send(caller_pid, {id, {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}})
-
-    :keep_state_and_data
+  def leader({:call, from}, {:machine_command, _command}, %State{leader_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
+    {:keep_state_and_data, [{:reply, from, {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}}]}
   end
 
-  def leader(:cast, {:machine_command, id, command}, data) do
+  def leader({:call, from}, {:machine_command, command}, data) do
     entry = %CommandEntry{term: data.current_term, command: command}
     persistence = Persistence.append(data.persistence, entry)
-
     entry_index = Persistence.latest_index(persistence)
-    client_requests = Map.put(data.leader_state.client_requests, entry_index, id)
 
-    {:keep_state, %State{data | persistence: persistence, leader_state: %LeaderState{data.leader_state | client_requests: client_requests}}}
+    {:keep_state, %State{data | persistence: persistence}, [{:reply, from, {:ok, entry_index}}]}
   end
 
   def leader({:call, from}, _msg, %State{leader_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
