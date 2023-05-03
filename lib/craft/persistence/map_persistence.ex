@@ -81,4 +81,9 @@ defmodule Craft.Persistence.MapPersistence do
   def get_voted_for!(_map) do
     nil
   end
+
+  @impl true
+  def dump(map) do
+    map
+  end
 end

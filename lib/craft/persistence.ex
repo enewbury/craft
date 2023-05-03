@@ -31,6 +31,8 @@ defmodule Craft.Persistence do
   @callback put_voted_for!(any(), integer()) :: any()
   @callback get_current_term!(any()) :: integer() | nil
   @callback get_voted_for!(any()) :: node() | nil
+  @callback dump(any()) :: any()
+  @optional_callbacks [dump: 1]
 
   defstruct [
     :module,
@@ -116,5 +118,9 @@ defmodule Craft.Persistence do
 
   def get_voted_for!(%__MODULE__{module: module, private: private}) do
     module.get_voted_for!(private)
+  end
+
+  def dump(%__MODULE__{module: module, private: private}) do
+    module.dump(private)
   end
 end

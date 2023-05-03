@@ -18,11 +18,13 @@ defmodule Craft.Persistence.RocksDBPersistence do
     :metadata_cf,
     :latest_index,
     :latest_term,
+    :write_opts
   ]
 
   @impl true
   def new(group_name, opts \\ []) do
     data_dir = Keyword.get(opts, :data_dir, Path.join(["data", File.cwd!(), to_string(node())]))
+    write_opts = Keyword.get(opts, :write_opts, [sync: false])
 
     File.mkdir_p!(data_dir)
 
@@ -48,7 +50,8 @@ defmodule Craft.Persistence.RocksDBPersistence do
       db: db,
       latest_index: latest_index,
       log_cf: log_column_family_handle,
-      metadata_cf: metadata_column_family_handle
+      metadata_cf: metadata_column_family_handle,
+      write_opts: write_opts
     }
     |> put_current_term!(-1)
     |> put_voted_for!(nil)
@@ -105,7 +108,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
         %__MODULE__{state | latest_index: index}
       end)
 
-    :ok = :rocksdb.write_batch(state.db, batch, sync: true)
+    :ok = :rocksdb.write_batch(state.db, batch, state.write_opts)
     :ok = :rocksdb.release_batch(batch)
 
     %__MODULE__{state | latest_term: List.last(entries).term}
@@ -113,7 +116,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
   @impl true
   def rewind(%__MODULE__{} = state, index) do
-    :ok = :rocksdb.delete_range(state.db, state.log_cf, encode(index + 1), encode(state.latest_index + 1), sync: true)
+    :ok = :rocksdb.delete_range(state.db, state.log_cf, encode(index + 1), encode(state.latest_index + 1), state.write_opts)
 
     %__MODULE__{state | latest_index: index}
   end
@@ -144,14 +147,14 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
   @impl true
   def put_current_term!(%__MODULE__{} = state, term) do
-    :ok = :rocksdb.put(state.db, state.metadata_cf, "current_term", encode(term), sync: true)
+    :ok = :rocksdb.put(state.db, state.metadata_cf, "current_term", encode(term), state.write_opts)
 
     state
   end
 
   @impl true
   def put_voted_for!(%__MODULE__{} = state, voted_for) do
-    :ok = :rocksdb.put(state.db, state.metadata_cf, "voted_for", encode(voted_for), sync: true)
+    :ok = :rocksdb.put(state.db, state.metadata_cf, "voted_for", encode(voted_for), state.write_opts)
 
     state
   end
@@ -171,94 +174,42 @@ defmodule Craft.Persistence.RocksDBPersistence do
     decode(val)
   end
 
-  def encode(term), do: :erlang.term_to_binary(term)
-  def decode(binary), do: :erlang.binary_to_term(binary)
-
+  @impl true
   def dump(%__MODULE__{} = state) do
-    Enum.each([state.metadata_cf, state.log_cf], fn cf ->
+    Enum.flat_map([state.metadata_cf, state.log_cf], fn cf ->
       {:ok, iterator} = :rocksdb.iterator(state.db, cf, [])
       {:ok, index, value} = :rocksdb.iterator_move(iterator, :first)
-      print(index, value)
-      dump(iterator)
-      IO.puts("----------------------")
+
+      Stream.repeatedly(fn ->
+        case :rocksdb.iterator_move(iterator, :next) do
+          {:ok, index, value} ->
+            {index, value}
+
+          _ ->
+            :ok = :rocksdb.iterator_close(iterator)
+            :eof
+        end
+      end)
+      |> Stream.take_while(fn
+        :eof ->
+          false
+
+        _ ->
+          true
+      end)
+      |> Enum.concat([{index, value}])
+      |> Enum.map(fn {k, v} ->
+        try do
+          {decode(k), decode(v)}
+        rescue
+          _ ->
+            {k, decode(v)}
+        end
+      end)
+      |> Enum.sort()
     end)
   end
 
-  def dump(iterator) do
-    case :rocksdb.iterator_move(iterator, :next) do
-      {:ok, index, value} ->
-        print(index, value)
-        dump(iterator)
-
-      _ ->
-        :ok = :rocksdb.iterator_close(iterator)
-    end
-  end
-
-  defp print(index, value) do
-    try do
-      IO.puts(inspect(decode(index)) <> " -> " <> inspect(decode(value)))
-    rescue
-      _ ->
-      IO.puts(inspect(index) <> " -> " <> inspect(decode(value)))
-    end
-  end
-end
-
-defimpl Inspect, for: Craft.Persistence.RocksDBPersistence do
-  import Inspect.Algebra
-  import Craft.Persistence.RocksDBPersistence, only: [decode: 1]
-
-  def inspect(state, opts) do
-    rows =
-      Enum.flat_map([state.metadata_cf, state.log_cf], fn cf ->
-        {:ok, iterator} = :rocksdb.iterator(state.db, cf, [])
-        {:ok, index, value} = :rocksdb.iterator_move(iterator, :first)
-
-        Stream.repeatedly(fn ->
-          case :rocksdb.iterator_move(iterator, :next) do
-            {:ok, index, value} ->
-              {index, value}
-
-            _ ->
-              :ok = :rocksdb.iterator_close(iterator)
-              :eof
-          end
-        end)
-        |> Stream.take_while(fn
-          :eof ->
-            false
-
-           _ ->
-             true
-        end)
-        |> Enum.concat([{index, value}])
-        |> Enum.map(fn {k, v} ->
-          try do
-            {decode(k), decode(v)}
-          rescue
-            _ ->
-              {k, decode(v)}
-          end
-        end)
-        |> Enum.sort()
-      end)
-
-    concat(["#RocksDBPersistence<",
-            glue(
-              to_doc(Map.from_struct(state), opts),
-              "\n",
-              to_doc(rows, opts)
-            ),
-            ">"])
-  end
-
-  defp dump(index, value) do
-    try do
-      [inspect(decode(index)) <> " -> " <> inspect(decode(value))]
-    rescue
-      _ ->
-        [inspect(index) <> " -> " <> inspect(decode(value))]
-    end
-  end
+  defp encode(term), do: :erlang.term_to_binary(term)
+  defp decode(binary), do: :erlang.binary_to_term(binary)
 end

@@ -64,9 +64,9 @@ defmodule Craft.Consensus do
     end
   end
 
-  # def state(name, node) do
-  #   :gen_statem.call({name(name), node}, :state)
-  # end
+  def state(name, node) do
+    :gen_statem.call({name(name), node}, :state)
+  end
 
   def configuration(name, node) do
     :gen_statem.call({name(name), node}, :configuration)
@@ -240,6 +240,10 @@ defmodule Craft.Consensus do
     {:keep_state_and_data, [{:reply, from, {data.commit_index, data.persistence}}]}
   end
 
+  def lonely({:call, from}, :state, data) do
+    {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
+  end
+
   def lonely({:call, from}, _request, data) do
     {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
   end
@@ -376,6 +380,10 @@ defmodule Craft.Consensus do
     {:keep_state_and_data, [{:reply, from, {data.commit_index, data.persistence}}]}
   end
 
+  def follower({:call, from}, :state, data) do
+    {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
+  end
+
   def follower({:call, from}, _request, data) do
     {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
   end
@@ -475,6 +483,10 @@ defmodule Craft.Consensus do
   # this should only happen in test, it'd be nice to throw an assertion in here,
   def candidate({:call, from}, :catch_up, data) do
     {:keep_state_and_data, [{:reply, from, {data.commit_index, data.persistence}}]}
+  end
+
+  def candidate({:call, from}, :state, data) do
+    {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
   end
 
   def candidate({:call, from}, _request, data) do
@@ -697,6 +709,10 @@ defmodule Craft.Consensus do
 
       {:keep_state, data}
     end
+  end
+
+  def leader({:call, from}, :state, data) do
+    {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
   end
 
   def leader(type, msg, data) do

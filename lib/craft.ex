@@ -122,7 +122,7 @@ defmodule Craft do
     |> MapSet.union(members.non_voting_nodes)
     |> Enum.into(%{}, fn node ->
       {node,
-       consensus: {Consensus.name(name), node} |> :sys.get_state(),
+       consensus: Consensus.state(name, node),
        machine: {Machine.name(name), node} |> :sys.get_state()}
     end)
   end
