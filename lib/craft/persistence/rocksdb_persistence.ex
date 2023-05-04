@@ -23,8 +23,8 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
   @impl true
   def new(group_name, opts \\ []) do
-    data_dir = Keyword.get(opts, :data_dir, Path.join(["data", File.cwd!(), to_string(node())]))
-    write_opts = Keyword.get(opts, :write_opts, [sync: false])
+    data_dir = Keyword.get(opts, :data_dir, Path.join([File.cwd!(), "data", to_string(node())]))
+    write_opts = Keyword.get(opts, :write_opts, [sync: true])
 
     File.mkdir_p!(data_dir)
 
@@ -115,6 +115,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
   end
 
   @impl true
+  def rewind(%__MODULE__{latest_index: latest_index} = state, index) when index >= latest_index, do: state
   def rewind(%__MODULE__{} = state, index) do
     :ok = :rocksdb.delete_range(state.db, state.log_cf, encode(index + 1), encode(state.latest_index + 1), state.write_opts)
 

@@ -29,10 +29,10 @@ defmodule Craft.Consensus do
 
   @behaviour :gen_statem
 
-  @heartbeat_interval 1000 # ms
+  @heartbeat_interval 100 # ms
   # max time in the past within which leader must have a successful quorum, or it'll step down
   @checkquorum_interval @heartbeat_interval * 3
-  @lonely_timeout @heartbeat_interval + 300
+  @lonely_timeout @heartbeat_interval + 1_000
   # amount of time to wait for votes before concluding that the election has failed
   @election_timeout 1500
   # amount of time to wait for new leader to take over before concluding that leadership transfer has failed

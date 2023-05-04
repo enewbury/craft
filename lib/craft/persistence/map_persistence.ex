@@ -74,7 +74,7 @@ defmodule Craft.Persistence.MapPersistence do
 
   @impl true
   def get_current_term!(_map) do
-    nil
+    -1
   end
 
   @impl true

@@ -31,8 +31,8 @@ defmodule Craft.MemberSupervisor do
     Supervisor.init(children, strategy: :one_for_all)
   end
 
-  # TODO: :data_dir implied {RocksDBPersistence, data_dir: data_dir}
-  # allow passing :persistence key has a {module, args} tuple
+  # TODO: - :data_dir implies {RocksDBPersistence, data_dir: data_dir}
+  #       - allow passing :persistence key has a {module, args} tuple
   def start_member(name, nodes, machine, opts \\ []) do
     args =
       opts
