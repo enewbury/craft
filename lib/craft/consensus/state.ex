@@ -3,6 +3,7 @@ defmodule Craft.Consensus.State do
   alias Craft.Consensus.State.LeaderState
   alias Craft.Consensus.State.Election
   alias Craft.Persistence
+  alias Craft.Persistence.Metadata
   alias Craft.RPC.RequestVote
 
   defstruct [
@@ -23,16 +24,44 @@ defmodule Craft.Consensus.State do
 
   def new(name, nodes, persistence) do
     persistence = Persistence.new(name, persistence)
-    voted_for = Persistence.get_voted_for!(persistence)
-    current_term = Persistence.get_current_term!(persistence)
 
-    %__MODULE__{
-      current_term: current_term,
-      name: name,
-      members: Members.new(nodes),
-      persistence: persistence,
-      voted_for: voted_for
-    }
+    state =
+      %__MODULE__{
+        name: name,
+        members: Members.new(nodes),
+        persistence: persistence
+      }
+
+    case Metadata.fetch(persistence) do
+      {:ok, %Metadata{} = metadata} ->
+        %__MODULE__{
+          state |
+          current_term: metadata.current_term,
+          voted_for: metadata.voted_for
+        }
+
+      :error ->
+        Metadata.update(state)
+    end
+  end
+
+  def set_current_term(%__MODULE__{} = state, new_current_term, voted_for \\ nil) do
+    state =
+      %__MODULE__{
+        state |
+        current_term: new_current_term,
+        voted_for: voted_for
+      }
+
+    Metadata.update(state)
+
+    state
+  end
+
+  def become_lonely(%__MODULE__{} = state, new_current_term) do
+    state
+    |> become_lonely()
+    |> set_current_term(new_current_term)
   end
 
   def become_lonely(%__MODULE__{} = state) do
@@ -59,12 +88,13 @@ defmodule Craft.Consensus.State do
     %__MODULE__{
       state |
       state: :candidate,
+      current_term: state.current_term + 1,
       leader_state: nil,
       leadership_transfer_request_id: leadership_transfer_request_id,
-      election: Election.new(state.members)
+      election: Election.new(state.members),
+      voted_for: node()
     }
-    |> set_current_term(state.current_term + 1)
-    |> set_voted_for(node())
+    |> Metadata.update()
   end
 
   def become_leader(%__MODULE__{} = state) do
@@ -85,19 +115,6 @@ defmodule Craft.Consensus.State do
     request_vote.last_log_term > Persistence.latest_term(state.persistence) ||
     (request_vote.last_log_term == Persistence.latest_term(state.persistence) &&
       request_vote.last_log_index >= Persistence.latest_index(state.persistence))
-  end
-
-  def vote(%__MODULE__{voted_for: nil} = state, %RequestVote{} = request_vote) do
-    if vote_for?(state, request_vote) do
-      {true, set_voted_for(state, request_vote.candidate_id)}
-    else
-      {false, state}
-    end
-  end
-
-  # repeat vote if asked
-  def vote(%__MODULE__{} = state, %RequestVote{} = request_vote) do
-    {state.voted_for == request_vote.candidate_id, state}
   end
 
   # holding pre-vote and leadership elections
@@ -146,17 +163,5 @@ defmodule Craft.Consensus.State do
 
     # elixir uses the :time keyword, we want a higher resolution timestamp
     Keyword.merge([term: state.current_term, ansi_color: color, t: time], extras)
-  end
-
-  def set_current_term(%__MODULE__{} = state, term) do
-    persistence = Persistence.put_current_term!(state.persistence, term)
-
-    %__MODULE__{state | persistence: persistence, current_term: term}
-  end
-
-  def set_voted_for(%__MODULE__{} = state, voted_for) do
-    persistence = Persistence.put_voted_for!(state.persistence, voted_for)
-
-    %__MODULE__{state | persistence: persistence, voted_for: voted_for}
   end
 end

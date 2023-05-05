@@ -53,8 +53,6 @@ defmodule Craft.Persistence.RocksDBPersistence do
       metadata_cf: metadata_column_family_handle,
       write_opts: write_opts
     }
-    |> put_current_term!(-1)
-    |> put_voted_for!(nil)
   end
 
   @impl true
@@ -115,12 +113,12 @@ defmodule Craft.Persistence.RocksDBPersistence do
   end
 
   @impl true
-  def rewind(%__MODULE__{latest_index: latest_index} = state, index) when index >= latest_index, do: state
-  def rewind(%__MODULE__{} = state, index) do
+  def rewind(%__MODULE__{latest_index: latest_index} = state, index) when index < latest_index do
     :ok = :rocksdb.delete_range(state.db, state.log_cf, encode(index + 1), encode(state.latest_index + 1), state.write_opts)
 
     %__MODULE__{state | latest_index: index}
   end
+  def rewind(state, _index), do: state
 
   @impl true
   def reverse_find(%__MODULE__{} = state, fun) do
@@ -147,32 +145,21 @@ defmodule Craft.Persistence.RocksDBPersistence do
   end
 
   @impl true
-  def put_current_term!(%__MODULE__{} = state, term) do
-    :ok = :rocksdb.put(state.db, state.metadata_cf, "current_term", encode(term), state.write_opts)
+  def put_metadata(%__MODULE__{} = state, binary) do
+    :ok = :rocksdb.put(state.db, state.metadata_cf, "metadata", binary, state.write_opts)
 
     state
   end
 
   @impl true
-  def put_voted_for!(%__MODULE__{} = state, voted_for) do
-    :ok = :rocksdb.put(state.db, state.metadata_cf, "voted_for", encode(voted_for), state.write_opts)
+  def fetch_metadata(%__MODULE__{} = state) do
+    case :rocksdb.get(state.db, state.metadata_cf, "metadata", []) do
+      {:ok, binary} ->
+        {:ok, binary}
 
-    state
-  end
-
-  @impl true
-  def get_current_term!(%__MODULE__{} = state) do
-    {:ok, val} = :rocksdb.get(state.db, state.metadata_cf, "current_term", [])
-
-
-    decode(val)
-  end
-
-  @impl true
-  def get_voted_for!(%__MODULE__{} = state) do
-    {:ok, val} = :rocksdb.get(state.db, state.metadata_cf, "voted_for", [])
-
-    decode(val)
+      _ ->
+        :error
+    end
   end
 
   @impl true

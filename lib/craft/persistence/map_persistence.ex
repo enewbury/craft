@@ -63,23 +63,13 @@ defmodule Craft.Persistence.MapPersistence do
   end
 
   @impl true
-  def put_current_term!(map, _term) do
+  def put_metadata(map, _term) do
     map
   end
 
   @impl true
-  def put_voted_for!(map, _voted_for) do
-    map
-  end
-
-  @impl true
-  def get_current_term!(_map) do
-    -1
-  end
-
-  @impl true
-  def get_voted_for!(_map) do
-    nil
+  def fetch_metadata(_map) do
+    :error
   end
 
   @impl true

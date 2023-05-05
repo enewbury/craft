@@ -180,13 +180,7 @@ defmodule Craft.Consensus do
   #
   # this would have been implemented as a `:postpone`, but :gen_statem doesn't process postpones for :repeat_state so we have to fake it
   def lonely(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term > current_term do
-    data =
-      data
-      |> State.become_lonely()
-      |> State.set_current_term(term)
-      |> State.set_voted_for(nil)
-
-    lonely(:cast, msg, data)
+    lonely(:cast, msg, State.become_lonely(data, term))
   end
 
   def lonely(:cast, %RequestVote{pre_vote: true} = request_vote, data) do
@@ -199,8 +193,13 @@ defmodule Craft.Consensus do
     {:keep_state, data}
   end
 
-  def lonely(:cast, %RequestVote{pre_vote: false} = request_vote, data) do
-    {vote_granted, data} = State.vote(data, request_vote)
+  def lonely(:cast, %RequestVote{pre_vote: false} = request_vote, %State{voted_for: nil} = data) do
+    {vote_granted, data} =
+      if State.vote_for?(data, request_vote) do
+        {true, State.set_current_term(data, data.current_term, request_vote.candidate_id)}
+      else
+        {false, data}
+      end
 
     Logger.info("#{if vote_granted, do: "granting", else: "denying"} vote to #{request_vote.candidate_id}", logger_metadata(data))
 
@@ -208,6 +207,12 @@ defmodule Craft.Consensus do
 
     {:keep_state, data}
   end
+
+  def lonely(:cast, %RequestVote{pre_vote: false} = request_vote, data) do
+    RPC.respond_vote(request_vote, false, data)
+    {:keep_state, data}
+  end
+
 
   def lonely(:cast, %RequestVote.Results{pre_vote: true} = results, data) do
     Logger.info("pre-vote #{if results.vote_granted, do: "granted", else: "denied"} by #{results.from}", logger_metadata(data))
@@ -271,9 +276,11 @@ defmodule Craft.Consensus do
 
   def follower(:cast, %RequestVote{leadership_transfer: true, term: term} = request_vote, %State{current_term: current_term} = data) when term > current_term do
     {vote_granted, data} =
-      data
-      |> State.set_current_term(term)
-      |> State.vote(request_vote)
+      if State.vote_for?(data, request_vote) do
+        {true, State.set_current_term(data, term, request_vote.candidate_id)}
+      else
+        {false, data}
+      end
 
     Logger.info("#{if vote_granted, do: "granting", else: "denying"} vote to #{request_vote.candidate_id}", logger_metadata(data))
 
@@ -295,12 +302,7 @@ defmodule Craft.Consensus do
   #
   # this would have been implemented as a `:postpone`, but :gen_statem doesn't process postpones for :repeat_state so we have to fake it
   def follower(:cast, %AppendEntries{term: term} = msg, %State{current_term: current_term} = data) when term > current_term do
-    data =
-      data
-      |> State.set_current_term(term)
-      |> State.set_voted_for(nil)
-
-    follower(:cast, msg, data)
+    follower(:cast, msg, State.set_current_term(data, term))
   end
 
   # TODO: move most of this into State module?

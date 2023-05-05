@@ -27,17 +27,58 @@ defmodule Craft.Persistence do
   @callback append(any(), [entry()]) :: any()
   @callback rewind(any(), index :: integer()) :: any() # remove all long entries after index
   @callback reverse_find(any(), fun()) :: entry() | nil
-  @callback put_current_term!(any(), integer()) :: any()
-  @callback put_voted_for!(any(), integer()) :: any()
-  @callback get_current_term!(any()) :: integer() | nil
-  @callback get_voted_for!(any()) :: node() | nil
+  @callback put_metadata(any(), binary()) :: any()
+  @callback fetch_metadata(any()) :: {:ok, binary()} | :error
   @callback dump(any()) :: any()
-  @optional_callbacks [dump: 1]
 
   defstruct [
     :module,
     :private
   ]
+
+  defmodule Metadata do
+    alias Craft.Consensus.State
+    alias Craft.Persistence
+
+    defstruct [
+      :current_term,
+      :voted_for
+    ]
+
+    def fetch(%Persistence{module: module, private: private}) do
+      case module.fetch_metadata(private) do
+        {:ok, binary} ->
+          {:ok, struct(__MODULE__, :erlang.binary_to_term(binary))}
+
+        :error ->
+          :error
+      end
+    end
+
+    def update(%State{persistence: %Persistence{module: module, private: private} = persistence} = state) do
+      metadata =
+        case fetch(persistence) do
+          {:ok, metadata} ->
+            metadata
+
+          :error ->
+            %__MODULE__{}
+        end
+
+      dumped_metadata =
+        %__MODULE__{
+          metadata |
+          current_term: state.current_term,
+          voted_for: state.voted_for
+        }
+        |> Map.from_struct()
+        |> :erlang.term_to_binary()
+
+      persistence = %Persistence{state.persistence | private: module.put_metadata(private, dumped_metadata)}
+
+      %State{state | persistence: persistence}
+    end
+  end
 
   #
   # Craft initializes the log with a starter entry, like so:
@@ -52,24 +93,6 @@ defmodule Craft.Persistence do
       private: module.new(group_name, args)
     }
     |> append(%EmptyEntry{term: -1})
-  end
-
-  # Consensus Metadata
-
-  def voted_for(%__MODULE__{module: module, private: private}, voted_for) do
-    module.voted_for(private, voted_for)
-  end
-
-  def voted_for(%__MODULE__{module: module, private: private}) do
-    module.voted_for(private)
-  end
-
-  def current_term(%__MODULE__{module: module, private: private}, current_term) do
-    module.current_term(private, current_term)
-  end
-
-  def current_term(%__MODULE__{module: module, private: private}) do
-    module.current_term(private)
   end
 
   # Log
@@ -102,22 +125,6 @@ defmodule Craft.Persistence do
 
   def reverse_find(%__MODULE__{module: module, private: private} = persistence, fun) do
     %__MODULE__{persistence | private: module.reverse_search(private, fun)}
-  end
-
-  def put_current_term!(%__MODULE__{module: module, private: private} = persistence, term) do
-    %__MODULE__{persistence | private: module.put_current_term!(private, term)}
-  end
-
-  def put_voted_for!(%__MODULE__{module: module, private: private} = persistence, term) do
-    %__MODULE__{persistence | private: module.put_voted_for!(private, term)}
-  end
-
-  def get_current_term!(%__MODULE__{module: module, private: private}) do
-    module.get_current_term!(private)
-  end
-
-  def get_voted_for!(%__MODULE__{module: module, private: private}) do
-    module.get_voted_for!(private)
   end
 
   def dump(%__MODULE__{module: module, private: private}) do
