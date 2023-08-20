@@ -37,6 +37,10 @@ defmodule Craft.Machine do
     |> GenServer.call(:module)
   end
 
+  def state(name, node) do
+    GenServer.call({name(name), node}, :state)
+  end
+
   # FIXME: document that for persistent machines, the commit index and the
   # state mutations need to be atomically commited to the persistent store
   #
@@ -49,10 +53,10 @@ defmodule Craft.Machine do
   # to continue without being blocked by the machine process while it's applying
   # entries
   #
-  def commit_index_bumped(%ConsensusState{} = state) do
+  def commit_index_bumped(%ConsensusState{} = state, should_snapshot?) do
     state.name
     |> name()
-    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence, state.state})
+    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence, state.state, should_snapshot?})
   end
 
   def command(name, node, command, opts \\ []) do
@@ -89,11 +93,11 @@ defmodule Craft.Machine do
   def handle_continue(:restore_machine_state, state) do
     {commit_index, log} = Consensus.catch_up(state.name)
 
-    handle_cast({:commit_index_bumped, commit_index, log, nil}, state)
+    handle_cast({:commit_index_bumped, commit_index, log, nil, false}, state)
   end
 
   @impl true
-  def handle_cast({:commit_index_bumped, new_commit_index, log, role}, state) do
+  def handle_cast({:commit_index_bumped, new_commit_index, log, role, should_snapshot?}, state) do
     last_applied_log_index =
       with true <- state.module.__craft_persistent__(),
            last_applied when is_integer(last_applied) <- state.module.last_applied_log_index(state.private) do
@@ -143,6 +147,17 @@ defmodule Craft.Machine do
         end
       end)
 
+    # right now, this is a synchronous process, later we should allow for async snapshots at
+    # the provided index, and the user will call back when it's done (and we'll send a message
+    # to the consensus module to tell it that a snapshot at the given index completed)
+    #
+    # should probably provide sync/async semantics as well as ability to store small snapshots
+    # directly in the log
+    #
+    if should_snapshot? do
+      state.module.snapshot(new_commit_index, state.private)
+    end
+
     {:noreply, %State{state | last_applied: new_commit_index}}
   end
 
@@ -164,10 +179,18 @@ defmodule Craft.Machine do
     {:reply, {:ok, state.module}, state}
   end
 
+  @impl true
+  def handle_call(:state, _from, state) do
+    machine_state = state.module.dump(state.private)
+
+    {:reply, %{state: state, machine_state: machine_state}, state}
+  end
+
   defmacro __using__(opts) do
     persistent = Keyword.fetch!(opts, :persistent)
     quote do
       # FIXME: better error
+      # @behaviour persistentmachine (implements last_applied_log_index/1)
       def __craft_persistent__(), do: unquote(persistent)
     end
   end

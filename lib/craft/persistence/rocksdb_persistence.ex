@@ -23,7 +23,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
   @impl true
   def new(group_name, opts \\ []) do
-    data_dir = Keyword.get(opts, :data_dir, Path.join([File.cwd!(), "data", to_string(node())]))
+    data_dir = Keyword.get(opts, :data_dir, Path.join([File.cwd!(), "data", to_string(node()), group_name, "log"]))
     write_opts = Keyword.get(opts, :write_opts, [sync: true])
 
     File.mkdir_p!(data_dir)
@@ -32,7 +32,6 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
     {:ok, db, [_default, log_column_family_handle, metadata_column_family_handle]} =
       data_dir
-      |> Path.join(group_name)
       |> :erlang.binary_to_list()
       |> :rocksdb.open(db_opts, [{'default', []}, @log_column_family, @metadata_column_family])
 

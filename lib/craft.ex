@@ -110,7 +110,7 @@ defmodule Craft do
   def start_dev_consensus_group(nodes) do
     name = :crypto.strong_rand_bytes(3) |> Base.encode16()
 
-    start_group(name, nodes, Craft.SimpleMachine)
+    start_group(name, nodes, Craft.RocksDBMachine)
 
     name
   end
@@ -123,7 +123,7 @@ defmodule Craft do
     |> Enum.into(%{}, fn node ->
       {node,
        consensus: Consensus.state(name, node),
-       machine: {Machine.name(name), node} |> :sys.get_state()}
+       machine: Machine.state(name, node)}
     end)
   end
 end

@@ -5,7 +5,7 @@ defmodule Craft.Consensus do
   # follower -> lonely -> candidate -> leader
   #
   # follower: happily following leader
-  # lonely: hasn't heart from leader in a while, would be willing to vote 'yes' in a pre-vote
+  # lonely: hasn't heard from leader in a while, would be willing to vote 'yes' in a pre-vote
   # candidate: follower that's called an election after a successful majority pre-vote
   # leader: candidate that's won majority vote
   #
@@ -359,7 +359,7 @@ defmodule Craft.Consensus do
     RPC.respond_append_entries(append_entries, success, data)
 
     if success && data.commit_index > old_commit_index do
-      Machine.commit_index_bumped(data)
+      Machine.commit_index_bumped(data, true)
     end
 
     # leader told us to take over leadership when our log is caught up
@@ -438,7 +438,7 @@ defmodule Craft.Consensus do
 
   # refuse to vote for another candidate
   def candidate(:cast, %RequestVote{} = request_vote, data) do
-    Logger.info("denying #{(if request_vote.pre_vote, do: "pre-", else: "")} vote to #{request_vote.candidate_id}", logger_metadata(data))
+    Logger.info("denying #{(if request_vote.pre_vote, do: "pre-", else: "")}vote to #{request_vote.candidate_id}", logger_metadata(data))
 
     RPC.respond_vote(request_vote, false, data)
 
@@ -590,7 +590,7 @@ defmodule Craft.Consensus do
       |> LeaderState.bump_last_heartbeat_reply_at(results.from)
 
     if data.commit_index > old_commit_index do
-      Machine.commit_index_bumped(data)
+      Machine.commit_index_bumped(data, true)
     end
 
     data =

@@ -20,4 +20,8 @@ defmodule Craft.SimpleMachine do
   def command({:get, k}, _log_index, state) do
     {{:ok, Map.get(state, k)}, state}
   end
+
+  def snapshot(at_index, state) do
+    IO.inspect state, label: "SNAPSHOTTING #{inspect at_index}"
+  end
 end
