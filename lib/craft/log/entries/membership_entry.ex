@@ -1,10 +1,7 @@
 defmodule Craft.Log.MembershipEntry do
   alias Craft.Consensus.State
 
-  defstruct [
-    :term,
-    :members
-  ]
+  defstruct [:term, :members]
 
   def new(%State{} = state) do
     %__MODULE__{

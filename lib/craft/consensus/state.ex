@@ -140,7 +140,7 @@ defmodule Craft.Consensus.State do
 
   def snapshot_ready(%__MODULE__{} = state, index, path) do
     {:ok, %{term: term}} = Persistence.fetch(state.persistence, index)
-    persistence = Persistence.truncate(state.persistence, index, %SnapshotEntry{term: term})
+    persistence = Persistence.truncate(state.persistence, index, SnapshotEntry.new(state, term))
 
     %__MODULE__{state | snapshots: Map.put(state.snapshots, index, path), persistence: persistence}
   end

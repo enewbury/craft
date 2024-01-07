@@ -140,9 +140,6 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
       {:ok, _index, _value} ->
         :ok
-
-      error ->
-        raise error
     end
   end
 
@@ -172,8 +169,8 @@ defmodule Craft.Persistence.RocksDBPersistence do
       {:ok, _index, _value} ->
         :ok
 
-      error ->
-        raise error
+      {:error, :invalid_iterator} ->
+        :ok
     end
   end
 

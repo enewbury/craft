@@ -7,6 +7,7 @@ defmodule Craft.Machine do
   alias Craft.Log.CommandEntry
   alias Craft.Log.EmptyEntry
   alias Craft.Log.MembershipEntry
+  alias Craft.Log.SnapshotEntry
 
   @type private :: any()
   @type snapshot :: any()
@@ -112,6 +113,9 @@ defmodule Craft.Machine do
     state =
       Enum.reduce(last_applied_log_index..new_commit_index//1, state, fn index, state ->
         case Persistence.fetch(log, index) do
+          {:ok, %SnapshotEntry{}} ->
+            state
+
           {:ok, %EmptyEntry{}} ->
             state
 
