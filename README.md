@@ -1,7 +1,6 @@
 # Craft
 
 todo:
-- snapshots
 - cluster splitting
 - smart appendentries intervals for commands (immediate, interval-based batching...)
 - nemesis development
@@ -17,3 +16,17 @@ done:
 - 3.10 leadership transfer extension
 - CheckQuorum
 - rocksdb backend
+
+
+- snapshots
+  when commit index bumps, consensus sends a message to machine to bump index and optionally snapshot
+  if snapshotting, machine snapshots and sends message to consensus with snapshot index and path on disk
+  consensus writes snapshot metadata to persistence
+  break out to own SnapshotsManager process?
+  
+- log truncation
+  runs periodically
+  asks persistence for all snapshots, finds the most recent non-busy (not sending to follower) one, and truncates log to that point
+
+  for consideration: if a follower is slow in catching up, and the log is snapshotted/truncated on the leader, how should the follower respond?
+    nuke the follower's current state and start over fresh?

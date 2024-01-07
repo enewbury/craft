@@ -11,14 +11,14 @@ defmodule Craft.Consensus do
   #
 
   alias Craft.Consensus.State
-  alias Craft.Consensus.State.Members
   alias Craft.Consensus.State.LeaderState
   alias Craft.Consensus.State.LeaderState.LeadershipTransfer
   alias Craft.Consensus.State.LeaderState.MembershipChange
-  alias Craft.Persistence
+  alias Craft.Consensus.State.Members
   alias Craft.Log.CommandEntry
   alias Craft.Log.MembershipEntry
   alias Craft.Machine
+  alias Craft.Persistence
   alias Craft.RPC
   alias Craft.RPC.AppendEntries
   alias Craft.RPC.RequestVote
@@ -44,8 +44,8 @@ defmodule Craft.Consensus do
   # API
   #
 
-  def command(name, node, command) do
-    :gen_statem.call({name(name), node}, {:machine_command, command})
+  def command(name, command) do
+    :gen_statem.call({name(name), node()}, {:machine_command, command})
   end
 
   def cast_user_command(name, node, msg, opts \\ []) do
@@ -87,6 +87,10 @@ defmodule Craft.Consensus do
   # called after the machine restarts to get any committed entries that need to be applied
   def catch_up(name) do
     :gen_statem.call({name(name), node()}, :catch_up)
+  end
+
+  def snapshot_ready(name, index, path) do
+    :gen_statem.call({name(name), node()}, {:snapshot_ready, index, path})
   end
 
   def name(name), do: Module.concat(__MODULE__, name)
@@ -249,6 +253,15 @@ defmodule Craft.Consensus do
     {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
   end
 
+  def lonely({:call, from}, {:snapshot_ready, index, path}, data) do
+    # STOPPED HERE
+    # - implement this function for other states
+    # note current snapshot dir and commit index
+    # keep a list of snapshots being actively transferred and deletes unused ones
+    # truncate log up to oldest snapshot commit index (once a client has a snapshot, it needs the log entries after it)
+    {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
   def lonely({:call, from}, _request, data) do
     {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
   end
@@ -386,6 +399,15 @@ defmodule Craft.Consensus do
     {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
   end
 
+  def follower({:call, from}, {:snapshot_ready, index, path}, data) do
+    # STOPPED HERE
+    # - implement this function for other states
+    # note current snapshot dir and commit index
+    # keep a list of snapshots being actively transferred and deletes unused ones
+    # truncate log up to oldest snapshot commit index (once a client has a snapshot, it needs the log entries after it)
+    {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
   def follower({:call, from}, _request, data) do
     {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
   end
@@ -489,6 +511,15 @@ defmodule Craft.Consensus do
 
   def candidate({:call, from}, :state, data) do
     {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
+  end
+
+  def candidate({:call, from}, {:snapshot_ready, index, path}, data) do
+    # STOPPED HERE
+    # - implement this function for other states
+    # note current snapshot dir and commit index
+    # keep a list of snapshots being actively transferred and deletes unused ones
+    # truncate log up to oldest snapshot commit index (once a client has a snapshot, it needs the log entries after it)
+    {:keep_state_and_data, [{:reply, from, :ok}]}
   end
 
   def candidate({:call, from}, _request, data) do
@@ -715,6 +746,16 @@ defmodule Craft.Consensus do
 
   def leader({:call, from}, :state, data) do
     {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
+  end
+
+  def leader({:call, from}, {:snapshot_ready, index, path}, data) do
+    data = State.snapshot_ready(data, index, path)
+    # STOPPED HERE
+    # - implement this function for other states
+    # note current snapshot dir and commit index
+    # keep a list of snapshots being actively transferred and deletes unused ones
+    # truncate log up to oldest snapshot commit index (once a client has a snapshot, it needs the log entries after it)
+    {:keep_state, data, [{:reply, from, :ok}]}
   end
 
   def leader(type, msg, data) do

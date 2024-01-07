@@ -2,6 +2,7 @@ defmodule Craft.Persistence do
   alias Craft.Log.EmptyEntry
   alias Craft.Log.CommandEntry
   alias Craft.Log.MembershipEntry
+  alias Craft.Log.SnapshotEntry
 
   # this module is kinda like a bastardized mix of a behaviour and a protocol
   #
@@ -16,7 +17,7 @@ defmodule Craft.Persistence do
   # so yeah, if you have a better idea how to do this, holler at me please. :)
   #
 
-  @type entry :: EmptyEntry.t() | CommandEntry.t() | MembershipEntry.t()
+  @type entry :: EmptyEntry.t() | CommandEntry.t() | MembershipEntry.t() | SnapshotEntry.t()
 
   #TODO: proper typespecs
   @callback new(group_name :: String.t(), args :: any()) :: any()
@@ -26,6 +27,7 @@ defmodule Craft.Persistence do
   @callback fetch_from(any(), index :: integer()) :: [entry()]
   @callback append(any(), [entry()]) :: any()
   @callback rewind(any(), index :: integer()) :: any() # remove all long entries after index
+  @callback truncate(any(), index :: integer(), SnapshotEntry.t()) :: any() # atomically remove log entries up to and including `index` and replace with SnapshotEntry
   @callback reverse_find(any(), fun()) :: entry() | nil
   @callback put_metadata(any(), binary()) :: any()
   @callback fetch_metadata(any()) :: {:ok, binary()} | :error
@@ -45,6 +47,10 @@ defmodule Craft.Persistence do
       :voted_for
     ]
 
+    def init(%State{} = state) do
+      write(%__MODULE__{}, state)
+    end
+
     def fetch(%Persistence{module: module, private: private}) do
       case module.fetch_metadata(private) do
         {:ok, binary} ->
@@ -55,26 +61,38 @@ defmodule Craft.Persistence do
       end
     end
 
-    def update(%State{persistence: %Persistence{module: module, private: private} = persistence} = state) do
+    def update(%State{} = state) do
+      get_and_update(state, fn metadata ->
+        %__MODULE__{
+          metadata |
+          current_term: state.current_term,
+          voted_for: state.voted_for
+        }
+      end)
+    end
+
+    defp get_and_update(%State{persistence: persistence} = state, fun) do
       metadata =
         case fetch(persistence) do
           {:ok, metadata} ->
             metadata
 
           :error ->
-            %__MODULE__{}
+            raise "couldn't fetch metadata"
         end
 
-      dumped_metadata =
-        %__MODULE__{
-          metadata |
-          current_term: state.current_term,
-          voted_for: state.voted_for
-        }
+      metadata
+      |> fun.()
+      |> write(state)
+    end
+
+    defp write(metadata, %State{persistence: %Persistence{module: module, private: private}} = state) do
+      dumped =
+        metadata
         |> Map.from_struct()
         |> :erlang.term_to_binary()
 
-      persistence = %Persistence{state.persistence | private: module.put_metadata(private, dumped_metadata)}
+      persistence = %Persistence{state.persistence | private: module.put_metadata(private, dumped)}
 
       %State{state | persistence: persistence}
     end
@@ -121,6 +139,10 @@ defmodule Craft.Persistence do
 
   def rewind(%__MODULE__{module: module, private: private} = persistence, index) do
     %__MODULE__{persistence | private: module.rewind(private, index)}
+  end
+
+  def truncate(%__MODULE__{module: module, private: private} = persistence, index, %SnapshotEntry{} = snapshot_entry) do
+    %__MODULE__{persistence | private: module.truncate(private, index, snapshot_entry)}
   end
 
   def reverse_find(%__MODULE__{module: module, private: private} = persistence, fun) do

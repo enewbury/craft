@@ -9,11 +9,13 @@ defmodule Craft.Machine do
   alias Craft.Log.MembershipEntry
 
   @type private :: any()
+  @type snapshot :: any()
 
   @callback init(Craft.group_name()) :: {:ok, private()}
   @callback command(Craft.command(), Craft.log_index(), private()) :: {Craft.reply(), private()} | {Craft.reply(), Craft.side_effects(), private()}
   # TODO: document that we want an int or nil if no entries have been applied
   @callback last_applied_log_index(private()) :: Craft.log_index() | nil
+  @callback snapshot(Craft.log_index(), private()) :: {:ok, snapshot()}
 
   defmodule State do
     defstruct [
@@ -155,7 +157,8 @@ defmodule Craft.Machine do
     # directly in the log
     #
     if should_snapshot? do
-      state.module.snapshot(new_commit_index, state.private)
+      snapshot_dir = state.module.snapshot(new_commit_index, state.private)
+      :ok = Consensus.snapshot_ready(state.name, new_commit_index, snapshot_dir)
     end
 
     {:noreply, %State{state | last_applied: new_commit_index}}
@@ -163,7 +166,7 @@ defmodule Craft.Machine do
 
   @impl true
   def handle_cast({:command, {from, _ref} = id, command}, state) do
-    case :gen_statem.call({Consensus.name(state.name), node()}, {:machine_command, command}) do
+    case Consensus.command(state.name, command) do
       {:ok, index} ->
         {:noreply, %State{state | client_requests: Map.put(state.client_requests, index, id)}}
 

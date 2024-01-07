@@ -1,10 +1,13 @@
 defmodule Craft.Consensus.State do
-  alias Craft.Consensus.State.Members
-  alias Craft.Consensus.State.LeaderState
   alias Craft.Consensus.State.Election
+  alias Craft.Consensus.State.LeaderState
+  alias Craft.Consensus.State.Members
+  alias Craft.Log.SnapshotEntry
   alias Craft.Persistence
   alias Craft.Persistence.Metadata
   alias Craft.RPC.RequestVote
+
+  require Logger
 
   defstruct [
     :state,
@@ -13,6 +16,7 @@ defmodule Craft.Consensus.State do
     :persistence,
     :nexus_pid,
     :leader_id,
+    {:snapshots, %{}},
     {:current_term, -1},
     {:commit_index, 0},
 
@@ -41,7 +45,7 @@ defmodule Craft.Consensus.State do
         }
 
       :error ->
-        Metadata.update(state)
+        Metadata.init(state)
     end
   end
 
@@ -127,13 +131,18 @@ defmodule Craft.Consensus.State do
     Election.election_result(state.election, quorum_needed(state))
   end
 
-
-
   # TODO: pre-compute quorum and cache
   def quorum_needed(%__MODULE__{} = state) do
     num_members = MapSet.size(state.members.voting_nodes) + 1
 
     div(num_members, 2) + 1
+  end
+
+  def snapshot_ready(%__MODULE__{} = state, index, path) do
+    {:ok, %{term: term}} = Persistence.fetch(state.persistence, index)
+    persistence = Persistence.truncate(state.persistence, index, %SnapshotEntry{term: term})
+
+    %__MODULE__{state | snapshots: Map.put(state.snapshots, index, path), persistence: persistence}
   end
 
   def logger_metadata(%__MODULE__{} = state, extras \\ []) do

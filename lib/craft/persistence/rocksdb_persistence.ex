@@ -1,11 +1,10 @@
 defmodule Craft.Persistence.RocksDBPersistence do
   @moduledoc """
-  RocksDB Peristence Backend
-
   Notes:
   - rocksdb's default comparator is lexicographic. when given positive integer terms, :erlang.term_to_binary/1
     outputs lexicographically ascending keys, so we can use rocks' default iterator to walk log indexes
 
+  - remove `latest_index` and `latest_term` from struct and replace with non-cached iterator version
   """
   @behaviour Craft.Persistence
 
@@ -33,7 +32,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
     {:ok, db, [_default, log_column_family_handle, metadata_column_family_handle]} =
       data_dir
       |> :erlang.binary_to_list()
-      |> :rocksdb.open(db_opts, [{'default', []}, @log_column_family, @metadata_column_family])
+      |> :rocksdb.open_optimistic_transaction_db(db_opts, [{'default', []}, @log_column_family, @metadata_column_family])
 
     latest_index =
       with {:ok, iterator} <- :rocksdb.iterator(db, log_column_family_handle, []),
@@ -112,12 +111,72 @@ defmodule Craft.Persistence.RocksDBPersistence do
   end
 
   @impl true
-  def rewind(%__MODULE__{latest_index: latest_index} = state, index) when index < latest_index do
-    :ok = :rocksdb.delete_range(state.db, state.log_cf, encode(index + 1), encode(state.latest_index + 1), state.write_opts)
+  # unimplemented in optimistic mode, it seems :(
+  # def rewind(%__MODULE__{latest_index: latest_index} = state, index) when index < latest_index do
+    # :ok = :rocksdb.delete_range(state.db, state.log_cf, encode(index + 1), encode(state.latest_index + 1), state.write_opts)
 
-    %__MODULE__{state | latest_index: index}
+  #   %__MODULE__{state | latest_index: index}
+  # end
+  # def rewind(state, _index), do: state
+
+  def rewind(%__MODULE__{} = state, index) do
+    {:ok, transaction} = :rocksdb.transaction(state.db, state.write_opts)
+    {:ok, iterator} = :rocksdb.transaction_iterator(transaction, state.log_cf, [])
+
+    do_rewind(transaction, iterator, encode(index))
+
+    :ok = :rocksdb.transaction_commit(transaction)
+
+    state
   end
-  def rewind(state, _index), do: state
+
+  defp do_rewind(transaction, iterator, min_index) do
+    case :rocksdb.iterator_move(iterator, :last) do
+      {:ok, index, _value} when index > min_index ->
+        IO.inspect decode(index)
+        :ok = :rocksdb.transaction_delete(transaction, index)
+        do_rewind(transaction, iterator, min_index)
+
+      {:ok, index, _value} ->
+        IO.inspect decode(index), label: :balls
+        :ok
+
+      error ->
+        IO.inspect error
+        raise error
+    end
+  end
+
+  @impl true
+  # the current version of rocksdb-erlang doesn't support delete_range in transactions, so we have to do it with an iterator
+  # in order to maintain atomicity with the snapshot_entry insertion
+  #
+  # https://github.com/facebook/rocksdb/issues/4812
+  def truncate(%__MODULE__{} = state, index, snapshot_entry) do
+    {:ok, transaction} = :rocksdb.transaction(state.db, state.write_opts)
+    {:ok, iterator} = :rocksdb.transaction_iterator(transaction, state.log_cf, [])
+
+    do_truncate(transaction, iterator, encode(index))
+
+    :ok = :rocksdb.transaction_put(transaction, state.log_cf, encode(index), encode(snapshot_entry))
+    :ok = :rocksdb.transaction_commit(transaction)
+
+    state
+  end
+
+  defp do_truncate(transaction, iterator, max_index) do
+    case :rocksdb.iterator_move(iterator, :first) do
+      {:ok, index, _value} when index <= max_index ->
+        :ok = :rocksdb.transaction_delete(transaction, index)
+        do_truncate(transaction, iterator, max_index)
+
+      {:ok, _index, _value} ->
+        :ok
+
+      error ->
+        raise error
+    end
+  end
 
   @impl true
   def reverse_find(%__MODULE__{} = state, fun) do

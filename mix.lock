@@ -1,4 +1,4 @@
 %{
   "arq": {:hex, :arq, "0.3.1", "65fac5b42ff8d63470b5fcad61e54da1946afa0b614bd693a2b83ea9f724780c", [:mix], [], "hexpm", "dd461eb4aa157dcec08818aabbfc4026927d9df0017e8a9987e1a23924c9342a"},
-  "rocksdb": {:hex, :rocksdb, "1.8.0", "0ae072f9818dac03e18ba0e4b436450d24040dfb1a526e2198b451fd9fa0284f", [:rebar3], [], "hexpm", "185e645ea480e9325d5efe362bf3d2a38edfc31b5145031b0cbeed978e89523c"},
+  "rocksdb": {:git, "git@github.com:emqx/erlang-rocksdb.git", "27226d982f5f74965190672bbca5e348a9d9ea94", []},
 }
