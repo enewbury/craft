@@ -119,30 +119,29 @@ defmodule Craft.Persistence.RocksDBPersistence do
   # end
   # def rewind(state, _index), do: state
 
-  def rewind(%__MODULE__{} = state, index) do
+  def rewind(%__MODULE__{latest_index: latest_index} = state, index) when index < latest_index do
     {:ok, transaction} = :rocksdb.transaction(state.db, state.write_opts)
     {:ok, iterator} = :rocksdb.transaction_iterator(transaction, state.log_cf, [])
 
-    do_rewind(transaction, iterator, encode(index))
+    do_rewind(transaction, iterator, state.log_cf, encode(index))
 
     :ok = :rocksdb.transaction_commit(transaction)
 
-    state
+    %__MODULE__{state | latest_index: index}
   end
+  def rewind(%__MODULE__{} = state, _index), do: state
 
-  defp do_rewind(transaction, iterator, min_index) do
+  require Logger
+  defp do_rewind(transaction, iterator, log_cf, min_index) do
     case :rocksdb.iterator_move(iterator, :last) do
       {:ok, index, _value} when index > min_index ->
-        IO.inspect decode(index)
-        :ok = :rocksdb.transaction_delete(transaction, index)
-        do_rewind(transaction, iterator, min_index)
+        :ok = :rocksdb.transaction_delete(transaction, log_cf, index)
+        do_rewind(transaction, iterator, log_cf, min_index)
 
-      {:ok, index, _value} ->
-        IO.inspect decode(index), label: :balls
+      {:ok, _index, _value} ->
         :ok
 
       error ->
-        IO.inspect error
         raise error
     end
   end
@@ -156,7 +155,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
     {:ok, transaction} = :rocksdb.transaction(state.db, state.write_opts)
     {:ok, iterator} = :rocksdb.transaction_iterator(transaction, state.log_cf, [])
 
-    do_truncate(transaction, iterator, encode(index))
+    do_truncate(transaction, iterator, state.log_cf, encode(index))
 
     :ok = :rocksdb.transaction_put(transaction, state.log_cf, encode(index), encode(snapshot_entry))
     :ok = :rocksdb.transaction_commit(transaction)
@@ -164,11 +163,11 @@ defmodule Craft.Persistence.RocksDBPersistence do
     state
   end
 
-  defp do_truncate(transaction, iterator, max_index) do
+  defp do_truncate(transaction, iterator, log_cf, max_index) do
     case :rocksdb.iterator_move(iterator, :first) do
       {:ok, index, _value} when index <= max_index ->
-        :ok = :rocksdb.transaction_delete(transaction, index)
-        do_truncate(transaction, iterator, max_index)
+        :ok = :rocksdb.transaction_delete(transaction, log_cf, index)
+        do_truncate(transaction, iterator, log_cf, max_index)
 
       {:ok, _index, _value} ->
         :ok

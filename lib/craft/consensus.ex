@@ -749,7 +749,7 @@ defmodule Craft.Consensus do
   end
 
   def leader({:call, from}, {:snapshot_ready, index, path}, data) do
-    data = State.snapshot_ready(data, index, path)
+    # data = State.snapshot_ready(data, index, path)
     # STOPPED HERE
     # - implement this function for other states
     # note current snapshot dir and commit index
