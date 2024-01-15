@@ -11,7 +11,8 @@ defmodule Craft.Consensus.State.LeaderState do
     :match_indices,
     :last_heartbeat_replies_at, # for CheckQuorum voting members only
     :membership_change,
-    :leadership_transfer
+    :leadership_transfer,
+    :snapshot_transfer
   ]
 
   defmodule MembershipChange do

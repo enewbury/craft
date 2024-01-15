@@ -254,12 +254,9 @@ defmodule Craft.Consensus do
   end
 
   def lonely({:call, from}, {:snapshot_ready, index, path}, data) do
-    # STOPPED HERE
-    # - implement this function for other states
-    # note current snapshot dir and commit index
-    # keep a list of snapshots being actively transferred and deletes unused ones
-    # truncate log up to oldest snapshot commit index (once a client has a snapshot, it needs the log entries after it)
-    {:keep_state_and_data, [{:reply, from, :ok}]}
+    data = State.snapshot_ready(data, index, path)
+
+    {:keep_state, data, [{:reply, from, :ok}]}
   end
 
   def lonely({:call, from}, _request, data) do
@@ -400,12 +397,9 @@ defmodule Craft.Consensus do
   end
 
   def follower({:call, from}, {:snapshot_ready, index, path}, data) do
-    # STOPPED HERE
-    # - implement this function for other states
-    # note current snapshot dir and commit index
-    # keep a list of snapshots being actively transferred and deletes unused ones
-    # truncate log up to oldest snapshot commit index (once a client has a snapshot, it needs the log entries after it)
-    {:keep_state_and_data, [{:reply, from, :ok}]}
+    data = State.snapshot_ready(data, index, path)
+
+    {:keep_state, data, [{:reply, from, :ok}]}
   end
 
   def follower({:call, from}, _request, data) do
@@ -514,12 +508,9 @@ defmodule Craft.Consensus do
   end
 
   def candidate({:call, from}, {:snapshot_ready, index, path}, data) do
-    # STOPPED HERE
-    # - implement this function for other states
-    # note current snapshot dir and commit index
-    # keep a list of snapshots being actively transferred and deletes unused ones
-    # truncate log up to oldest snapshot commit index (once a client has a snapshot, it needs the log entries after it)
-    {:keep_state_and_data, [{:reply, from, :ok}]}
+    data = State.snapshot_ready(data, index, path)
+
+    {:keep_state, data, [{:reply, from, :ok}]}
   end
 
   def candidate({:call, from}, _request, data) do
@@ -750,11 +741,7 @@ defmodule Craft.Consensus do
 
   def leader({:call, from}, {:snapshot_ready, index, path}, data) do
     data = State.snapshot_ready(data, index, path)
-    # STOPPED HERE
-    # - implement this function for other states
-    # note current snapshot dir and commit index
-    # keep a list of snapshots being actively transferred and deletes unused ones
-    # truncate log up to oldest snapshot commit index (once a client has a snapshot, it needs the log entries after it)
+
     {:keep_state, data, [{:reply, from, :ok}]}
   end
 
