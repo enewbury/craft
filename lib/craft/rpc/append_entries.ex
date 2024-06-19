@@ -57,7 +57,7 @@ defmodule Craft.RPC.AppendEntries do
       :term,
       :from,
       :success,
-      :latest_index # if successful, the follower's latest index
+      :latest_index
     ]
 
     def new(%State{state: :follower} = state, success) do

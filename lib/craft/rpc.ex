@@ -4,12 +4,11 @@ defmodule Craft.RPC do
   alias Craft.Consensus
   alias Craft.Consensus.State
   alias Craft.Consensus.State.Members
-  alias Craft.RPC.RequestVote
   alias Craft.RPC.AppendEntries
+  alias Craft.RPC.InstallSnapshot
+  alias Craft.RPC.RequestVote
 
-  # def start(name, to_node, {_m, _f, _a} = request) do
-  #   ARQ.start(request, supervisor)
-  # end
+  require Logger
 
   # TODO: parallelize
   def request_vote(state, opts \\ []) do
@@ -29,10 +28,20 @@ defmodule Craft.RPC do
   # TODO: parallelize
   def append_entries(%State{} = state) do
     for to_node <- Members.other_nodes(state.members) do
-      state
-      |> AppendEntries.new(to_node)
-      |> send_message(to_node, state)
+      unless state.leader_state.snapshot_transfers[to_node] do
+        state
+        |> AppendEntries.new(to_node)
+        |> send_message(to_node, state)
+      end
     end
+  end
+
+  def install_snapshot(%State{} = state, to_node) do
+    snapshot_transfer = state.leader_state.snapshot_transfers[to_node]
+
+    state
+    |> InstallSnapshot.new(snapshot_transfer)
+    |> send_message(to_node, state)
   end
 
   def respond_append_entries(%AppendEntries{} = append_entries, success, %State{} = state) do

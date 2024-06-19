@@ -145,6 +145,12 @@ defmodule Craft.Consensus.State do
     %__MODULE__{state | snapshots: Map.put(state.snapshots, index, path), persistence: persistence}
   end
 
+  def latest_snapshot_index(%__MODULE__{} = state) do
+    state.snapshots
+    |> Map.keys()
+    |> Enum.max()
+  end
+
   def logger_metadata(%__MODULE__{} = state, extras \\ []) do
     # color =
     #   node()

@@ -12,7 +12,7 @@ defmodule Craft.Consensus.State.LeaderState do
     :last_heartbeat_replies_at, # for CheckQuorum voting members only
     :membership_change,
     :leadership_transfer,
-    :snapshot_transfer
+    snapshot_transfers: %{}
   ]
 
   defmodule MembershipChange do
@@ -47,6 +47,101 @@ defmodule Craft.Consensus.State.LeaderState do
       end
     end
   end
+
+  defmodule SnapshotTransfer do
+    # sending a bunch of Streams for the follower to read is a cute solution
+    # but it might not be the most robust long term.
+
+    # TODO: make configurable (or adaptive based on network congestion)
+    @snapshot_chunk_size 50_000 # bytes
+
+    defstruct [
+      :log_index,
+      :log_entry,
+      :streams
+    ]
+
+    def new(state) do
+      log_index = State.latest_snapshot_index(state)
+      {:ok, log_entry} = Persistence.fetch(state.persistence, log_index)
+
+      dir = Map.fetch!(state.snapshots, log_index)
+      streams =
+        dir
+        |> File.ls!()
+        |> Enum.map(fn file ->
+          dir
+          |> Path.join(file)
+          |> File.stream!(@snapshot_chunk_size)
+        end)
+
+      %__MODULE__{
+        log_index: log_index,
+        log_entry: log_entry,
+        streams: streams
+      }
+    end
+
+    def receive(%__MODULE__{} = snapshot_transfer) do
+    end
+  end
+  # defmodule SnapshotTransfer do
+  #   defstruct [
+  #     :log_index,
+  #     :dir,
+  #     :streams
+  #     :current_transfer # {file, handle, offset, chunk}
+  #   ]
+
+  #   defmodule FileTransfer do
+  #     # TODO: make configurable (or adaptive based on network congestion)
+  #     @snapshot_chunk_size 5 # bytes
+
+  #     defstruct [:path, :handle, :chunk, offset: 0]
+
+  #     def new(path) do
+  #       {:ok, handle} = File.open(path, [:read, read_ahead: @snapshot_chunk_size])
+
+  #       %__MODULE__{
+  #         path: path,
+  #         handle: handle,
+  #         chunk: read(handle)
+  #       }
+  #     end
+
+  #     def advance(%__MODULE__{} = file_transfer) do
+  #       chunk = read(file_transfer.handle)
+
+  #       %__MODULE__{
+  #         file_transfer |
+  #         chunk: chunk,
+  #         offset: file_transfer.offset + byte_size(chunk)
+  #       }
+  #     end
+
+  #     defp read(handle) do
+  #       IO.read(handle, @snapshot_chunk_size)
+  #     end
+  #   end
+
+  #   def new(state) do
+  #     log_index = State.latest_snapshot_index(state)
+  #     dir = Map.fetch!(state.snapshots, log_index)
+  #     files = File.ls!(dir)
+  #     next_file = List.first(files)
+  #     file_transfer =
+  #       dir
+  #       |> Path.join(next_file)
+  #       |> FileTransfer.new()
+
+  #     %__MODULE__{
+  #       log_index: log_index,
+  #       dir: dir,
+  #       files: {[], files},
+  #       current_transfer: file_transfer
+  #     }
+  #   end
+  # end
 
   # FIXME: if config_change_in_progress, reconstruct :membership_change?
   # this may need to happen after new leader figures out the commit index
@@ -112,7 +207,7 @@ defmodule Craft.Consensus.State.LeaderState do
 
   def handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: true} = results) do
     # accounts for the possibility of stale AppendEntries results (due to pathological network reordering)
-    # and also avoids work when no follower log appends took place
+    # and also avoids work when no follower log appends took place (i.e. a heartbeat that doesnt append anything)
     if results.latest_index > state.leader_state.match_indices[results.from] do
       match_indices = Map.put(state.leader_state.match_indices, results.from, results.latest_index)
       next_indices = Map.put(state.leader_state.next_indices, results.from, results.latest_index + 1)
@@ -161,9 +256,16 @@ defmodule Craft.Consensus.State.LeaderState do
   end
 
   def handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: false} = results) do
-    next_indices = Map.update!(state.leader_state.next_indices, results.from, fn next_index -> next_index - 1 end)
+    # is the follower going to need a snapshot?
+    if (state.leader_state.next_indices[results.from] - 1) <= Persistence.latest_index(state.persistence) do
+      snapshot_transfers = Map.put(state.leader_state.snapshot_transfers, results.from, SnapshotTransfer.new(state))
 
-    %State{state | leader_state: %__MODULE__{state.leader_state | next_indices: next_indices}}
+      {:needs_snapshot, %State{state | leader_state: %__MODULE__{state.leader_state | snapshot_transfers: snapshot_transfers}}}
+    else
+      next_indices = Map.update!(state.leader_state.next_indices, results.from, fn next_index -> next_index - 1 end)
+
+      %State{state | leader_state: %__MODULE__{state.leader_state | next_indices: next_indices}}
+    end
   end
 
   def transfer_leadership(%State{} = state) do

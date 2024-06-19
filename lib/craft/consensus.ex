@@ -605,48 +605,58 @@ defmodule Craft.Consensus do
   def leader(:cast, %RequestVote.Results{}, _data), do: :keep_state_and_data
 
   def leader(:cast, %AppendEntries.Results{} = results, data) do
-    old_commit_index = data.commit_index
-    data =
-      data
-      |> LeaderState.handle_append_entries_results(results)
-      |> LeaderState.bump_last_heartbeat_reply_at(results.from)
-
-    if data.commit_index > old_commit_index do
-      Machine.commit_index_bumped(data, true)
+    if data.leader_state.snapshot_transfers[results.from] do
+      Logger.warning("received AppendEntries.Results from a follower that's receiving a snapshot...")
     end
 
-    data =
-      Enum.reduce(data.members.catching_up_nodes, data, fn node, data ->
-        if Persistence.latest_index(data.persistence) - 1 == Map.get(data.leader_state.next_indices, node) do
-          Logger.info("node #{inspect node} has caught up", logger_metadata(data))
+    old_commit_index = data.commit_index
+    data = LeaderState.bump_last_heartbeat_reply_at(data, results.from)
 
-          data = %State{data | members: Members.allow_node_to_vote(data.members, node)}
+    case LeaderState.handle_append_entries_results(data, results) do
+      {:needs_snapshot, data} ->
+        RPC.install_snapshot(data, results.from)
 
-          %State{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
-        else
-          data
-        end
-      end)
-
-    # the membership change has committed
-    with %MembershipChange{} = membership_change <- data.leader_state.membership_change,
-         true <- data.commit_index >= membership_change.log_index do
-      data = put_in(data.leader_state.membership_change, nil)
-      actions = [{:reply, membership_change.from, :ok}]
-
-      if membership_change.action == :remove && membership_change.node == node() do
-        data = LeaderState.transfer_leadership(data)
-        actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :self_removal} | actions]
-
-        RPC.append_entries(data)
-
-        {:keep_state, data, actions}
-      else
-        {:keep_state, data, actions}
-      end
-    else
-      _ ->
         {:keep_state, data}
+
+      data ->
+        if data.commit_index > old_commit_index do
+          Machine.commit_index_bumped(data, true)
+        end
+
+        data =
+          Enum.reduce(data.members.catching_up_nodes, data, fn node, data ->
+            if (Persistence.latest_index(data.persistence) - 1) == Map.get(data.leader_state.next_indices, node) do
+              Logger.info("node #{inspect node} has caught up", logger_metadata(data))
+
+              data = %State{data | members: Members.allow_node_to_vote(data.members, node)}
+
+              %State{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
+            else
+              data
+            end
+          end)
+
+        # the membership change has committed
+        with %MembershipChange{} = membership_change <- data.leader_state.membership_change,
+             true <- data.commit_index >= membership_change.log_index do
+          data = put_in(data.leader_state.membership_change, nil)
+          actions = [{:reply, membership_change.from, :ok}]
+
+          # leadership is being transferred
+          if membership_change.action == :remove && membership_change.node == node() do
+            data = LeaderState.transfer_leadership(data)
+            actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :self_removal} | actions]
+
+            RPC.append_entries(data)
+
+            {:keep_state, data, actions}
+          else
+            {:keep_state, data, actions}
+          end
+        else
+          _ ->
+            {:keep_state, data}
+        end
     end
   end
 
