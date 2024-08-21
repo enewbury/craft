@@ -82,7 +82,7 @@ defmodule Craft.Consensus.State.LeaderState do
       }
     end
 
-    def receive(%__MODULE__{} = snapshot_transfer) do
+    def receive(%__MODULE__{} = _snapshot_transfer) do
     end
   end
   # defmodule SnapshotTransfer do

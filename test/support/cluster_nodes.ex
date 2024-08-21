@@ -32,7 +32,7 @@ defmodule Craft.Test.ClusterNodes do
   end
 
   defp spawn_node(port) do
-    {:ok, node} = :slave.start('127.0.0.1', '#{port}', inet_loader_args())
+    {:ok, node} = :slave.start(~c"127.0.0.1", ~c"#{port}", inet_loader_args())
 
     add_code_paths(node)
     transfer_configuration(node, port)
@@ -52,7 +52,7 @@ defmodule Craft.Test.ClusterNodes do
   end
 
   defp inet_loader_args do
-    '-loader inet -hosts 127.0.0.1 -setcookie #{:erlang.get_cookie()}'
+    ~c"-loader inet -hosts 127.0.0.1 -setcookie #{:erlang.get_cookie()}"
   end
 
   defp add_code_paths(node) do

@@ -8,8 +8,8 @@ defmodule Craft.Persistence.RocksDBPersistence do
   """
   @behaviour Craft.Persistence
 
-  @log_column_family {'log', []}
-  @metadata_column_family {'metadata', []}
+  @log_column_family {~c"log", []}
+  @metadata_column_family {~c"metadata", []}
 
   defstruct [
     :db,
@@ -32,7 +32,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
     {:ok, db, [_default, log_column_family_handle, metadata_column_family_handle]} =
       data_dir
       |> :erlang.binary_to_list()
-      |> :rocksdb.open_optimistic_transaction_db(db_opts, [{'default', []}, @log_column_family, @metadata_column_family])
+      |> :rocksdb.open_optimistic_transaction_db(db_opts, [{~c"default", []}, @log_column_family, @metadata_column_family])
 
     latest_index =
       with {:ok, iterator} <- :rocksdb.iterator(db, log_column_family_handle, []),
@@ -131,7 +131,6 @@ defmodule Craft.Persistence.RocksDBPersistence do
   end
   def rewind(%__MODULE__{} = state, _index), do: state
 
-  require Logger
   defp do_rewind(transaction, iterator, log_cf, min_index) do
     case :rocksdb.iterator_move(iterator, :last) do
       {:ok, index, _value} when index > min_index ->

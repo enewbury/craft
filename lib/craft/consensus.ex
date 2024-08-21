@@ -1,14 +1,22 @@
 defmodule Craft.Consensus do
   @moduledoc false
 
+  #              |
+  #              |
+  #              |
+  #              v
+  # -------> follower ------> lonely -> candidate -> leader
+  # |                      |
+  # |                      |
+  # L- receiving_snapshot <-
   #
-  # follower -> lonely -> candidate -> leader
-  #
+  # receiving_snapshot: receiving snapshot from the (possibly no longer) leader, never votes
+  #                     won't leave this state until snapshot transfer completes
   # follower: happily following leader
   # lonely: hasn't heard from leader in a while, would be willing to vote 'yes' in a pre-vote
   # candidate: follower that's called an election after a successful majority pre-vote
   # leader: candidate that's won majority vote
-  #
+
 
   alias Craft.Consensus.State
   alias Craft.Consensus.State.LeaderState
@@ -22,6 +30,7 @@ defmodule Craft.Consensus do
   alias Craft.RPC
   alias Craft.RPC.AppendEntries
   alias Craft.RPC.RequestVote
+  alias Craft.RPC.InstallSnapshot
 
   require Logger
 
@@ -239,6 +248,10 @@ defmodule Craft.Consensus do
     {:next_state, :follower, data, [:postpone]}
   end
 
+  def lonely(:cast, %InstallSnapshot{}, data) do
+    {:next_state, :receiving_snapshot, data, [:postpone]}
+  end
+
   def lonely(:cast, {:user_command, {caller_pid, _ref} = id, _command}, data) do
     send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
 
@@ -268,6 +281,41 @@ defmodule Craft.Consensus do
 
     :keep_state_and_data
   end
+
+  #
+  # Receiving Snapshot
+  #
+  # being sent a snapshot from the (possibly unseated) leader.
+  #
+  # TODO: consider case where a follower is receiving a snapshot and an election occurs, the new leader may have truncated its log to the point where
+  #       the snapshot that's currently being transferred from an the leader may be abandoned and re-started from the current leader. the new leader
+  #       wouldn't have the log gap between the snapshot point and the leader's oldest non-compacted log entry.
+  #
+
+  def receiving_snapshot(:enter, _previous_state, data) do
+    data = State.become_receiving_snapshot(data)
+
+    Logger.info("became receiving_snapshot follower", logger_metadata(data))
+
+    {:keep_state, data, []}
+  end
+  # def receiving_snapshot(:state_timeout, :become_lonely, data), do: {:next_state, :lonely, data}
+
+  def receiving_snapshot(:cast, %InstallSnapshot{} = install_snapshot, data) do
+    # if current snapshot transfer:
+    #   tell sending node to abort
+    #   nuke current snapshot transfer files
+    #   stop state machine?
+    #
+    # initiate new transfer
+    #
+    data = %State{data | snapshot_transfer: install_snapshot.snapshot_transfer}
+
+    # SnapshotTransfer.receive()
+
+    {:keep_state, data, []}
+  end
+
 
   #
   # Follower
@@ -380,6 +428,10 @@ defmodule Craft.Consensus do
     else
       {:keep_state, data, [become_lonely_timeout()]}
     end
+  end
+
+  def follower(:cast, %InstallSnapshot{}, data) do
+    {:next_state, :receiving_snapshot, data, [:postpone]}
   end
 
   def follower(:cast, {:user_command, {caller_pid, _ref} = id, _command}, data) do

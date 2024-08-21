@@ -23,7 +23,8 @@ defmodule Craft.Consensus.State do
     :leader_state,
     :voted_for, # lonely and follower
     :election, # lonely and candidate
-    :leadership_transfer_request_id # candidate only
+    :leadership_transfer_request_id, # candidate only
+    :snapshot_transfer # receiving_snapshot only
   ]
 
   def new(name, nodes, persistence) do
@@ -87,6 +88,17 @@ defmodule Craft.Consensus.State do
       election: nil
     }
   end
+
+  def become_receiving_snapshot(%__MODULE__{} = state) do
+    %__MODULE__{
+      state |
+      state: :receiving_snapshot,
+      leader_state: nil,
+      leadership_transfer_request_id: nil,
+      election: nil
+    }
+  end
+
 
   def become_candidate(%__MODULE__{} = state, leadership_transfer_request_id \\ nil) do
     %__MODULE__{
@@ -161,6 +173,9 @@ defmodule Craft.Consensus.State do
       case state.state do
         :lonely ->
           :light_red
+
+        :receiving_snapshot ->
+          :magenta
 
         :follower ->
           :cyan

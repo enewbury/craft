@@ -1,7 +1,7 @@
 defmodule Craft.RocksDBMachine do
   use Craft.Machine, persistent: true
 
-  @log_index_column_family {'log_index', []}
+  @log_index_column_family {~c"log_index", []}
   @log_index_key "log_index"
 
   def put(name, nodes, k, v) do
@@ -24,7 +24,7 @@ defmodule Craft.RocksDBMachine do
     {:ok, db, [_default, log_index_column_family]} =
       data_dir
       |> :erlang.binary_to_list()
-      |> :rocksdb.open_optimistic_transaction_db(db_opts, [{'default', []}, @log_index_column_family])
+      |> :rocksdb.open_optimistic_transaction_db(db_opts, [{~c"default", []}, @log_index_column_family])
 
     state =
       %State{
