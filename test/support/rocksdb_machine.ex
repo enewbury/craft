@@ -48,7 +48,9 @@ defmodule Craft.RocksDBMachine do
     {:ok, state}
   end
 
-  def command({:get, k}, _log_index, state) do
+  def command({:get, k}, log_index, state) do
+    :ok = :rocksdb.put(state.db, state.log_index_column_family, @log_index_key, encode(log_index), sync: true)
+
     case :rocksdb.get(state.db, encode(k), []) do
       {:ok, value} ->
         {{:ok, decode(value)}, state}
@@ -59,6 +61,10 @@ defmodule Craft.RocksDBMachine do
       error ->
         {error, state}
     end
+  end
+
+  def command(_, _log_index, state) do
+    {{:error, :unknown_command}, state}
   end
 
   def snapshot(at_index, state) do

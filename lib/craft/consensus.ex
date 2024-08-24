@@ -677,8 +677,8 @@ defmodule Craft.Consensus do
 
         data =
           Enum.reduce(data.members.catching_up_nodes, data, fn node, data ->
-            if (Persistence.latest_index(data.persistence) - 1) == Map.get(data.leader_state.next_indices, node) do
-              Logger.info("node #{inspect node} has caught up", logger_metadata(data))
+            if Persistence.latest_index(data.persistence) == Map.get(data.leader_state.match_indices, node) do
+              Logger.info("node #{inspect node} is caught up", logger_metadata(data))
 
               data = %State{data | members: Members.allow_node_to_vote(data.members, node)}
 

@@ -111,7 +111,7 @@ defmodule Craft.Machine do
       end
 
     state =
-      Enum.reduce(last_applied_log_index..new_commit_index//1, state, fn index, state ->
+      Enum.reduce(last_applied_log_index+1..new_commit_index//1, state, fn index, state ->
         case Persistence.fetch(log, index) do
           {:ok, %SnapshotEntry{}} ->
             state

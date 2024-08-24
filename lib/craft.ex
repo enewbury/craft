@@ -107,6 +107,15 @@ defmodule Craft do
 
   defdelegate start_dev_test_cluster(num \\ 5), to: Craft.Test.ClusterNodes, as: :spawn_nodes
 
+  def start_tmux_cluster do
+    nodes = for i <- 2..5, do: :"#{i}@127.0.0.1"
+    name = "abc"
+
+    start_group(name, nodes, Craft.RocksDBMachine)
+
+    {name, nodes}
+  end
+
   def start_dev_consensus_group(nodes) do
     name = :crypto.strong_rand_bytes(3) |> Base.encode16()
 
