@@ -22,6 +22,7 @@ defmodule Craft.Consensus do
   alias Craft.Consensus.State.LeaderState
   alias Craft.Consensus.State.LeaderState.LeadershipTransfer
   alias Craft.Consensus.State.LeaderState.MembershipChange
+  alias Craft.Consensus.State.LeaderState.SnapshotTransfer
   alias Craft.Consensus.State.Members
   alias Craft.Log.CommandEntry
   alias Craft.Log.MembershipEntry
@@ -302,18 +303,31 @@ defmodule Craft.Consensus do
   # def receiving_snapshot(:state_timeout, :become_lonely, data), do: {:next_state, :lonely, data}
 
   def receiving_snapshot(:cast, %InstallSnapshot{} = install_snapshot, data) do
+    # TODO: for sendfile implementation
     # if current snapshot transfer:
     #   tell sending node to abort
     #   nuke current snapshot transfer files
     #   stop state machine?
     #
     # initiate new transfer
-    #
-    data = %State{data | snapshot_transfer: install_snapshot.snapshot_transfer}
 
-    # SnapshotTransfer.receive()
+    {:ok, data_dir} = Machine.prepare_to_receive_snapshot(data)
 
-    {:keep_state, data, []}
+    persistence =
+      data.persistence
+      |> Persistence.rewind(-1)
+      |> Persistence.append(install_snapshot.snapshot_transfer.log_entry, install_snapshot.snapshot_transfer.log_index)
+
+    SnapshotTransfer.receive(install_snapshot.snapshot_transfer, data_dir)
+
+    :ok = Machine.receive_snapshot(data)
+
+    RPC.respond_install_snapshot(install_snapshot, true, data)
+
+    data = %State{data | persistence: persistence}
+
+    # {:keep_state, data, []}
+    {:next_state, :follower, data}
   end
 
 
@@ -657,10 +671,6 @@ defmodule Craft.Consensus do
   def leader(:cast, %RequestVote.Results{}, _data), do: :keep_state_and_data
 
   def leader(:cast, %AppendEntries.Results{} = results, data) do
-    if data.leader_state.snapshot_transfers[results.from] do
-      Logger.warning("received AppendEntries.Results from a follower that's receiving a snapshot...")
-    end
-
     old_commit_index = data.commit_index
     data = LeaderState.bump_last_heartbeat_reply_at(data, results.from)
 
@@ -672,12 +682,14 @@ defmodule Craft.Consensus do
 
       data ->
         if data.commit_index > old_commit_index do
-          Machine.commit_index_bumped(data, true)
+          # only snapshot if there are no outstanding snapshot transfers
+          # only snapshot if all followers are caught up
+          Machine.commit_index_bumped(data, Enum.empty?(data.leader_state.snapshot_transfers))
         end
 
         data =
           Enum.reduce(data.members.catching_up_nodes, data, fn node, data ->
-            if Persistence.latest_index(data.persistence) == Map.get(data.leader_state.match_indices, node) do
+            if Persistence.latest_index(data.persistence) <= Map.get(data.leader_state.match_indices, node) do
               Logger.info("node #{inspect node} is caught up", logger_metadata(data))
 
               data = %State{data | members: Members.allow_node_to_vote(data.members, node)}
@@ -710,6 +722,10 @@ defmodule Craft.Consensus do
             {:keep_state, data}
         end
     end
+  end
+
+  def leader(:cast, %InstallSnapshot.Results{} = results, data) do
+    {:keep_state, LeaderState.handle_install_snapshot_results(data, results)}
   end
 
   def leader(:cast, :step_down, data) do

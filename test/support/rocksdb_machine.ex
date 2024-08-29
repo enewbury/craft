@@ -13,29 +13,40 @@ defmodule Craft.RocksDBMachine do
   end
 
   defmodule State do
-    defstruct [:db, :log_index_column_family, :snapshots_dir]
+    defstruct [:data_dir, :db, :log_index_column_family, :snapshots_dir]
   end
 
   def init(group_name) do
     data_dir = Path.join([File.cwd!(), "data", to_string(node()), group_name, "machine"])
 
-    db_opts = [create_if_missing: true, create_missing_column_families: true]
+    %State{
+      data_dir: data_dir,
+      snapshots_dir: Path.join(data_dir, "snapshots")
+    }
+    |> do_init(create_if_missing: true, create_missing_column_families: true)
+  end
 
+  defp do_init(state, db_opts \\ []) do
     {:ok, db, [_default, log_index_column_family]} =
-      data_dir
+      state.data_dir
       |> :erlang.binary_to_list()
       |> :rocksdb.open_optimistic_transaction_db(db_opts, [{~c"default", []}, @log_index_column_family])
 
-    state =
-      %State{
-        db: db,
-        log_index_column_family: log_index_column_family,
-        snapshots_dir: Path.join(data_dir, "snapshots")
-      }
-
     File.mkdir_p!(state.snapshots_dir)
 
-    {:ok, state}
+    {:ok, %State{state | db: db, log_index_column_family: log_index_column_family}}
+  end
+
+  def receive_snapshot(state) do
+    do_init(state)
+  end
+
+  def prepare_to_receive_snapshot(state) do
+    :ok = :rocksdb.close(state.db)
+
+    File.rm_rf!(state.data_dir)
+
+    {:ok, state.data_dir, state}
   end
 
   def command({:put, k, v}, log_index, state) do
@@ -63,6 +74,7 @@ defmodule Craft.RocksDBMachine do
     end
   end
 
+  # TODO: inject this clause via `use Craft.Machine`
   def command(_, _log_index, state) do
     {{:error, :unknown_command}, state}
   end

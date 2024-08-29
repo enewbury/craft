@@ -25,7 +25,7 @@ defmodule Craft.Persistence do
   @callback latest_index(any()) :: integer()
   @callback fetch(any(), index :: integer()) :: entry()
   @callback fetch_from(any(), index :: integer()) :: [entry()]
-  @callback append(any(), [entry()]) :: any()
+  @callback append(any(), [entry()], index :: integer() | nil) :: any()
   @callback rewind(any(), index :: integer()) :: any() # remove all long entries after index
   @callback truncate(any(), index :: integer(), SnapshotEntry.t()) :: any() # atomically remove log entries up to and including `index` and replace with SnapshotEntry
   @callback reverse_find(any(), fun()) :: entry() | nil
@@ -132,10 +132,11 @@ defmodule Craft.Persistence do
   end
 
   # FIXME: rename to append!
-  def append(%__MODULE__{module: module, private: private} = persistence, entries) when is_list(entries) do
-    %__MODULE__{persistence | private: module.append(private, entries)}
+  def append(persistence, entries, at_index \\ nil)
+  def append(%__MODULE__{module: module, private: private} = persistence, entries, at_index) when is_list(entries) do
+    %__MODULE__{persistence | private: module.append(private, entries, at_index)}
   end
-  def append(persistence, entry), do: append(persistence, [entry])
+  def append(persistence, entry, at_index), do: append(persistence, [entry], at_index)
 
   def rewind(%__MODULE__{module: module, private: private} = persistence, index) do
     %__MODULE__{persistence | private: module.rewind(private, index)}

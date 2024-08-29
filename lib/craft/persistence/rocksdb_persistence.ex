@@ -92,9 +92,16 @@ defmodule Craft.Persistence.RocksDBPersistence do
   end
 
   @impl true
-  def append(%__MODULE__{} = state, []), do: state
-  def append(%__MODULE__{} = state, entries) do
+  def append(%__MODULE__{} = state, [], _at_index), do: state
+  def append(%__MODULE__{} = state, entries, at_index) do
     {:ok, batch} = :rocksdb.batch()
+
+    state =
+      if at_index do
+        %__MODULE__{state | latest_index: at_index - 1}
+      else
+        state
+      end
 
     state =
       Enum.reduce(entries, state, fn entry, state ->

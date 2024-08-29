@@ -5,6 +5,7 @@ defmodule Craft.Consensus.State.LeaderState do
   alias Craft.Persistence
   alias Craft.Log.MembershipEntry
   alias Craft.RPC.AppendEntries
+  alias Craft.RPC.InstallSnapshot
 
   defstruct [
     :next_indices,
@@ -49,16 +50,12 @@ defmodule Craft.Consensus.State.LeaderState do
   end
 
   defmodule SnapshotTransfer do
-    # sending a bunch of Streams for the follower to read is a cute solution
-    # but it might not be the most robust long term.
-
-    # TODO: make configurable (or adaptive based on network congestion)
-    @snapshot_chunk_size 50_000 # bytes
+    # send entire snapshot as a single message to start, later we'll use :file.sendfile
 
     defstruct [
       :log_index,
       :log_entry,
-      :streams
+      :files
     ]
 
     def new(state) do
@@ -66,23 +63,31 @@ defmodule Craft.Consensus.State.LeaderState do
       {:ok, log_entry} = Persistence.fetch(state.persistence, log_index)
 
       dir = Map.fetch!(state.snapshots, log_index)
-      streams =
+      files =
         dir
         |> File.ls!()
-        |> Enum.map(fn file ->
-          dir
-          |> Path.join(file)
-          |> File.stream!(@snapshot_chunk_size)
+        |> Map.new(fn name ->
+          file = dir |> Path.join(name) |> File.read!()
+          {name, file}
         end)
 
       %__MODULE__{
         log_index: log_index,
         log_entry: log_entry,
-        streams: streams
+        files: files
       }
     end
 
-    def receive(%__MODULE__{} = _snapshot_transfer) do
+    #TODO: handle directories
+    def receive(%__MODULE__{} = snapshot_transfer, data_dir) do
+      File.mkdir_p!(data_dir)
+
+      for {name, content} <- snapshot_transfer.files do
+        data_dir
+        |> Path.join(name)
+        |> IO.inspect(label: "WRITING")
+        |> File.write!(content)
+      end
     end
   end
   # defmodule SnapshotTransfer do
@@ -266,6 +271,21 @@ defmodule Craft.Consensus.State.LeaderState do
 
       %State{state | leader_state: %__MODULE__{state.leader_state | next_indices: next_indices}}
     end
+  end
+
+  def handle_install_snapshot_results(%State{} = state, %InstallSnapshot.Results{success: true} = results) do
+    log_index = state.leader_state.snapshot_transfers[results.from].log_index
+    snapshot_transfers = Map.delete(state.leader_state.snapshot_transfers, results.from)
+
+    leader_state =
+      %__MODULE__{
+        state.leader_state |
+        snapshot_transfers: snapshot_transfers,
+        match_indices: Map.put(state.leader_state.next_indices, results.from, log_index),
+        next_indices: Map.put(state.leader_state.next_indices, results.from, log_index + 1)
+      }
+
+    %State{state | leader_state: leader_state}
   end
 
   def transfer_leadership(%State{} = state) do

@@ -36,6 +36,12 @@ defmodule Craft.RPC do
     end
   end
 
+  def respond_append_entries(%AppendEntries{} = append_entries, success, %State{} = state) do
+    state
+    |> AppendEntries.Results.new(success)
+    |> send_message(append_entries.leader_id, state)
+  end
+
   def install_snapshot(%State{} = state, to_node) do
     snapshot_transfer = state.leader_state.snapshot_transfers[to_node]
 
@@ -44,10 +50,9 @@ defmodule Craft.RPC do
     |> send_message(to_node, state)
   end
 
-  def respond_append_entries(%AppendEntries{} = append_entries, success, %State{} = state) do
-    state
-    |> AppendEntries.Results.new(success)
-    |> send_message(append_entries.leader_id, state)
+  def respond_install_snapshot(%InstallSnapshot{} = install_snapshot, success, %State{state: :receiving_snapshot} = state) do
+    InstallSnapshot.Results.new(success)
+    |> send_message(install_snapshot.leader_id, state)
   end
 
   if Mix.env() == :test do

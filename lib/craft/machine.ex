@@ -40,6 +40,18 @@ defmodule Craft.Machine do
     |> GenServer.call(:module)
   end
 
+  def prepare_to_receive_snapshot(%ConsensusState{} = state) do
+    state.name
+    |> name()
+    |> GenServer.call(:prepare_to_receive_snapshot)
+  end
+
+  def receive_snapshot(%ConsensusState{} = state) do
+    state.name
+    |> name()
+    |> GenServer.call(:receive_snapshot)
+  end
+
   def state(name, node) do
     GenServer.call({name(name), node}, :state)
   end
@@ -160,9 +172,11 @@ defmodule Craft.Machine do
     # should probably provide sync/async semantics as well as ability to store small snapshots
     # directly in the log
     #
+    # only snapshot up to one entry before the latest, since we need the prev log entry to create AppendEntries
     if should_snapshot? do
-      snapshot_dir = state.module.snapshot(new_commit_index, state.private)
-      :ok = Consensus.snapshot_ready(state.name, new_commit_index, snapshot_dir)
+      snapshot_index = new_commit_index - 1
+      snapshot_dir = state.module.snapshot(snapshot_index, state.private)
+      :ok = Consensus.snapshot_ready(state.name, snapshot_index, snapshot_dir)
     end
 
     {:noreply, %State{state | last_applied: new_commit_index}}
@@ -184,6 +198,21 @@ defmodule Craft.Machine do
   @impl true
   def handle_call(:module, _from, state) do
     {:reply, {:ok, state.module}, state}
+  end
+
+  # delete on-disk machine files etc...
+  @impl true
+  def handle_call(:prepare_to_receive_snapshot, _from, state) do
+    {:ok, data_dir, private} = state.module.prepare_to_receive_snapshot(state.private)
+
+    {:reply, {:ok, data_dir}, %State{state | private: private}}
+  end
+
+  @impl true
+  def handle_call(:receive_snapshot, _from, state) do
+    {:ok, private} = state.module.receive_snapshot(state.private)
+
+    {:reply, :ok, %State{state | private: private}}
   end
 
   @impl true
