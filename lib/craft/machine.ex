@@ -1,4 +1,5 @@
 defmodule Craft.Machine do
+  @doc false
   use GenServer
 
   alias Craft.Consensus
@@ -8,6 +9,8 @@ defmodule Craft.Machine do
   alias Craft.Log.EmptyEntry
   alias Craft.Log.MembershipEntry
   alias Craft.Log.SnapshotEntry
+
+  import Craft.Application, only: [via: 2, lookup: 2]
 
   @type private :: any()
   @type snapshot :: any()
@@ -28,32 +31,36 @@ defmodule Craft.Machine do
     ]
   end
 
-  def name(name), do: Module.concat(__MODULE__, name)
-
   def start_link(args) do
-    GenServer.start_link(__MODULE__, args, name: name(args.name))
+    GenServer.start_link(__MODULE__, args, name: via(args.name, __MODULE__))
   end
 
-  def module(%ConsensusState{} = state) do
-    state.name
-    |> name()
+  def module(name) do
+    name
+    |> lookup(__MODULE__)
     |> GenServer.call(:module)
   end
 
-  def prepare_to_receive_snapshot(%ConsensusState{} = state) do
-    state.name
-    |> name()
+  def prepare_to_receive_snapshot(name) do
+    name
+    |> lookup(__MODULE__)
     |> GenServer.call(:prepare_to_receive_snapshot)
   end
 
-  def receive_snapshot(%ConsensusState{} = state) do
-    state.name
-    |> name()
+  def receive_snapshot(name) do
+    name
+    |> lookup(__MODULE__)
     |> GenServer.call(:receive_snapshot)
   end
 
+  def state(name) do
+    name
+    |> lookup(__MODULE__)
+    |> GenServer.call(:state)
+  end
+
   def state(name, node) do
-    GenServer.call({name(name), node}, :state)
+    :rpc.call(node, __MODULE__, :state, [name])
   end
 
   # FIXME: document that for persistent machines, the commit index and the
@@ -70,7 +77,7 @@ defmodule Craft.Machine do
   #
   def commit_index_bumped(%ConsensusState{} = state, should_snapshot?) do
     state.name
-    |> name()
+    |> lookup(__MODULE__)
     |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence, state.state, should_snapshot?})
   end
 
@@ -78,16 +85,24 @@ defmodule Craft.Machine do
     timeout = Keyword.get(opts, :timeout, 5_000)
     id = {self(), make_ref()}
 
-    GenServer.cast({name(name), node}, {:command, id, command})
-
-    receive do
-      {^id, reply} ->
-        reply
+    with :ok <- :rpc.call(node, __MODULE__, :cast_command, [name, id, command]) do
+      receive do
+        {^id, reply} ->
+          reply
 
       after
         timeout ->
           {:error, :timeout}
+      end
+    else e ->
+        {:error, e}
     end
+  end
+
+  def cast_command(name, id, command) do
+    name
+    |> lookup(__MODULE__)
+    |> GenServer.cast({:command, id, command})
   end
 
   @impl true

@@ -311,7 +311,7 @@ defmodule Craft.Consensus do
     #
     # initiate new transfer
 
-    {:ok, data_dir} = Machine.prepare_to_receive_snapshot(data)
+    {:ok, data_dir} = Machine.prepare_to_receive_snapshot(data.name)
 
     persistence =
       data.persistence
@@ -320,7 +320,7 @@ defmodule Craft.Consensus do
 
     SnapshotTransfer.receive(install_snapshot.snapshot_transfer, data_dir)
 
-    :ok = Machine.receive_snapshot(data)
+    :ok = Machine.receive_snapshot(data.name)
 
     RPC.respond_install_snapshot(install_snapshot, true, data)
 
@@ -766,7 +766,7 @@ defmodule Craft.Consensus do
   end
 
   def leader({:call, from}, :configuration, data) do
-    {:ok, machine_module} = Machine.module(data)
+    {:ok, machine_module} = Machine.module(data.name)
 
     config = %{
       members: data.members,

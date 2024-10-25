@@ -1,12 +1,14 @@
 defmodule Craft.MemberSupervisor do
   @moduledoc false
 
-  alias Craft.Persistence.RocksDBPersistence
-
   use Supervisor
 
+  alias Craft.Persistence.RocksDBPersistence
+
+  import Craft.Application, only: [via: 2, lookup: 2]
+
   def start_link(args) do
-    Supervisor.start_link(__MODULE__, args, name: name(args.name))
+    Supervisor.start_link(__MODULE__, args, name: via(args.name, __MODULE__))
   end
 
   @impl Supervisor
@@ -24,8 +26,6 @@ defmodule Craft.MemberSupervisor do
     children = [
       {Craft.Consensus, [consensus_args]},
       {Craft.Machine, machine_args}
-      # {Registry, keys: :unique, name: registry_name(args.name)},
-      # {ARQ, name: rpc_supervisor_name(args.name)}
     ]
 
     Supervisor.init(children, strategy: :one_for_all)
@@ -37,32 +37,17 @@ defmodule Craft.MemberSupervisor do
     args =
       opts
       |> Map.new()
-      |> Map.put(:name, name)
-      |> Map.put(:nodes, nodes)
-      |> Map.put(:machine, machine)
-      |> Map.put(:persistence, {RocksDBPersistence, []})
+      |> Map.merge(%{
+        name: name,
+        nodes: nodes,
+        machine: machine,
+        persistence: {RocksDBPersistence, []}
+      })
 
     DynamicSupervisor.start_child(Craft.Supervisor, {__MODULE__, args})
   end
 
   def stop_member(name) do
-    pid =
-      name
-      |> name()
-      |> Process.whereis()
-
-    DynamicSupervisor.terminate_child(Craft.Supervisor, pid)
+    DynamicSupervisor.terminate_child(Craft.Supervisor, lookup(name, __MODULE__))
   end
-
-  def name(name) do
-    Module.concat(__MODULE__, name)
-  end
-
-  # def registry_name(name) do
-  #   Module.concat(Craft.Registry, name)
-  # end
-
-  # def rpc_supervisor_name(name) do
-  #   Module.concat(Craft.Registry, name)
-  # end
 end

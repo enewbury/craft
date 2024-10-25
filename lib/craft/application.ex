@@ -11,6 +11,21 @@ defmodule Craft.Application do
 
     Craft.LeaderCache.init()
 
-    DynamicSupervisor.start_link([strategy: :one_for_one, name: Craft.Supervisor])
+    children = [
+      {DynamicSupervisor, [strategy: :one_for_one, name: Craft.Supervisor]},
+      {Registry, keys: :unique, name: Craft.Registry}
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one)
+  end
+
+  def via(name, component) do
+    {:via, Registry, {Craft.Registry, {name, component}}}
+  end
+
+  def lookup(name, component) do
+    [{pid, _meta}] = Registry.lookup(Craft.Registry, {name, component})
+
+    pid
   end
 end
