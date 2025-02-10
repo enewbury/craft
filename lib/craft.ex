@@ -105,7 +105,11 @@ defmodule Craft do
     :gen_statem.cast({Consensus.name(name), node}, :step_down)
   end
 
-  defdelegate start_dev_test_cluster(num \\ 5), to: Craft.Test.ClusterNodes, as: :spawn_nodes
+  def start_dev_cluster(num \\ 5) do
+    num
+    |> Craft.TestCluster.spawn_nodes()
+    |> start_dev_consensus_group()
+  end
 
   def start_tmux_cluster do
     nodes = for i <- 2..5, do: :"#{i}@127.0.0.1"
@@ -116,9 +120,10 @@ defmodule Craft do
     {name, nodes}
   end
 
-  def start_dev_consensus_group(nodes) do
+  def start_dev_consensus_group(node_info) do
     name = :crypto.strong_rand_bytes(3) |> Base.encode16()
 
+    nodes = Enum.map(node_info, &Map.fetch!(&1, :node))
     start_group(name, nodes, Craft.RocksDBMachine)
 
     name

@@ -8,13 +8,13 @@ defmodule ElectionTest do
   alias Craft.Nexus
 
   alias Craft.SimpleMachine
-  alias Craft.Test.ClusterNodes
+  alias Craft.TestCluster
   alias Craft.TestHelper
 
   import Nexus, only: [wait_until: 2]
 
   setup_all do
-    [nodes: ClusterNodes.spawn_nodes(5)]
+    [nodes: TestCluster.spawn_nodes(5)]
   end
 
   test "pre-chosen candidate becomes leader", %{nodes: nodes} do
