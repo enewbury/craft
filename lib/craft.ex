@@ -83,8 +83,6 @@ defmodule Craft do
           Enum.random(nodes)
       end
 
-    # let the user deal with redirecting the request to the leader, we may implement
-    # redirection strategies later (e.g.  try all nodes, redirect N times, etc...)
     case func.(node) do
       {:error, {:not_leader, leader}} ->
         Craft.LeaderCache.put(name, leader)

@@ -21,7 +21,8 @@ defmodule Craft.SimpleMachine do
     {{:ok, Map.get(state, k)}, state}
   end
 
-  def snapshot(at_index, state) do
-    IO.inspect state, label: "SNAPSHOTTING #{inspect at_index}"
+  def snapshot(_at_index, _state) do
+    # Logger.debug("snapshotting #{at_index}", State.logger_metadata(data))
+    :noop
   end
 end

@@ -6,7 +6,7 @@ defmodule Craft.Persistence do
 
   # this module is kinda like a bastardized mix of a behaviour and a protocol
   #
-  # it's a module in the sense that:
+  # it's a behaviour in the sense that:
   # we want the user to hand us a module name as an option, but we don't want them
   # to instantiate it for us, we want to do that at init-time for the consensus process
   #
@@ -52,13 +52,7 @@ defmodule Craft.Persistence do
     end
 
     def fetch(%Persistence{module: module, private: private}) do
-      case module.fetch_metadata(private) do
-        {:ok, binary} ->
-          {:ok, struct(__MODULE__, :erlang.binary_to_term(binary))}
-
-        :error ->
-          :error
-      end
+      module.fetch_metadata(private)
     end
 
     def update(%State{} = state) do
@@ -87,12 +81,7 @@ defmodule Craft.Persistence do
     end
 
     defp write(metadata, %State{persistence: %Persistence{module: module, private: private}} = state) do
-      dumped =
-        metadata
-        |> Map.from_struct()
-        |> :erlang.term_to_binary()
-
-      persistence = %Persistence{state.persistence | private: module.put_metadata(private, dumped)}
+      persistence = %Persistence{state.persistence | private: module.put_metadata(private, metadata)}
 
       %State{state | persistence: persistence}
     end
@@ -111,6 +100,10 @@ defmodule Craft.Persistence do
       private: module.new(group_name, args)
     }
     |> append(%EmptyEntry{term: -1})
+  end
+
+  def new(group_name, module) when is_atom(module) do
+    new(group_name, {module, []})
   end
 
   # Log

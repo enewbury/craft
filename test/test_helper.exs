@@ -1,8 +1,8 @@
 defmodule Craft.TestHelper do
   alias Craft.Consensus
-  alias Craft.Consensus.FollowerState
   alias Craft.Consensus.State
-  alias Craft.Log
+  alias Craft.Persistence
+  alias Craft.Persistence.MapPersistence
   alias Craft.SimpleMachine
 
   def start_group(states_or_nodes, machine \\ SimpleMachine)
@@ -20,9 +20,8 @@ defmodule Craft.TestHelper do
     states =
       Enum.map(states, fn {node, state} ->
         {node, %{state |
-                 current_term: Log.latest_term(state.log),
+                 current_term: Persistence.latest_term(state.persistence),
                  name: name,
-                 other_nodes: List.delete(nodes, node),
                  nexus_pid: nexus}}
       end)
 
@@ -52,7 +51,8 @@ defmodule Craft.TestHelper do
   def start_group(nodes, machine) do
     nodes
     |> Enum.map(fn node ->
-      state = FollowerState.new(%State{log: Craft.Log.new(nil, Log.MapLog)})
+      state = State.new(nil, nodes, MapPersistence)
+      state = %State{state | state: :follower}
 
       {node, state}
     end)

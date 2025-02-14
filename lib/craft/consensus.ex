@@ -119,28 +119,34 @@ defmodule Craft.Consensus do
     :gen_statem.start_link({:local, name(args.name)}, __MODULE__, args, [])
   end
 
-  # if Mix.env() == :test do
-  #   defoverridable start_link: 1
-  #   def start_link(state), do: :gen_statem.start_link({:local, name(state.name)}, Craft.Consensus.Tracer, state, [])
-  #   defmodule Tracer do
-  #     @moduledoc ":erlang.trace/3 can't guarantee delivery order between traces messages and messages that this process sends, so we decorate instead"
-  #     defdelegate callback_mode, to: Craft.Consensus
-  #     def init(data) when is_struct(data) do
-  #       {:ok, :ready_to_test, data}
-  #     end
-  #     def ready_to_test(:enter, _, _data), do: :keep_state_and_data
-  #     def ready_to_test(:cast, :run, %State{mode_state: %FollowerState{}} = data), do: {:next_state, :follower, data, []}
-  #     def ready_to_test(:cast, :run, %State{mode_state: %CandidateState{}} = data), do: {:next_state, :candidate, data, []}
-  #     def ready_to_test(:cast, :run, %State{mode_state: %LeaderState{}} = data), do: {:next_state, :leader, data, []}
-  #     def ready_to_test({:call, _from}, :catch_up, _data), do: {:keep_state_and_data, [:postpone]}
-  #     for state <- [:follower, :lonely, :candidate, :leader] do
-  #       def unquote(state)(event, msg, data) do
-  #         send(data.nexus_pid, {:trace, DateTime.utc_now(), node(), unquote(state), event, msg, data})
-  #         apply(Craft.Consensus, unquote(state), [event, msg, data])
-  #       end
-  #     end
-  #   end
-  # end
+  if Mix.env() == :test do
+    defoverridable start_link: 1
+    def start_link(state), do: :gen_statem.start_link({:local, name(state.name)}, Craft.Consensus.Tracer, state, [])
+
+    defmodule Tracer do
+      @moduledoc """
+      decorator to capture state machine events in test
+
+      :erlang.trace/3 can't guarantee delivery order between trace messages and messages that this process sends, so we decorate instead
+      """
+
+      defdelegate callback_mode, to: Craft.Consensus
+      def init(data) when is_struct(data) do
+        {:ok, :ready_to_test, data}
+      end
+
+      def ready_to_test(:enter, _, _data), do: :keep_state_and_data
+      def ready_to_test(:cast, :run, %State{state: state} = data), do: {:next_state, state, data, []}
+      def ready_to_test({:call, _from}, :catch_up, _data), do: {:keep_state_and_data, [:postpone]}
+
+      for state <- [:lonely, :receiving_snapshot, :follower, :candidate, :leader] do
+        def unquote(state)(event, msg, data) do
+          send(data.nexus_pid, {:trace, DateTime.utc_now(), node(), unquote(state), event, msg, data})
+          apply(Craft.Consensus, unquote(state), [event, msg, data])
+        end
+      end
+    end
+  end
 
   def init(args) do
     Logger.metadata(name: args.name, node: node())

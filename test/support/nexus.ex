@@ -1,9 +1,6 @@
 defmodule Craft.Nexus do
   @moduledoc """
-  this module starts a raft group, then directs all members to use it
-  as the recipient for all cluster messages. it's a proxy to watch
-  messages exchanged by the raft group as well as function trace messages
-  emitted by individual members.
+  this module acts as a central hub for cluster messages and member traces
   """
   use GenServer
 
@@ -15,9 +12,11 @@ defmodule Craft.Nexus do
       members: [],
       term: -1,
       leader: nil,
-      empty_append_entries_counts: %{}, # num of consecutive successfully received and responded-to empty AppendEntries msgs
+      # num of consecutive successfully received and responded-to empty AppendEntries msgs
+      empty_append_entries_counts: %{},
       genstatem_invocations: [],
-      wait_until: {_watcher_from = nil, _condition = nil} # watcher termination condition (:group_stable, :millisecs, etc)
+      # watcher termination condition (:group_stable, :millisecs, etc)
+      wait_until: {_watcher_from = nil, _condition = nil}
     ]
 
     def leader_elected(%State{term: term} = state, leader, new_term) when new_term > term do

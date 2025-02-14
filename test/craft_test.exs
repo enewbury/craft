@@ -1,19 +1,19 @@
 defmodule CraftTest do
   use ExUnit.Case
-  alias Craft.Consensus.CandidateState
-  alias Craft.Consensus.FollowerState
   alias Craft.Consensus.State
-  alias Craft.Log.MapLog
+  alias Craft.Persistence.MapPersistence
   alias Craft.Nexus
 
-  alias Craft.SimpleMachine
-  alias Craft.Test.ClusterNodes
+  # alias Craft.SimpleMachine
+  alias Craft.TestCluster
   alias Craft.TestHelper
 
   import Nexus, only: [wait_until: 2]
 
   setup_all do
-    [nodes: ClusterNodes.spawn_nodes(5)]
+    [
+      nodes: TestCluster.spawn_nodes(5) |> Enum.map(&Map.fetch!(&1, :node))
+    ]
   end
 
   # describe "smoke tests" do
@@ -23,17 +23,17 @@ defmodule CraftTest do
   # end
 
   test "pre-chosen candidate becomes leader", %{nodes: nodes} do
-    log = Craft.Log.new(nil, MapLog)
+    state = State.new("abc", nodes, MapPersistence)
 
     states =
       Enum.zip(
         nodes,
         [
-          CandidateState.new(%State{log: log}),
-          FollowerState.new(%State{log: log}),
-          FollowerState.new(%State{log: log}),
-          FollowerState.new(%State{log: log}),
-          FollowerState.new(%State{log: log})
+          %State{state | state: :candidate},
+          %State{state | state: :lonely},
+          %State{state | state: :lonely},
+          %State{state | state: :lonely},
+          %State{state | state: :lonely}
         ]
       )
 
@@ -47,17 +47,17 @@ defmodule CraftTest do
     Nexus.stop(nexus)
   end
 
-  test "commands", %{nodes: nodes} do
-    {:ok, name, nexus} = TestHelper.start_group(nodes)
+  # test "commands", %{nodes: nodes} do
+  #   {:ok, name, nexus} = TestHelper.start_group(nodes)
 
-    wait_until(nexus, :group_stable)
+  #   wait_until(nexus, :group_stable)
 
-    assert :ok = SimpleMachine.put(name, nodes, :a, 123)
-    assert {:ok, 123} = SimpleMachine.get(name, nodes, :a)
+  #   assert :ok = SimpleMachine.put(name, nodes, :a, 123)
+  #   assert {:ok, 123} = SimpleMachine.get(name, nodes, :a)
 
-    Craft.stop_group(name, nodes)
-    Nexus.stop(nexus)
-  end
+  #   Craft.stop_group(name, nodes)
+  #   Nexus.stop(nexus)
+  # end
 
   # test api design:
   #

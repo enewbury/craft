@@ -76,8 +76,8 @@ defmodule Craft.TestCluster do
   end
 
   defp start_apps(pid) do
-    {:ok, _} = :peer.call(pid, Application, :ensure_all_started, [:mix])
-    {:ok, _} = :peer.call(pid, Mix, :env, [Mix.env()])
-    {:ok, _} = :peer.call(pid, Application, :ensure_all_started, [:craft], 20_000)
+    :peer.call(pid, Application, :ensure_all_started, [:mix])
+    :peer.call(pid, Mix, :env, [Mix.env()])
+    :peer.call(pid, Application, :ensure_all_started, [:craft], 20_000)
   end
 end

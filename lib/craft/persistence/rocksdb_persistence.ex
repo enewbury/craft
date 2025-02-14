@@ -205,8 +205,13 @@ defmodule Craft.Persistence.RocksDBPersistence do
   end
 
   @impl true
-  def put_metadata(%__MODULE__{} = state, binary) do
-    :ok = :rocksdb.put(state.db, state.metadata_cf, "metadata", binary, state.write_opts)
+  def put_metadata(%__MODULE__{} = state, metadata) do
+    dumped =
+      metadata
+      |> Map.from_struct()
+      |> encode()
+
+    :ok = :rocksdb.put(state.db, state.metadata_cf, "metadata", dumped, state.write_opts)
 
     state
   end
@@ -215,7 +220,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
   def fetch_metadata(%__MODULE__{} = state) do
     case :rocksdb.get(state.db, state.metadata_cf, "metadata", []) do
       {:ok, binary} ->
-        {:ok, binary}
+        {:ok, struct(Craft.Persistence.Metadata, decode(binary))}
 
       _ ->
         :error
