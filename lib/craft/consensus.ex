@@ -602,9 +602,7 @@ defmodule Craft.Consensus do
   def leader(:enter, previous_state, %State{leadership_transfer_request_id: {caller_pid, _ref} = id} = data) do
     send(caller_pid, {id, :ok})
 
-    data = %State{data | leadership_transfer_request_id: nil}
-
-    leader(:enter, previous_state, data)
+    leader(:enter, previous_state, %State{data | leadership_transfer_request_id: nil})
   end
 
   def leader(:enter, _previous_state, data) do
@@ -617,6 +615,9 @@ defmodule Craft.Consensus do
     # however, we need to store the current config in the log so that when nodes restart,
     # they have a way to determine what the current config is (walk backwards from the end of the
     # log looking for the most recent config)
+    #
+    # appending an entry from the current term also allows us to commit any possibly uncommitted entries
+    # from previous terms (section 5.4.2)
     #
     data = %State{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
 

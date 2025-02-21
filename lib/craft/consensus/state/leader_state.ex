@@ -247,6 +247,7 @@ defmodule Craft.Consensus.State.LeaderState do
           Consensus.quorum_reached?(state, num_members_with_index)
         end)
 
+      # only bump commit index when the quorum entry is from the current term (section 5.4.2)
       with false <- is_nil(highest_uncommitted_match_index),
            {:ok, entry} <- Persistence.fetch(state.persistence, highest_uncommitted_match_index),
            true <- entry.term == state.current_term do
