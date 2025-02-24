@@ -5,7 +5,7 @@ defmodule Craft.Consensus do
   #              |
   #              |
   #              v
-  # -------> follower ------> lonely -> candidate -> leader
+  # --------> lonely ------> follower -> lonely -> candidate -> leader
   # |                      |
   # |                      |
   # L- receiving_snapshot <-
@@ -13,7 +13,7 @@ defmodule Craft.Consensus do
   # receiving_snapshot: receiving snapshot from the (possibly no longer) leader, never votes
   #                     won't leave this state until snapshot transfer completes
   # follower: happily following leader
-  # lonely: hasn't heard from leader in a while, would be willing to vote 'yes' in a pre-vote
+  # lonely: hasn't heard from leader in a while (or ever), would be willing to vote 'yes' in a pre-vote
   # candidate: follower that's called an election after a successful majority pre-vote
   # leader: candidate that's won majority vote
 
@@ -132,6 +132,17 @@ defmodule Craft.Consensus do
 
       defdelegate callback_mode, to: Craft.Consensus
       def init(data) when is_struct(data) do
+        {:ok, :ready_to_test, data}
+      end
+
+      def init(args) do
+        data =
+          %State{
+            State.new(args.name, args.nodes, args.persistence) |
+            nexus_pid: args.nexus_pid,
+            state: :lonely
+          }
+
         {:ok, :ready_to_test, data}
       end
 

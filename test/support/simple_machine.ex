@@ -23,6 +23,8 @@ defmodule Craft.SimpleMachine do
 
   def snapshot(_at_index, _state) do
     # Logger.debug("snapshotting #{at_index}", State.logger_metadata(data))
-    :noop
+    ""
   end
+
+  def dump(state), do: state
 end

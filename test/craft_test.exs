@@ -4,7 +4,7 @@ defmodule CraftTest do
   alias Craft.Persistence.MapPersistence
   alias Craft.Nexus
 
-  # alias Craft.SimpleMachine
+  alias Craft.SimpleMachine
   alias Craft.TestCluster
   alias Craft.TestHelper
 
@@ -12,7 +12,7 @@ defmodule CraftTest do
 
   setup_all do
     [
-      nodes: TestCluster.spawn_nodes(5) |> Enum.map(&Map.fetch!(&1, :node))
+      nodes: TestCluster.spawn_nodes(5)
     ]
   end
 
@@ -47,17 +47,17 @@ defmodule CraftTest do
     Nexus.stop(nexus)
   end
 
-  # test "commands", %{nodes: nodes} do
-  #   {:ok, name, nexus} = TestHelper.start_group(nodes)
+  test "commands", %{nodes: nodes} do
+    {:ok, name, nexus} = TestHelper.start_group(nodes)
 
-  #   wait_until(nexus, :group_stable)
+    wait_until(nexus, :group_stable)
 
-  #   assert :ok = SimpleMachine.put(name, nodes, :a, 123)
-  #   assert {:ok, 123} = SimpleMachine.get(name, nodes, :a)
+    assert :ok = SimpleMachine.put(name, nodes, :a, 123)
+    assert {:ok, 123} = SimpleMachine.get(name, nodes, :a)
 
-  #   Craft.stop_group(name, nodes)
-  #   Nexus.stop(nexus)
-  # end
+    Craft.stop_group(name, nodes)
+    Nexus.stop(nexus)
+  end
 
   # test api design:
   #

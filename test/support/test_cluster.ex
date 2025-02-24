@@ -1,49 +1,29 @@
 defmodule Craft.TestCluster do
   @moduledoc false
 
-  defmacro remote_run(node, args \\ [], timeout \\ 1000, do: block) do
-    quote do
-      pid = unquote(node).pid
-      block = unquote(Macro.escape(block))
-      {result, _binding} = :peer.call(pid, Code, :eval_quoted, [block, unquote(args)], unquote(timeout))
-      result
-    end
-  end
-
   def spawn_nodes(num) do
     {:ok, _} = Node.start(:primary, :shortnames)
 
     1..num |> Enum.reduce([], fn _, nodes -> [spawn_node(nodes) | nodes] end) |> Enum.reverse()
   end
 
-  def apply(node, module, fun, args) do
-    :peer.call(node.pid, module, fun, args)
-  end
-
   defp spawn_node(nodes) do
-    {:ok, pid, node} = :peer.start_link(%{name: :peer.random_name(), connection: :standard_io})
+    {:ok, _pid, node} = :peer.start_link(%{name: :peer.random_name()})
 
-    :peer.call(pid, :code, :add_paths, [:code.get_path()])
-    connect_to_cluster(pid, nodes)
-    transfer_config(pid)
-    start_apps(pid)
+    :rpc.call(node, :code, :add_paths, [:code.get_path()])
+    transfer_config(node)
+    start_apps(node)
 
-    %{node: node, pid: pid}
+    node
   end
 
-  defp connect_to_cluster(pid, [%{node: last_node} | _]) do
-    :peer.call(pid, :net_kernel, :connect_node, [last_node])
-  end
-
-  defp connect_to_cluster(_pid, []), do: :ok
-
-  defp transfer_config(pid) do
+  defp transfer_config(node) do
     Application.loaded_applications()
     |> Enum.map(fn {app_name, _, _} -> app_name end)
     |> Enum.map(fn app_name -> {app_name, Application.get_all_env(app_name)} end)
     |> Enum.each(fn {app_name, env} ->
       Enum.each(env, fn {key, val} ->
-        :ok = :peer.call(pid, Application, :put_env, [app_name, key, val, [persistent: true]])
+        :ok = :rpc.call(node, Application, :put_env, [app_name, key, val, [persistent: true]])
       end)
     end)
 
@@ -72,12 +52,12 @@ defmodule Craft.TestCluster do
           Logger.level()
       end
 
-    :peer.call(pid, Application, :put_env, [:logger, :level, logger_level, [persistent: true]])
+    :rpc.call(node, Application, :put_env, [:logger, :level, logger_level, [persistent: true]])
   end
 
-  defp start_apps(pid) do
-    :peer.call(pid, Application, :ensure_all_started, [:mix])
-    :peer.call(pid, Mix, :env, [Mix.env()])
-    :peer.call(pid, Application, :ensure_all_started, [:craft], 20_000)
+  defp start_apps(node) do
+    :rpc.call(node, Application, :ensure_all_started, [:mix])
+    :rpc.call(node, Mix, :env, [Mix.env()])
+    :rpc.call(node, Application, :ensure_all_started, [:craft], 20_000)
   end
 end

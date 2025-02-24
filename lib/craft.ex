@@ -118,13 +118,12 @@ defmodule Craft do
     {name, nodes}
   end
 
-  def start_dev_consensus_group(node_info) do
+  def start_dev_consensus_group(nodes) do
     name = :crypto.strong_rand_bytes(3) |> Base.encode16()
 
-    nodes = Enum.map(node_info, &Map.fetch!(&1, :node))
-    start_group(name, nodes, Craft.RocksDBMachine)
+    start_group(name, nodes, Craft.SimpleMachine)
 
-    name
+    {name, nodes}
   end
 
   def state(name, nodes) do

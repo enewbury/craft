@@ -89,7 +89,6 @@ defmodule Craft.Machine do
       receive do
         {^id, reply} ->
           reply
-
       after
         timeout ->
           {:error, :timeout}
