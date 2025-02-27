@@ -51,6 +51,15 @@ defmodule Craft.Nexus do
     def all_stable?(%State{} = state) do
       Enum.all?(state.empty_append_entries_counts, fn {_, {num, _}} -> num >= 3 end)
     end
+
+    def majority_stable?(%State{} = state) do
+      majority = div(Enum.count(state.empty_append_entries_counts), 2) + 1
+
+      # + 1 since leader is automatically "stable"
+      num_stable = Enum.count(state.empty_append_entries_counts, fn {_, {num, _}} -> num >= 3 end) + 1
+
+      num_stable >= majority
+    end
   end
 
   def start_link(members) do
@@ -75,7 +84,7 @@ defmodule Craft.Nexus do
     {:noreply, %State{state | wait_until: {from, condition}}}
   end
 
-  def handle_cast({:cast, {_, member} = to, _leader, %AppendEntries{} = append_entries}, %State{wait_until: {_, :all_stable}} = state) do
+  def handle_cast({:cast, {_, member} = to, _leader, %AppendEntries{} = append_entries}, state) do
     :gen_statem.cast(to, append_entries)
 
     state = State.append_entries_received(state, member, append_entries)
@@ -83,17 +92,32 @@ defmodule Craft.Nexus do
     {:noreply, state}
   end
 
-  def handle_cast({:cast, {_, leader} = to, _member, %AppendEntries.Results{} = append_entries_results}, %State{wait_until: {watcher, :all_stable}} = state) do
+  def handle_cast({:cast, {_, leader} = to, _member, %AppendEntries.Results{} = append_entries_results}, state) do
     :gen_statem.cast(to, append_entries_results)
 
     state = State.append_entries_results_received(state, leader, append_entries_results)
 
-    if State.all_stable?(state) do
-      GenServer.reply(watcher, state)
+    case state.wait_until do
+      {watcher, :all_stable} ->
+        if State.all_stable?(state) do
+          GenServer.reply(watcher, state)
 
-      {:noreply, %State{state | wait_until: nil}}
-    else
-      {:noreply, state}
+          {:noreply, %State{state | wait_until: nil}}
+        else
+          {:noreply, state}
+        end
+
+      {watcher, :majority_stable} ->
+        if State.majority_stable?(state) do
+          GenServer.reply(watcher, state)
+
+          {:noreply, %State{state | wait_until: nil}}
+        else
+          {:noreply, state}
+        end
+
+      _ ->
+        {:noreply, state}
     end
   end
 

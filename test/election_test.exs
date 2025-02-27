@@ -110,7 +110,7 @@ defmodule ElectionTest do
         |> Persistence.append(%EmptyEntry{term: 4})
         |> Persistence.append(%EmptyEntry{term: 4})
 
-      # five member cluster, two nodes are on the other half of the split brain
+      # five member cluster, two nodes are out of contact on the other half of the split brain
       states =
         Enum.zip(
           nodes,
@@ -125,14 +125,17 @@ defmodule ElectionTest do
 
       {:ok, name, nexus} = TestHelper.start_group(states)
 
-      candidate = List.first(nodes)
+      up_to_date_node = List.first(nodes)
 
-      assert %Nexus.State{leader: ^candidate, term: 5} = wait_until(nexus, :leader_elected)
+      assert %Nexus.State{leader: ^up_to_date_node, term: 5} = wait_until(nexus, :majority_stable)
       states = Craft.state(name, active_nodes)
 
-      # {_leader_state, {leader_log, _metadata}} = get_in(states, [leader, :consensus])
-      # {_caught_up_follower_state, {caught_up_follower_log, _metadata}} = get_in(states, [candidate, :consensus])
-      # assert caught_up_follower_log == leader_log
+      {_leader_state, {leader_log, _metadata}} = get_in(states, [up_to_date_node, :consensus])
+      for node <- active_nodes -- [up_to_date_node] do
+        {_follower_state, {follower_log, _metadata}} = get_in(states, [node, :consensus])
+
+        assert follower_log == leader_log
+      end
 
       Craft.stop_group(name, active_nodes)
       Nexus.stop(nexus)
