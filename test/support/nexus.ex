@@ -15,7 +15,7 @@ defmodule Craft.Nexus do
       # num of consecutive successfully received and responded-to empty AppendEntries msgs
       empty_append_entries_counts: %{},
       genstatem_invocations: [],
-      # watcher termination condition (:group_stable, :millisecs, etc)
+      # watcher termination condition (:all_stable, :millisecs, etc)
       wait_until: {_watcher_from = nil, _condition = nil}
     ]
 
@@ -48,7 +48,7 @@ defmodule Craft.Nexus do
     end
 
     # if three rounds of empty AppendEntries messages take place with the same leader, we consider the group stable
-    def group_stable?(%State{} = state) do
+    def all_stable?(%State{} = state) do
       Enum.all?(state.empty_append_entries_counts, fn {_, {num, _}} -> num >= 3 end)
     end
   end
@@ -75,7 +75,7 @@ defmodule Craft.Nexus do
     {:noreply, %State{state | wait_until: {from, condition}}}
   end
 
-  def handle_cast({:cast, {_, member} = to, _leader, %AppendEntries{} = append_entries}, %State{wait_until: {_, :group_stable}} = state) do
+  def handle_cast({:cast, {_, member} = to, _leader, %AppendEntries{} = append_entries}, %State{wait_until: {_, :all_stable}} = state) do
     :gen_statem.cast(to, append_entries)
 
     state = State.append_entries_received(state, member, append_entries)
@@ -83,12 +83,12 @@ defmodule Craft.Nexus do
     {:noreply, state}
   end
 
-  def handle_cast({:cast, {_, leader} = to, _member, %AppendEntries.Results{} = append_entries_results}, %State{wait_until: {watcher, :group_stable}} = state) do
+  def handle_cast({:cast, {_, leader} = to, _member, %AppendEntries.Results{} = append_entries_results}, %State{wait_until: {watcher, :all_stable}} = state) do
     :gen_statem.cast(to, append_entries_results)
 
     state = State.append_entries_results_received(state, leader, append_entries_results)
 
-    if State.group_stable?(state) do
+    if State.all_stable?(state) do
       GenServer.reply(watcher, state)
 
       {:noreply, %State{state | wait_until: nil}}
@@ -105,6 +105,14 @@ defmodule Craft.Nexus do
 
   def handle_info({:trace, _time, from, :leader, :enter, :candidate, %ConsensusState{current_term: current_term}}, state) do
     state = State.leader_elected(state, from, current_term)
+
+    case state.wait_until do
+      {watcher, :leader_elected} ->
+        GenServer.reply(watcher, state)
+
+      _ ->
+        :noop
+    end
 
     {:noreply, state}
   end

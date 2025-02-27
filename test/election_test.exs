@@ -34,7 +34,7 @@ defmodule ElectionTest do
 
     {:ok, name, nexus} = TestHelper.start_group(states)
 
-    assert %Nexus.State{leader: ^expected_leader, term: 0} = wait_until(nexus, :group_stable)
+    assert %Nexus.State{leader: ^expected_leader, term: 0} = wait_until(nexus, :all_stable)
 
     Craft.stop_group(name, nodes)
     Nexus.stop(nexus)
@@ -77,7 +77,7 @@ defmodule ElectionTest do
 
       candidate = List.first(nodes)
 
-      assert %Nexus.State{leader: leader, term: 5} = wait_until(nexus, :group_stable)
+      assert %Nexus.State{leader: leader, term: 5} = wait_until(nexus, :all_stable)
       assert leader != candidate
 
       states = Craft.state(name, nodes)
@@ -87,6 +87,54 @@ defmodule ElectionTest do
       assert caught_up_follower_log == leader_log
 
       Craft.stop_group(name, nodes)
+      Nexus.stop(nexus)
+    end
+
+    test "most up-to-date member in a split-brain is elected and corrects out-of-date logs", %{nodes: nodes} do
+      state = State.new("abc", nodes, MapPersistence)
+
+      shared_log =
+        state.persistence
+        |> Persistence.append(%EmptyEntry{term: 0})
+        |> Persistence.append(%EmptyEntry{term: 1})
+
+      out_of_date_log =
+        shared_log
+        |> Persistence.append(%EmptyEntry{term: 2})
+        |> Persistence.append(%EmptyEntry{term: 2})
+        |> Persistence.append(%EmptyEntry{term: 3})
+        |> Persistence.append(%EmptyEntry{term: 3})
+
+      up_to_date_log =
+        shared_log
+        |> Persistence.append(%EmptyEntry{term: 4})
+        |> Persistence.append(%EmptyEntry{term: 4})
+
+      # five member cluster, two nodes are on the other half of the split brain
+      states =
+        Enum.zip(
+          nodes,
+          [
+            %State{state | state: :candidate, persistence: up_to_date_log},
+            %State{state | state: :lonely, persistence: out_of_date_log},
+            %State{state | state: :lonely, persistence: out_of_date_log},
+          ]
+        )
+
+      active_nodes = Keyword.keys(states)
+
+      {:ok, name, nexus} = TestHelper.start_group(states)
+
+      candidate = List.first(nodes)
+
+      assert %Nexus.State{leader: ^candidate, term: 5} = wait_until(nexus, :leader_elected)
+      states = Craft.state(name, active_nodes)
+
+      # {_leader_state, {leader_log, _metadata}} = get_in(states, [leader, :consensus])
+      # {_caught_up_follower_state, {caught_up_follower_log, _metadata}} = get_in(states, [candidate, :consensus])
+      # assert caught_up_follower_log == leader_log
+
+      Craft.stop_group(name, active_nodes)
       Nexus.stop(nexus)
     end
   end

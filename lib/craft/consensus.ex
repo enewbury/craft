@@ -271,7 +271,7 @@ defmodule Craft.Consensus do
   end
 
   def lonely(:cast, {:user_command, {caller_pid, _ref} = id, _command}, data) do
-    send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
+    send(caller_pid, {id, not_leader_response(data)})
 
     :keep_state_and_data
   end
@@ -291,7 +291,7 @@ defmodule Craft.Consensus do
   end
 
   def lonely({:call, from}, _request, data) do
-    {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
+    {:keep_state_and_data, [{:reply, from, not_leader_response(data)}]}
   end
 
   def lonely(type, msg, data) do
@@ -466,7 +466,7 @@ defmodule Craft.Consensus do
   end
 
   def follower(:cast, {:user_command, {caller_pid, _ref} = id, _command}, data) do
-    send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
+    send(caller_pid, {id, not_leader_response(data)})
 
     :keep_state_and_data
   end
@@ -486,7 +486,7 @@ defmodule Craft.Consensus do
   end
 
   def follower({:call, from}, _request, data) do
-    {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
+    {:keep_state_and_data, [{:reply, from, not_leader_response(data)}]}
   end
 
   def follower(type, msg, data) do
@@ -577,7 +577,7 @@ defmodule Craft.Consensus do
   # actually is legitimate and we're incorrect. (e.g. we're isolated from the
   # other nodes and they're happily carrying on without us)
   def candidate(:cast, {:user_command, {caller_pid, _ref} = id, _command}, data) do
-    send(caller_pid, {id, {:error, {:not_leader, data.leader_id}}})
+    send(caller_pid, {id, not_leader_response(data)})
 
     :keep_state_and_data
   end
@@ -598,7 +598,7 @@ defmodule Craft.Consensus do
   end
 
   def candidate({:call, from}, _request, data) do
-    {:keep_state_and_data, [{:reply, from, {:error, {:not_leader, data.leader_id}}}]}
+    {:keep_state_and_data, [{:reply, from, not_leader_response(data)}]}
   end
 
   def candidate(type, msg, data) do
@@ -857,4 +857,7 @@ defmodule Craft.Consensus do
 
     {:next_state, :follower, State.set_current_term(data, term), [:postpone]}
   end
+
+  defp not_leader_response(%State{leader_id: nil}), do: {:error, :unknown_leader}
+  defp not_leader_response(%State{leader_id: leader_id}), do: {:error, {:not_leader, leader_id}}
 end

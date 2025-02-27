@@ -84,6 +84,15 @@ defmodule Craft do
       end
 
     case func.(node) do
+      {:error, :unknown_leader} ->
+        remaining_nodes = List.delete(nodes, node)
+
+        if Enum.empty?(remaining_nodes) do
+          {:error, :unknown_leader}
+        else
+          with_leader_redirect(name, remaining_nodes, func, opts)
+        end
+
       {:error, {:not_leader, leader}} ->
         Craft.LeaderCache.put(name, leader)
 
@@ -95,6 +104,8 @@ defmodule Craft do
         end
 
       reply ->
+        Craft.LeaderCache.put(name, node)
+
         reply
     end
   end
@@ -132,9 +143,13 @@ defmodule Craft do
     members.voting_nodes
     |> MapSet.union(members.non_voting_nodes)
     |> Enum.into(%{}, fn node ->
-      {node,
-       consensus: Consensus.state(name, node),
-       machine: Machine.state(name, node)}
+      try do
+        {node,
+         consensus: Consensus.state(name, node),
+         machine: Machine.state(name, node)}
+      catch :exit, e ->
+          {node, e}
+      end
     end)
   end
 end
