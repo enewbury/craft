@@ -8,10 +8,15 @@ defmodule Craft.Consensus.State.Election do
   ]
 
   def new(%Members{} = members) do
-    %__MODULE__{
-      # this node might not be voting in majorities if it is being removed from the cluster (section 4.2.2)
-      num_votes: (if Members.this_node_can_vote?(members), do: 1, else: 0)
-    }
+    # this node might not be voting in majorities if it is being removed from the cluster (section 4.2.2)
+    if Members.this_node_can_vote?(members) do
+      %__MODULE__{
+        num_votes: 1,
+        received_votes_from: MapSet.new([node()])
+      }
+    else
+      %__MODULE__{}
+    end
   end
 
   def record_vote(%__MODULE__{} = election, %RequestVote.Results{} = results) do

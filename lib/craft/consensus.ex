@@ -507,7 +507,7 @@ defmodule Craft.Consensus do
     RPC.request_vote(data, leadership_transfer: true)
 
     # TODO: if election fails, send :error to leadership_transfer_request_id
-    {:keep_state, data, [{:state_timeout, @election_timeout + jitter(), :election_failed}]}
+    {:keep_state, data, [{:state_timeout, @election_timeout, :election_failed}]}
   end
 
   def candidate(:enter, _previous_state, data) do
@@ -517,12 +517,12 @@ defmodule Craft.Consensus do
 
     RPC.request_vote(data)
 
-    {:keep_state, data, [{:state_timeout, @election_timeout + jitter(), :election_failed}]}
+    {:keep_state, data, [{:state_timeout, @election_timeout, :election_failed}]}
   end
   def candidate(:state_timeout, :election_failed, data) do
-    Logger.info("election failed, repeating state", logger_metadata(data))
+    Logger.info("election failed, becoming lonely", logger_metadata(data))
 
-    :repeat_state_and_data
+    {:next_state, :lonely, data}
   end
 
   # ignore messages from earlier terms
@@ -564,7 +564,8 @@ defmodule Craft.Consensus do
         {:next_state, :leader, data}
 
       :lost ->
-        :repeat_state_and_data
+        Logger.info("election lost, becoming lonely", logger_metadata(data))
+        {:next_state, :lonely, data}
 
       :pending ->
         {:keep_state, data}

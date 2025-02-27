@@ -263,14 +263,16 @@ defmodule Craft.Consensus.State.LeaderState do
 
   def handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: false} = results) do
     # is the follower going to need a snapshot?
-    if (state.leader_state.next_indices[results.from] - 1) <= Persistence.latest_index(state.persistence) do
-      snapshot_transfers = Map.put(state.leader_state.snapshot_transfers, results.from, SnapshotTransfer.new(state))
+    case Persistence.fetch(state.persistence, state.leader_state.next_indices[results.from] - 1) do
+      {:ok, _entry} ->
+        next_indices = Map.update!(state.leader_state.next_indices, results.from, fn next_index -> next_index - 1 end)
 
-      {:needs_snapshot, %State{state | leader_state: %__MODULE__{state.leader_state | snapshot_transfers: snapshot_transfers}}}
-    else
-      next_indices = Map.update!(state.leader_state.next_indices, results.from, fn next_index -> next_index - 1 end)
+        %State{state | leader_state: %__MODULE__{state.leader_state | next_indices: next_indices}}
 
-      %State{state | leader_state: %__MODULE__{state.leader_state | next_indices: next_indices}}
+      :error ->
+        snapshot_transfers = Map.put(state.leader_state.snapshot_transfers, results.from, SnapshotTransfer.new(state))
+
+        {:needs_snapshot, %State{state | leader_state: %__MODULE__{state.leader_state | snapshot_transfers: snapshot_transfers}}}
     end
   end
 

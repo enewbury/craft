@@ -145,7 +145,7 @@ defmodule Craft.Consensus.State do
 
   # TODO: pre-compute quorum and cache
   def quorum_needed(%__MODULE__{} = state) do
-    num_members = MapSet.size(state.members.voting_nodes) + 1
+    num_members = MapSet.size(state.members.voting_nodes)
 
     div(num_members, 2) + 1
   end

@@ -1,8 +1,6 @@
 defmodule Craft.TestHelper do
   alias Craft.Consensus
-  alias Craft.Consensus.State
   alias Craft.Persistence
-  alias Craft.Persistence.MapPersistence
   alias Craft.Persistence.RocksDBPersistence
   alias Craft.SimpleMachine
 

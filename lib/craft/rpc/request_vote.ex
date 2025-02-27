@@ -17,6 +17,8 @@ defmodule Craft.RPC.RequestVote do
     %__MODULE__{
       term: state.current_term,
       candidate_id: node(),
+      last_log_index: Craft.Persistence.latest_index(state.persistence),
+      last_log_term: Craft.Persistence.latest_term(state.persistence),
       pre_vote: pre_vote,
       leadership_transfer: leadership_transfer
     }

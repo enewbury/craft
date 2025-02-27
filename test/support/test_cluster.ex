@@ -4,10 +4,10 @@ defmodule Craft.TestCluster do
   def spawn_nodes(num) do
     {:ok, _} = Node.start(:primary, :shortnames)
 
-    1..num |> Enum.reduce([], fn _, nodes -> [spawn_node(nodes) | nodes] end) |> Enum.reverse()
+    1..num |> Enum.reduce([], fn _, nodes -> [spawn_node() | nodes] end) |> Enum.reverse()
   end
 
-  defp spawn_node(nodes) do
+  defp spawn_node do
     {:ok, _pid, node} = :peer.start_link(%{name: :peer.random_name()})
 
     :rpc.call(node, :code, :add_paths, [:code.get_path()])

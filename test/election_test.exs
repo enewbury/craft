@@ -1,13 +1,11 @@
 defmodule ElectionTest do
   use ExUnit.Case
-  alias Craft.Consensus.CandidateState
-  alias Craft.Consensus.FollowerState
-  alias Craft.Consensus.State
-  alias Craft.Log
-  alias Craft.Log.MapLog
-  alias Craft.Nexus
 
-  alias Craft.SimpleMachine
+  alias Craft.Consensus.State
+  alias Craft.Log.EmptyEntry
+  alias Craft.Nexus
+  alias Craft.Persistence
+  alias Craft.Persistence.MapPersistence
   alias Craft.TestCluster
   alias Craft.TestHelper
 
@@ -18,17 +16,17 @@ defmodule ElectionTest do
   end
 
   test "pre-chosen candidate becomes leader", %{nodes: nodes} do
-    log = Craft.Log.new(nil, MapLog)
+    state = State.new("abc", nodes, MapPersistence)
 
     states =
       Enum.zip(
         nodes,
         [
-          CandidateState.new(%State{log: log}),
-          FollowerState.new(%State{log: log}),
-          FollowerState.new(%State{log: log}),
-          FollowerState.new(%State{log: log}),
-          FollowerState.new(%State{log: log})
+          %State{state | state: :candidate},
+          %State{state | state: :lonely},
+          %State{state | state: :lonely},
+          %State{state | state: :lonely},
+          %State{state | state: :lonely}
         ]
       )
 
@@ -42,52 +40,54 @@ defmodule ElectionTest do
     Nexus.stop(nexus)
   end
 
-  test "5.4.1 election restriction", %{nodes: nodes} do
-    shared_log =
-      Log.new(nil, Log.MapLog)
-      |> Log.append(%Log.CommandEntry{term: 0})
-      |> Log.append(%Log.CommandEntry{term: 1})
+  describe "5.4.1 election restriction" do
+    test "deny votes to out-of-date candidate, and correct its log", %{nodes: nodes} do
+      state = State.new("abc", nodes, MapPersistence)
 
-    leader_log =
-      shared_log
-      |> Log.append(%Log.CommandEntry{term: 4, command: {:put, :a, 1}})
-      |> Log.append(%Log.CommandEntry{term: 4, command: {:put, :b, 2}})
+      shared_log =
+        state.persistence
+        |> Persistence.append(%EmptyEntry{term: 0})
+        |> Persistence.append(%EmptyEntry{term: 1})
 
-    stray_follower_log =
-      shared_log
-      |> Log.append(%Log.CommandEntry{term: 2, command: {:put, :a, 1}})
-      |> Log.append(%Log.CommandEntry{term: 2, command: {:put, :b, 1}})
-      |> Log.append(%Log.CommandEntry{term: 3, command: {:put, :c, 1}})
-      |> Log.append(%Log.CommandEntry{term: 3, command: {:put, :d, 1}})
+      majority_log =
+        shared_log
+        |> Persistence.append(%EmptyEntry{term: 4})
+        |> Persistence.append(%EmptyEntry{term: 4})
 
-    states =
-      Enum.zip(
-        nodes,
-        [
-          CandidateState.new(%State{log: leader_log}),
-          FollowerState.new(%State{log: leader_log}),
-          FollowerState.new(%State{log: leader_log}),
-          FollowerState.new(%State{log: leader_log}),
+      out_of_date_log =
+        shared_log
+        |> Persistence.append(%EmptyEntry{term: 2})
+        |> Persistence.append(%EmptyEntry{term: 2})
+        |> Persistence.append(%EmptyEntry{term: 3})
+        |> Persistence.append(%EmptyEntry{term: 3})
 
-          FollowerState.new(%State{log: stray_follower_log})
-        ]
-      )
+      states =
+        Enum.zip(
+          nodes,
+          [
+            %State{state | state: :candidate, persistence: out_of_date_log},
+            %State{state | state: :lonely, persistence: majority_log},
+            %State{state | state: :lonely, persistence: majority_log},
+            %State{state | state: :lonely, persistence: majority_log},
+            %State{state | state: :lonely, persistence: majority_log},
+          ]
+        )
 
-    {:ok, name, nexus} = TestHelper.start_group(states)
+      {:ok, name, nexus} = TestHelper.start_group(states)
 
-    leader = List.first(nodes)
-    stray_follower = List.last(nodes)
+      candidate = List.first(nodes)
 
-    assert %Nexus.State{leader: ^leader, term: 5} = wait_until(nexus, :group_stable)
+      assert %Nexus.State{leader: leader, term: 5} = wait_until(nexus, :group_stable)
+      assert leader != candidate
 
-    states = Craft.state(name, nodes)
+      states = Craft.state(name, nodes)
 
-    {:leader, leader_state} = get_in(states, [leader, :consensus])
-    {:follower, stray_follower_state} = get_in(states, [stray_follower, :consensus])
+      {_leader_state, {leader_log, _metadata}} = get_in(states, [leader, :consensus])
+      {_caught_up_follower_state, {caught_up_follower_log, _metadata}} = get_in(states, [candidate, :consensus])
+      assert caught_up_follower_log == leader_log
 
-    assert stray_follower_state.log == leader_state.log
-
-    Craft.stop_group(name, nodes)
-    Nexus.stop(nexus)
+      Craft.stop_group(name, nodes)
+      Nexus.stop(nexus)
+    end
   end
 end

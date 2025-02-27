@@ -22,31 +22,6 @@ defmodule CraftTest do
   #   end
   # end
 
-  test "pre-chosen candidate becomes leader", %{nodes: nodes} do
-    state = State.new("abc", nodes, MapPersistence)
-
-    states =
-      Enum.zip(
-        nodes,
-        [
-          %State{state | state: :candidate},
-          %State{state | state: :lonely},
-          %State{state | state: :lonely},
-          %State{state | state: :lonely},
-          %State{state | state: :lonely}
-        ]
-      )
-
-    expected_leader = List.first(nodes)
-
-    {:ok, name, nexus} = TestHelper.start_group(states)
-
-    assert %Nexus.State{leader: ^expected_leader, term: 0} = wait_until(nexus, :group_stable)
-
-    Craft.stop_group(name, nodes)
-    Nexus.stop(nexus)
-  end
-
   test "commands", %{nodes: nodes} do
     {:ok, name, nexus} = TestHelper.start_group(nodes)
 

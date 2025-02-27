@@ -187,10 +187,11 @@ defmodule Craft.Machine do
     # directly in the log
     #
     # only snapshot up to one entry before the latest, since we need the prev log entry to create AppendEntries
+
     if should_snapshot? do
-      snapshot_index = new_commit_index - 1
-      snapshot_dir = state.module.snapshot(snapshot_index, state.private)
-      :ok = Consensus.snapshot_ready(state.name, snapshot_index, snapshot_dir)
+    #   snapshot_index = new_commit_index - 1
+    #   snapshot_dir = state.module.snapshot(snapshot_index, state.private)
+    #   :ok = Consensus.snapshot_ready(state.name, snapshot_index, snapshot_dir)
     end
 
     {:noreply, %State{state | last_applied: new_commit_index}}
