@@ -16,7 +16,11 @@ defmodule Craft.Nexus do
       empty_append_entries_counts: %{},
       genstatem_invocations: [],
       # watcher termination condition (:all_stable, :millisecs, etc)
-      wait_until: {_watcher_from = nil, _condition = nil}
+      wait_until: {_watcher_from = nil, _condition = nil},
+      # action = :drop | {:delay, msecs} | :forward | {:forward, modified_message}
+      # fn message, nemesis_state -> {action, nemesis_state} end
+      nemesis: nil,
+      nemesis_state: nil
     ]
 
     def leader_elected(%State{term: term} = state, leader, new_term) when new_term > term do
@@ -62,6 +66,7 @@ defmodule Craft.Nexus do
     end
   end
 
+
   def start_link(members) do
     GenServer.start_link(__MODULE__, members)
   end
@@ -76,55 +81,88 @@ defmodule Craft.Nexus do
     GenServer.call(nexus, {:wait_until, condition}, 10_000)
   end
 
+  def set_nemesis(nexus, fun) when is_function(fun, 2) do
+    GenServer.call(nexus, {:set_nemesis, fun})
+  end
+
+
   def init(members) do
-    {:ok, %State{members: members}}
+    {:ok, %State{members: members, nemesis: fn _, state -> {:forward, state} end}}
   end
 
   def handle_call({:wait_until, condition}, from, state) do
+    state =
+      if condition in [:all_stable, :majority_stable] do
+        %State{state | empty_append_entries_counts: %{}}
+      else
+        state
+      end
+
     {:noreply, %State{state | wait_until: {from, condition}}}
   end
 
-  def handle_cast({:cast, {_, member} = to, _leader, %AppendEntries{} = append_entries}, state) do
-    :gen_statem.cast(to, append_entries)
-
-    state = State.append_entries_received(state, member, append_entries)
-
-    {:noreply, state}
+  def handle_call({:set_nemesis, fun}, _from, state) do
+    {:reply, :ok, %State{state | nemesis: fun}}
   end
 
-  def handle_cast({:cast, {_, leader} = to, _member, %AppendEntries.Results{} = append_entries_results}, state) do
-    :gen_statem.cast(to, append_entries_results)
+  def handle_cast({:cast, to, from, message}, state) do
+    {_, to_node} = to
+    event = {:cast, to_node, from, message}
+    {action, nemesis_state} = state.nemesis.(event, state.nemesis_state)
 
-    state = State.append_entries_results_received(state, leader, append_entries_results)
+    case action do
+      :drop ->
+        :noop
 
-    case state.wait_until do
-      {watcher, :all_stable} ->
-        if State.all_stable?(state) do
-          GenServer.reply(watcher, state)
+      :forward ->
+        :gen_statem.cast(to, message)
 
-          {:noreply, %State{state | wait_until: nil}}
-        else
-          {:noreply, state}
-        end
+      {:forward, modified_message} ->
+        :gen_statem.cast(to, modified_message)
 
-      {watcher, :majority_stable} ->
-        if State.majority_stable?(state) do
-          GenServer.reply(watcher, state)
-
-          {:noreply, %State{state | wait_until: nil}}
-        else
-          {:noreply, state}
-        end
-
-      _ ->
-        {:noreply, state}
+      {:delay, msecs} ->
+        :timer.apply_after(msecs, :gen_statem, :cast, [to, message])
     end
-  end
 
-  def handle_cast({:cast, to, _from_node, message}, state) do
-    :gen_statem.cast(to, message)
+    state =
+      case message do
+        %AppendEntries{} = append_entries ->
+          {_, member} = to
 
-    {:noreply, state}
+          State.append_entries_received(state, member, append_entries)
+
+        %AppendEntries.Results{} = append_entries_results ->
+          {_, leader} = to
+          state = State.append_entries_results_received(state, leader, append_entries_results)
+
+          case state.wait_until do
+            {watcher, :all_stable} ->
+              if State.all_stable?(state) do
+                GenServer.reply(watcher, state)
+
+                %State{state | wait_until: nil}
+              else
+                state
+              end
+
+            {watcher, :majority_stable} ->
+              if State.majority_stable?(state) do
+                GenServer.reply(watcher, state)
+
+                %State{state | wait_until: nil}
+              else
+                state
+              end
+
+            _ ->
+              state
+          end
+
+        _ ->
+          state
+      end
+
+    {:noreply,  %State{state | nemesis_state: nemesis_state}}
   end
 
   def handle_info({:trace, _time, from, :leader, :enter, :candidate, %ConsensusState{current_term: current_term}}, state) do

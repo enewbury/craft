@@ -455,7 +455,7 @@ defmodule Craft.Consensus do
     if append_entries.leadership_transfer &&
       append_entries.leadership_transfer.latest_index == Persistence.latest_index(data.persistence) &&
       append_entries.leadership_transfer.latest_term == Persistence.latest_term(data.persistence) do
-      {:next_state, :candidate, {data, append_entries.leadership_transfer.from}}
+      {:next_state, :candidate, %State{data | leadership_transfer_request_id: append_entries.leadership_transfer.from}}
     else
       {:keep_state, data, [become_lonely_timeout()]}
     end
@@ -499,8 +499,8 @@ defmodule Craft.Consensus do
   # Candidate
   #
 
-  def candidate(:enter, :follower, {data, leadership_transfer_request_id}) do
-    data = State.become_candidate(data, leadership_transfer_request_id)
+  def candidate(:enter, :follower, %State{leadership_transfer_request_id: id} = data) when is_tuple(id) do
+    data = State.become_candidate(data)
 
     Logger.info("became candidate, initiating leadership transfer election", logger_metadata(data))
 

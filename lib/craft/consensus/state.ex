@@ -99,14 +99,14 @@ defmodule Craft.Consensus.State do
     }
   end
 
-
-  def become_candidate(%__MODULE__{} = state, leadership_transfer_request_id \\ nil) do
+  # leadership_transfer_request_id set directly in Consensus
+  # this makes test tracing easier as we don't need to special-case a tuple as `data` in Consensus.Tracer
+  def become_candidate(%__MODULE__{} = state) do
     %__MODULE__{
       state |
       state: :candidate,
       current_term: state.current_term + 1,
       leader_state: nil,
-      leadership_transfer_request_id: leadership_transfer_request_id,
       election: Election.new(state.members),
       voted_for: node()
     }

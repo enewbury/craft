@@ -1,4 +1,4 @@
-defmodule ElectionTest do
+defmodule Craft.ElectionTests do
   use ExUnit.Case
 
   alias Craft.Consensus.State

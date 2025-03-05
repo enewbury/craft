@@ -2,7 +2,13 @@ defmodule Craft.TestCluster do
   @moduledoc false
 
   def spawn_nodes(num) do
-    {:ok, _} = Node.start(:primary, :shortnames)
+    case Node.start(:primary, :shortnames) do
+      {:ok, _} ->
+        :ok
+
+      {:error, {:already_started, _}} ->
+        :ok
+    end
 
     1..num |> Enum.reduce([], fn _, nodes -> [spawn_node() | nodes] end) |> Enum.reverse()
   end
