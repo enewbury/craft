@@ -18,8 +18,7 @@ defmodule Craft.Nexus.Stability do
   def handle_event({:cast, follower, leader, %AppendEntries{} = append_entries}, %State{leader: leader} = state) do
     counts = Map.update(state.counts, follower, {0, append_entries}, fn {num, _} -> {num, append_entries} end)
 
-    state = %State{state | counts: counts}
-    {wait_action(state), state}
+    wait_action(%State{state | counts: counts})
   end
 
   def handle_event({:cast, leader, follower, %AppendEntries.Results{} = append_entries_results}, %State{leader: leader} = state) do
@@ -29,11 +28,11 @@ defmodule Craft.Nexus.Stability do
         Map.put(state.counts, follower, {num + 1, nil})
       else
         _ ->
+          # new member
           Map.put(state.counts, follower, {0, nil})
       end
 
-    state = %State{state | counts: counts}
-    {wait_action(state), state}
+    wait_action(%State{state | counts: counts})
   end
 
 
@@ -58,7 +57,7 @@ defmodule Craft.Nexus.Stability do
     if Enum.all?(state.counts, fn {_, {num, _}} -> num >= 3 end) do
       :halt
     else
-      :cont
+      {:cont, state}
     end
   end
 
@@ -71,7 +70,7 @@ defmodule Craft.Nexus.Stability do
     if num_stable >= majority do
       :halt
     else
-      :cont
+      {:cont, state}
     end
   end
 end
