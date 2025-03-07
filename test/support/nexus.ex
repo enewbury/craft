@@ -5,18 +5,15 @@ defmodule Craft.Nexus do
   use GenServer
 
   alias Craft.Consensus.State, as: ConsensusState
-  alias Craft.RPC.AppendEntries
 
   defmodule State do
     defstruct [
       members: [],
       term: -1,
       leader: nil,
-      # num of consecutive successfully received and responded-to empty AppendEntries msgs
-      empty_append_entries_counts: %{},
       genstatem_invocations: [],
-      # watcher termination condition (:all_stable, :millisecs, etc)
-      wait_until: {_watcher_from = nil, _condition = nil},
+      # {_watcher_from = nil, module, private}
+      wait_until: nil,
       # action = :drop | {:delay, msecs} | :forward | {:forward, modified_message}
       # fn message, nemesis_state -> {action, nemesis_state} end
       nemesis: nil,
@@ -24,48 +21,9 @@ defmodule Craft.Nexus do
     ]
 
     def leader_elected(%State{term: term} = state, leader, new_term) when new_term > term do
-      empty_append_entries_counts =
-        state.members
-        |> List.delete(leader)
-        |> Enum.into(%{}, & {&1, {0, :confirmed}})
-
-      %__MODULE__{state | empty_append_entries_counts: empty_append_entries_counts, leader: leader, term: new_term}
-    end
-
-    def append_entries_received(%State{term: term, leader: leader} = state, member, %AppendEntries{term: term, leader_id: leader} = append_entries) do
-      empty_append_entries_counts = Map.update(state.empty_append_entries_counts, member, {0, append_entries}, fn {num, _} -> {num, append_entries} end)
-
-      %__MODULE__{state | empty_append_entries_counts: empty_append_entries_counts}
-    end
-
-    def append_entries_results_received(%State{term: term, leader: leader} = state, leader, %AppendEntries.Results{term: term} = append_entries_results) do
-      empty_append_entries_counts =
-        with true <- append_entries_results.success,
-             {num, %AppendEntries{entries: []}} <- Map.get(state.empty_append_entries_counts, append_entries_results.from) do
-          Map.put(state.empty_append_entries_counts, append_entries_results.from, {num + 1, nil})
-        else
-          _ ->
-            Map.put(state.empty_append_entries_counts, append_entries_results.from, {0, nil})
-        end
-
-      %__MODULE__{state | empty_append_entries_counts: empty_append_entries_counts}
-    end
-
-    # if three rounds of empty AppendEntries messages take place with the same leader, we consider the group stable
-    def all_stable?(%State{} = state) do
-      Enum.all?(state.empty_append_entries_counts, fn {_, {num, _}} -> num >= 3 end)
-    end
-
-    def majority_stable?(%State{} = state) do
-      majority = div(Enum.count(state.empty_append_entries_counts), 2) + 1
-
-      # + 1 since leader is automatically "stable"
-      num_stable = Enum.count(state.empty_append_entries_counts, fn {_, {num, _}} -> num >= 3 end) + 1
-
-      num_stable >= majority
+      %__MODULE__{state | leader: leader, term: new_term}
     end
   end
-
 
   def start_link(members) do
     GenServer.start_link(__MODULE__, members)
@@ -77,110 +35,154 @@ defmodule Craft.Nexus do
     GenServer.cast(nexus, {:cast, to, node(), message})
   end
 
-  def wait_until(nexus, condition) do
-    GenServer.call(nexus, {:wait_until, condition}, 10_000)
+  def wait_until(nexus, {module, opts}) do
+    GenServer.call(nexus, {:wait_until, {module, opts}}, 10_000)
   end
 
   def set_nemesis(nexus, fun) when is_function(fun, 2) do
     GenServer.call(nexus, {:set_nemesis, fun})
   end
 
-
-  def init(members) do
-    {:ok, %State{members: members, nemesis: fn _, state -> {:forward, state} end}}
+  # synchronously sets a nemesis and a wait condition
+  def set_nemesis_and_wait_until(nexus, private, fun) when is_function(fun, 2) do
+    GenServer.call(nexus, {:set_nemesis_and_wait_until, private, fun}, 10_000)
   end
 
-  def handle_call({:wait_until, condition}, from, state) do
-    state =
-      if condition in [:all_stable, :majority_stable] do
-        %State{state | empty_append_entries_counts: %{}}
-      else
-        state
-      end
 
-    {:noreply, %State{state | wait_until: {from, condition}}}
+  def init(members) do
+    {:ok, %State{members: members}}
+  end
+
+  def handle_call({:wait_until, {module, opts}}, from, state) do
+    {:noreply, %State{state | wait_until: {from, module, module.init(state, opts)}}}
   end
 
   def handle_call({:set_nemesis, fun}, _from, state) do
     {:reply, :ok, %State{state | nemesis: fun}}
   end
 
+  # def handle_call({:set_nemesis_and_wait_until, private, fun}, from, state) do
+  #   {:reply, :ok, %State{state | nemesis_wait_until: {from, fun, private}}}
+  # end
+
   def handle_cast({:cast, to, from, message}, state) do
     {_, to_node} = to
     event = {:cast, to_node, from, message}
-    {action, nemesis_state} = state.nemesis.(event, state.nemesis_state)
 
-    case action do
-      :drop ->
-        :noop
+    state = evaluate_waiter(state, event)
 
-      :forward ->
-        :gen_statem.cast(to, message)
+    :gen_statem.cast(to, message)
+    {:noreply, state}
 
-      {:forward, modified_message} ->
-        :gen_statem.cast(to, modified_message)
+    # cond do
+    #   state.nemesis_wait_until ->
+    #     {wait_from, nemesis_wait_until, private} = state.nemesis_wait_until
+    #     {nemesis_action, wait_action, private} = nemesis_wait_until.(event, private)
 
-      {:delay, msecs} ->
-        :timer.apply_after(msecs, :gen_statem, :cast, [to, message])
-    end
+    #     case nemesis_action do
+    #       :drop ->
+    #         :noop
 
-    state =
-      case message do
-        %AppendEntries{} = append_entries ->
-          {_, member} = to
+    #       :forward ->
+    #         :gen_statem.cast(to, message)
 
-          State.append_entries_received(state, member, append_entries)
+    #       {:forward, modified_message} ->
+    #         :gen_statem.cast(to, modified_message)
 
-        %AppendEntries.Results{} = append_entries_results ->
-          {_, leader} = to
-          state = State.append_entries_results_received(state, leader, append_entries_results)
+    #       {:delay, msecs} ->
+    #         :timer.apply_after(msecs, :gen_statem, :cast, [to, message])
+    #     end
 
-          case state.wait_until do
-            {watcher, :all_stable} ->
-              if State.all_stable?(state) do
-                GenServer.reply(watcher, state)
+    #     case wait_action do
+    #       {:halt, value} ->
+    #         GenServer.reply(wait_from, {value, state})
+    #         {:noreply, %State{state | nemesis_wait_until: nil}}
 
-                %State{state | wait_until: nil}
-              else
-                state
-              end
+    #       :cont ->
+    #         {:noreply, %State{state | nemesis_wait_until: {wait_from, nemesis_wait_until, private}}}
+    #     end
 
-            {watcher, :majority_stable} ->
-              if State.majority_stable?(state) do
-                GenServer.reply(watcher, state)
+    #   true ->
+    #     :gen_statem.cast(to, message)
 
-                %State{state | wait_until: nil}
-              else
-                state
-              end
+    #     {:noreply, state}
+    # end
 
-            _ ->
-              state
-          end
+    # {action, nemesis_state} = state.nemesis.(event, state.nemesis_state)
 
-        _ ->
-          state
-      end
 
-    {:noreply,  %State{state | nemesis_state: nemesis_state}}
+    # state =
+    #   case message do
+    #     %AppendEntries{} = append_entries ->
+    #       {_, member} = to
+
+    #       State.append_entries_received(state, member, append_entries)
+
+    #     %AppendEntries.Results{} = append_entries_results ->
+    #       {_, leader} = to
+    #       state = State.append_entries_results_received(state, leader, append_entries_results)
+
+    #       case state.wait_until do
+    #         {watcher, :all_stable} ->
+    #           if State.all_stable?(state) do
+    #             GenServer.reply(watcher, state)
+
+    #             %State{state | wait_until: nil}
+    #           else
+    #             state
+    #           end
+
+    #         {watcher, :majority_stable} ->
+    #           if State.majority_stable?(state) do
+    #             GenServer.reply(watcher, state)
+
+    #             %State{state | wait_until: nil}
+    #           else
+    #             state
+    #           end
+
+    #         _ ->
+    #           state
+    #       end
+
+    #     _ ->
+    #       state
+    #   end
+
+    # {:noreply,  %State{state | nemesis_state: nemesis_state}}
   end
 
-  def handle_info({:trace, _time, from, :leader, :enter, :candidate, %ConsensusState{current_term: current_term}}, state) do
-    state = State.leader_elected(state, from, current_term)
-
-    case state.wait_until do
-      {watcher, :leader_elected} ->
-        GenServer.reply(watcher, state)
-
-      _ ->
-        :noop
-    end
+  def handle_info({:trace, _time, from, :leader, :enter, :candidate, %ConsensusState{current_term: current_term}} = event, state) do
+    state =
+      state
+      |> State.leader_elected(from, current_term)
+      |> evaluate_waiter(event)
 
     {:noreply, state}
   end
 
   def handle_info(_msg, state) do
     {:noreply, state}
+  end
+
+  defp evaluate_waiter(state, event) do
+    case state.wait_until do
+      {wait_from, module, private} ->
+        {wait_action, private} = module.handle_event(event, private)
+
+        case wait_action do
+          :cont ->
+            %State{state | wait_until: {wait_from, module, private}}
+
+          :halt ->
+            GenServer.reply(wait_from, state)
+
+            %State{state | wait_until: nil}
+        end
+
+      nil ->
+        state
+    end
   end
 
   # # @spec watch(member_nodes, until :: {:millisecs, pos_integer()}) | :group_stable
