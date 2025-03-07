@@ -165,23 +165,19 @@ defmodule Craft.Nexus do
     {:noreply, state}
   end
 
-  defp evaluate_waiter(state, event) do
-    case state.wait_until do
-      {wait_from, module, private} ->
-        {wait_action, private} = module.handle_event(event, private)
+  defp evaluate_waiter(%State{wait_until: nil = state}, _event), do: state
 
-        case wait_action do
-          :cont ->
-            %State{state | wait_until: {wait_from, module, private}}
+  defp evaluate_waiter(%State{wait_until: {wait_from, module, private}} = state, event) do
+    {wait_action, private} = module.handle_event(event, private)
 
-          :halt ->
-            GenServer.reply(wait_from, state)
+    case wait_action do
+      :cont ->
+        %State{state | wait_until: {wait_from, module, private}}
 
-            %State{state | wait_until: nil}
-        end
+      :halt ->
+        GenServer.reply(wait_from, state)
 
-      nil ->
-        state
+        %State{state | wait_until: nil}
     end
   end
 
