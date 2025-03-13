@@ -1,6 +1,10 @@
 defmodule Craft.Nexus do
   @moduledoc """
   this module acts as a central hub for cluster messages and member traces
+
+  it implements a "nemesis" which can drop or delay messages programmatically
+
+  additionally, it implements "wait until" functionality, which can block a client process until a cluster condition is met
   """
   use GenServer
 
@@ -11,8 +15,8 @@ defmodule Craft.Nexus do
       members: [],
       term: -1,
       leader: nil,
-      genstatem_invocations: [],
-      # {_watcher_from = nil, module, private}
+      events: [],
+      # {watcher_from, fun event, private -> :halt | {:cont, private} end, private}
       wait_until: nil,
       # action = :drop | {:delay, msecs} | :forward | {:forward, modified_message}
       # {fn message, private -> {action, private} end, private}

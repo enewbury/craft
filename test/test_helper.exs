@@ -2,6 +2,7 @@ defmodule Craft.TestHelper do
   alias Craft.Consensus
   alias Craft.Persistence
   alias Craft.Persistence.RocksDBPersistence
+  alias Craft.Persistence.MapPersistence
   alias Craft.SimpleMachine
 
   def start_group(states_or_nodes, machine \\ SimpleMachine)
@@ -49,7 +50,7 @@ defmodule Craft.TestHelper do
       name: name,
       nodes: nodes,
       machine: machine,
-      persistence: {RocksDBPersistence, []},
+      persistence: {MapPersistence, []},
       nexus_pid: nexus
     }
 

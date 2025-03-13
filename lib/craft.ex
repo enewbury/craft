@@ -24,7 +24,6 @@ defmodule Craft do
 
   def stop_group(name, nodes) do
     # TODO: ask group for its nodes instead of relying on user to pass in the correct set of nodes
-
     for node <- nodes do
       :ok = :rpc.call(node, Craft, :stop_member, [name])
     end

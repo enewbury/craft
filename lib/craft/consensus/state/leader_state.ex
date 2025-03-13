@@ -243,7 +243,7 @@ defmodule Craft.Consensus.State.LeaderState do
         |> Enum.sort()
         |> Enum.reverse()
         |> Enum.find(fn index ->
-          num_members_with_index = Enum.count(state.leader_state.match_indices, fn {_node, match_index} -> match_index >= index end)
+          num_members_with_index = Enum.count(match_indices_for_commitment, fn {_node, match_index} -> match_index >= index end)
           Consensus.quorum_reached?(state, num_members_with_index)
         end)
 
