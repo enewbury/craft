@@ -23,8 +23,12 @@ defmodule Craft.Nexus do
       nemesis: nil
     ]
 
-    def leader_elected(%State{term: term} = state, leader, new_term) when new_term > term do
+    def leader_elected(%__MODULE__{term: term} = state, leader, new_term) when new_term > term do
       %__MODULE__{state | leader: leader, term: new_term}
+    end
+
+    def record_event(%__MODULE__{events: events} = state, event) do
+      %__MODULE__{state | events: [event | events]}
     end
   end
 
@@ -78,7 +82,10 @@ defmodule Craft.Nexus do
     {_, to_node} = to
     event = {:cast, to_node, from, message}
 
-    state = evaluate_waiter(state, event)
+    state =
+      state
+      |> State.record_event(event)
+      |> evaluate_waiter(event)
 
     state =
       case state.nemesis do
@@ -110,9 +117,10 @@ defmodule Craft.Nexus do
     {:noreply, state}
   end
 
-  def handle_info({:trace, _time, from, :leader, :enter, :candidate, %ConsensusState{current_term: current_term}} = event, state) do
+  def handle_info({_time, {:trace, from, :leader, :enter, :candidate, %ConsensusState{current_term: current_term}}} = event, state) do
     state =
       state
+      |> State.record_event(event)
       |> State.leader_elected(from, current_term)
       |> evaluate_waiter(event)
 

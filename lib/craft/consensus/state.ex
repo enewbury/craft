@@ -192,6 +192,6 @@ defmodule Craft.Consensus.State do
       |> Time.to_string()
 
     # elixir uses the :time keyword, we want a higher resolution timestamp
-    Keyword.merge([term: state.current_term, ansi_color: color, t: time, node: node()], extras)
+    Keyword.merge([name: state.name, term: state.current_term, ansi_color: color, t: time, node: node()], extras)
   end
 end

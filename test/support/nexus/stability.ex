@@ -36,7 +36,7 @@ defmodule Craft.Nexus.Stability do
   end
 
 
-  def handle_event({:trace, _time, leader, :leader, :enter, :candidate, _consensus_state}, state) do
+  def handle_event({_time, {:trace, leader, :leader, :enter, :candidate, _consensus_state}}, state) do
     state = %State{state | leader: leader} |> reset_counts()
 
     {:cont, state}
