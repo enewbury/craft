@@ -1,0 +1,108 @@
+defmodule Craft.NexusCase do
+  @moduledoc """
+  Detects test failures and writes the nexus event log to disk for replay
+  """
+  use ExUnit.CaseTemplate
+
+  alias Craft.TestCluster
+
+  using do
+    quote do
+      ExUnit.Case.register_attribute(__MODULE__, :test_id)
+
+      import unquote(__MODULE__)
+    end
+  end
+
+  setup_all do
+    [nodes: TestCluster.spawn_nodes(5)]
+  end
+
+  setup %{nodes: nodes} do
+    {:ok, name, nexus} = Craft.TestGroup.start_group(nodes)
+
+    on_exit(fn ->
+      Craft.stop_group(name, nodes)
+    end)
+
+    [name: name, nexus: nexus]
+  end
+
+  defmacro nexus_test(message, var \\ quote(do: _), do: block) do
+    quote do
+      @test_id :erlang.unique_integer()
+      test(unquote(message), context = unquote(var)) do
+        import Craft.Nexus, only: [wait_until: 2, nemesis: 2, nemesis_and_wait_until: 3]
+
+        Craft.NexusCase.Formatter.register(context.nexus, context.registered.test_id)
+
+        unquote(block)
+      end
+    end
+  end
+
+  defmodule Formatter do
+    use GenServer
+
+    def register(nexus, test_id) do
+      GenServer.call(__MODULE__, {:register, test_id, nexus})
+    end
+
+    @impl true
+    def init(_opts) do
+      Process.register(self(), __MODULE__)
+
+      {:ok, %{}}
+    end
+
+    @impl true
+    def handle_call({:register, test_id, nexus}, _from, state) do
+      {:reply, :ok, Map.put(state, test_id, nexus)}
+    end
+
+    @impl true
+    def handle_cast({:test_finished, %ExUnit.Test{state: {:failed, _}} = test}, state) do
+      {:ok, log} =
+        state
+        |> Map.fetch!(test.tags.registered.test_id)
+        |> Craft.Nexus.return_log_and_stop()
+
+      log = Enum.sort_by(log, fn {time, _} -> time end)
+
+      lines =
+        log
+        |> Enum.map(&inspect/1)
+        |> Enum.intersperse("\n")
+
+      if lines != [] do
+        log_dir = "test_logs"
+
+        File.mkdir!(log_dir)
+
+        filename =
+          ["nexus", test.case, test.name, DateTime.to_unix(DateTime.utc_now()), "log"]
+          |> Enum.map(&to_string/1)
+          |> Enum.map(&String.replace(&1, ~r/[^\w\.]/, "_"))
+          |> Enum.join(".")
+
+        [log_dir, filename]
+        |> Path.join()
+        |> File.write!(lines)
+      end
+
+      {:noreply, state}
+    end
+
+    @impl true
+    def handle_cast({:test_finished, %ExUnit.Test{} = test}, state) do
+      if nexus = state[test.tags.registered.test_id] do
+        Craft.Nexus.stop(nexus)
+      end
+
+      {:noreply, state}
+    end
+
+    @impl true
+    def handle_cast(_event, state), do: {:noreply, state}
+  end
+end

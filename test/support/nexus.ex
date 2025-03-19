@@ -15,7 +15,7 @@ defmodule Craft.Nexus do
       members: [],
       term: -1,
       leader: nil,
-      events: [],
+      log: [],
       # {watcher_from, fun event, private -> :halt | {:cont, private} end, private}
       wait_until: nil,
       # action = :drop | {:delay, msecs} | :forward | {:forward, modified_message}
@@ -27,13 +27,13 @@ defmodule Craft.Nexus do
       %__MODULE__{state | leader: leader, term: new_term}
     end
 
-    def record_event(%__MODULE__{events: events} = state, event) do
-      %__MODULE__{state | events: [event | events]}
+    def record_event(%__MODULE__{log: log} = state, event) do
+      %__MODULE__{state | log: [event | log]}
     end
   end
 
-  def start_link(members) do
-    GenServer.start_link(__MODULE__, members)
+  def start(members) do
+    GenServer.start(__MODULE__, members)
   end
 
   defdelegate stop(pid), to: GenServer
@@ -55,6 +55,9 @@ defmodule Craft.Nexus do
     GenServer.call(nexus, {:nemesis_and_wait_until, nemesis, condition}, 10_000)
   end
 
+  def return_log_and_stop(nexus) do
+    GenServer.call(nexus, :return_log_and_stop)
+  end
 
   def init(members) do
     {:ok, %State{members: members}}
@@ -78,13 +81,17 @@ defmodule Craft.Nexus do
     handle_call({:wait_until, condition}, from, state)
   end
 
+  def handle_call(:return_log_and_stop, _, state) do
+    {:stop, :normal, {:ok, state.log}, state}
+  end
+
   def handle_cast({:cast, to, from, message}, state) do
     {_, to_node} = to
     event = {:cast, to_node, from, message}
 
     state =
       state
-      |> State.record_event(event)
+      |> State.record_event({DateTime.utc_now(), event})
       |> evaluate_waiter(event)
 
     state =

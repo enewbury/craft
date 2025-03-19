@@ -1,22 +1,11 @@
 defmodule Craft.LivenessTests do
-  use ExUnit.Case
+  use Craft.NexusCase
 
-  alias Craft.Nexus
   alias Craft.Nexus.Stability
-  alias Craft.TestCluster
-  alias Craft.TestHelper
   alias Craft.RPC.RequestVote
   alias Craft.SimpleMachine
 
-  import Nexus, only: [wait_until: 2, nemesis: 2, nemesis_and_wait_until: 3]
-
-  setup_all do
-    [nodes: TestCluster.spawn_nodes(5)]
-  end
-
-  test "processes commands with a minimal quorum operational", %{nodes: nodes} do
-    {:ok, name, nexus} = TestHelper.start_group(nodes)
-
+  nexus_test "processes commands with a minimal quorum operational", %{nodes: nodes, name: name, nexus: nexus} do
     wait_until(nexus, {Stability, :all})
 
     {majority, minority} = Enum.split(nodes, div(Enum.count(nodes), 2) + 1)
@@ -36,14 +25,10 @@ defmodule Craft.LivenessTests do
 
     assert :ok = SimpleMachine.put(name, majority, :a, 123)
     assert {:ok, 123} = SimpleMachine.get(name, majority, :a)
-
-    Craft.stop_group(name, nodes)
-    Nexus.stop(nexus)
+    assert false
   end
 
-  test "leader without majority connectivity will step down (CheckQuorum)", %{nodes: nodes} do
-    {:ok, name, nexus} = TestHelper.start_group(nodes)
-
+  nexus_test "leader without majority connectivity will step down (CheckQuorum)", %{nodes: nodes, nexus: nexus} do
     %{leader: leader} = wait_until(nexus, {Stability, :all})
 
     majority =
@@ -63,14 +48,9 @@ defmodule Craft.LivenessTests do
     %{leader: new_leader} = wait_until(nexus, {Stability, :majority})
 
     assert new_leader != leader
-
-    Craft.stop_group(name, nodes)
-    Nexus.stop(nexus)
   end
 
-  test "nodes isolated from the leader don't trigger needlessly disruptive and hopeless elections (PreVote)", %{nodes: nodes} do
-    {:ok, name, nexus} = TestHelper.start_group(nodes)
-
+  nexus_test "nodes isolated from the leader don't trigger needlessly disruptive and hopeless elections (PreVote)", %{nodes: nodes, nexus: nexus} do
     %{leader: leader, term: term} = wait_until(nexus, {Stability, :all})
 
     node_isolated_from_leader = Enum.random(nodes -- [leader])
@@ -107,9 +87,6 @@ defmodule Craft.LivenessTests do
     )
 
     %{leader: ^leader, term: ^term} = wait_until(nexus, {Stability, :majority})
-
-    Craft.stop_group(name, nodes)
-    Nexus.stop(nexus)
   end
 end
 

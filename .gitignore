@@ -11,3 +11,4 @@ tmp
 .DS_Store
 .elixir_tools
 .#*
+test_logs
