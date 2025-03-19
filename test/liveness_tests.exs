@@ -25,7 +25,6 @@ defmodule Craft.LivenessTests do
 
     assert :ok = SimpleMachine.put(name, majority, :a, 123)
     assert {:ok, 123} = SimpleMachine.get(name, majority, :a)
-    assert false
   end
 
   nexus_test "leader without majority connectivity will step down (CheckQuorum)", %{nodes: nodes, nexus: nexus} do

@@ -27,6 +27,9 @@ defmodule Craft.Nexus do
       %__MODULE__{state | leader: leader, term: new_term}
     end
 
+    # trace messages arrived out of order, ignore
+    def leader_elected(state, _leader, _new_term), do: state
+
     def record_event(%__MODULE__{log: log} = state, event) do
       %__MODULE__{state | log: [event | log]}
     end

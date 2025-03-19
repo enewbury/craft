@@ -143,6 +143,10 @@ defmodule Craft.Consensus do
             state: :lonely
           }
 
+        # forward logs to testing server
+        remote_group_leader = :rpc.call(node(args.nexus_pid), Process, :whereis, [:init])
+        :logger.update_process_metadata(%{gl: remote_group_leader})
+
         {:ok, :ready_to_test, data}
       end
 

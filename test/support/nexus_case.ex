@@ -2,12 +2,15 @@ defmodule Craft.NexusCase do
   @moduledoc """
   Detects test failures and writes the nexus event log to disk for replay
   """
-  use ExUnit.CaseTemplate
+  # async: false, so that log capture doesn't steal logs from other concurrent tests
+  use ExUnit.CaseTemplate, async: false
 
   alias Craft.TestCluster
 
   using do
     quote do
+      @moduletag capture_log: true
+
       ExUnit.Case.register_attribute(__MODULE__, :test_id)
 
       import unquote(__MODULE__)
@@ -33,10 +36,13 @@ defmodule Craft.NexusCase do
       @test_id :erlang.unique_integer()
       test(unquote(message), context = unquote(var)) do
         import Craft.Nexus, only: [wait_until: 2, nemesis: 2, nemesis_and_wait_until: 3]
+        import ExUnit.CaptureLog
 
         Craft.NexusCase.Formatter.register(context.nexus, context.registered.test_id)
 
-        unquote(block)
+        capture_log(fn ->
+          unquote(block)
+        end)
       end
     end
   end
@@ -77,7 +83,7 @@ defmodule Craft.NexusCase do
       if lines != [] do
         log_dir = "test_logs"
 
-        File.mkdir!(log_dir)
+        File.mkdir_p!(log_dir)
 
         filename =
           ["nexus", test.case, test.name, DateTime.to_unix(DateTime.utc_now()), "log"]
