@@ -15,11 +15,11 @@ defmodule Craft.LivenessTests do
 
     assert %{leader: ^leader} = wait_until(nexus, {Stability, :majority})
 
-    nemesis(nexus, fn {:cast, to, from, _msg}, state ->
+    nemesis(nexus, fn {:cast, to, from, _msg} ->
       if from in minority or to in minority do
-        {:drop, state}
+        :drop
       else
-        {:forward, state}
+        :forward
       end
     end)
 
