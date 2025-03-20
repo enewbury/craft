@@ -36,11 +36,11 @@ defmodule Craft.LivenessTests do
         div(Enum.count(nodes), 2) + 1
       )
 
-    nemesis(nexus, fn {:cast, to, from, _msg}, state ->
+    nemesis(nexus, fn {:cast, to, from, _msg} ->
       if from == leader and to in majority or from in majority and to == leader do
-        {:drop, state}
+        :drop
       else
-        {:forward, state}
+        :forward
       end
     end)
 
@@ -57,11 +57,11 @@ defmodule Craft.LivenessTests do
     # isolate a node and then continue once it attempts and fails a pre-vote round
     nemesis_and_wait_until(
       nexus,
-      fn {:cast, to, from, _msg}, state ->
+      fn {:cast, to, from, _msg} ->
         if from == leader and to == node_isolated_from_leader or from == node_isolated_from_leader and to == leader do
-          {:drop, state}
+          :drop
         else
-          {:forward, state}
+          :forward
         end
       end,
       fn
@@ -87,5 +87,32 @@ defmodule Craft.LivenessTests do
 
     %{leader: ^leader, term: ^term} = wait_until(nexus, {Stability, :majority})
   end
-end
 
+  #                                                          1 - 2  (5)
+  # initially, full mesh connectivity, then via nemesis ->    \ /
+  #                                                            3 - 4
+  #
+  # https://decentralizedthoughts.github.io/2020-12-12-raft-liveness-full-omission
+  #
+  nexus_test "ensures liveness under pathalogical scenario (PreVote + CheckQuorum)", %{nodes: nodes, nexus: nexus} do
+    %{leader: leader} = wait_until(nexus, {Stability, :all})
+
+    isolated_node = Enum.random(nodes -- [leader])
+
+    connected_nodes = nodes -- [leader, isolated_node]
+
+    leader_connected_node = Enum.random(connected_nodes)
+
+    nemesis(nexus, fn {:cast, to, from, _msg} ->
+      if from in connected_nodes and to in connected_nodes or from in [leader, leader_connected_node] and to in [leader, leader_connected_node] do
+        :forward
+      else
+        :drop
+      end
+    end)
+
+    %{leader: new_leader} = wait_until(nexus, {Stability, :majority})
+
+    assert new_leader != leader
+  end
+end

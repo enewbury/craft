@@ -35,7 +35,7 @@ defmodule Craft.Nexus.Stability do
         Map.put(state.counts, follower, {num + 1, nil})
       else
         _ ->
-          # new member
+          # new member or AppendEntries wasn't empty
           Map.put(state.counts, follower, {0, nil})
       end
 

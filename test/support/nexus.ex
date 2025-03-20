@@ -50,12 +50,12 @@ defmodule Craft.Nexus do
     GenServer.call(nexus, {:wait_until, condition}, 10_000)
   end
 
-  def nemesis(nexus, fun) when is_function(fun, 2) do
+  def nemesis(nexus, fun) when is_function(fun) do
     GenServer.call(nexus, {:nemesis, fun})
   end
 
   # synchronously sets a nemesis and a wait condition
-  def nemesis_and_wait_until(nexus, nemesis, condition) when is_function(nemesis, 2) do
+  def nemesis_and_wait_until(nexus, nemesis, condition) when is_function(nemesis) do
     GenServer.call(nexus, {:nemesis_and_wait_until, nemesis, condition}, 10_000)
   end
 
@@ -101,7 +101,15 @@ defmodule Craft.Nexus do
     state =
       case state.nemesis do
         {nemesis, private} ->
-          {action, private} = nemesis.(event, private)
+          {action, private} =
+            case Function.info(nemesis, :arity) do
+              {:arity, 1} ->
+                action = nemesis.(event)
+                {action, nil}
+
+              {:arity, 2} ->
+                nemesis.(event, private)
+            end
 
           case action do
             :drop ->
@@ -143,18 +151,6 @@ defmodule Craft.Nexus do
   end
 
   defp evaluate_waiter(%State{wait_until: nil} = state, _event), do: state
-
-  defp evaluate_waiter(%State{wait_until: {wait_from, fun, nil}} = state, event) when is_function(fun, 1) do
-    case fun.(event) do
-      :cont ->
-        %State{state | wait_until: {wait_from, fun, nil}}
-
-      :halt ->
-        GenServer.reply(wait_from, state)
-
-        %State{state | wait_until: nil}
-    end
-  end
 
   defp evaluate_waiter(%State{wait_until: {wait_from, fun, private}} = state, event) when is_function(fun, 2) do
     case fun.(event, private) do

@@ -662,10 +662,11 @@ defmodule Craft.Consensus do
       |> Enum.filter(fn last_heartbeat_reply_at -> last_heartbeat_reply_at >= :erlang.monotonic_time(:millisecond) - @checkquorum_interval end)
       |> Enum.count()
 
-    # "+ 1" to include ourself in the quorum
+    # + 1 for leader
     if quorum_reached?(data, num_replies_in_window + 1) do
       {:keep_state_and_data, [{{:timeout, :check_quorum}, @checkquorum_interval, :check_quorum}]}
     else
+      Logger.info("unable to make quorum, stepping down.", logger_metadata(data))
       {:next_state, :lonely, data}
     end
   end
@@ -755,6 +756,13 @@ defmodule Craft.Consensus do
     Logger.info("stepping down", logger_metadata(data))
 
     {:next_state, :lonely, data, []}
+  end
+
+  # user asked to transfer leadership to existing leader, noop
+  def leader(:cast, {:user_command, {caller_pid, _ref} = id, {:transfer_leadership, to_node}}, _data) when to_node == node() do
+    send(caller_pid, {id, :ok})
+
+    :keep_state_and_data
   end
 
   def leader(:cast, {:user_command, {caller_pid, _ref} = id, {:transfer_leadership, to_node}}, data) do
