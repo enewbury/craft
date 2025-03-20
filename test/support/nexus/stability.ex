@@ -21,6 +21,13 @@ defmodule Craft.Nexus.Stability do
     wait_action(%State{state | counts: counts})
   end
 
+  # seeing a different leader causes counts to reset
+  def handle_event({:cast, _follower, leader, %AppendEntries{}}, state) do
+    state = %State{state | leader: leader} |> reset_counts()
+
+    {:cont, state}
+  end
+
   def handle_event({:cast, leader, follower, %AppendEntries.Results{} = append_entries_results}, %State{leader: leader} = state) do
     counts =
       with true <- append_entries_results.success,
@@ -33,12 +40,6 @@ defmodule Craft.Nexus.Stability do
       end
 
     wait_action(%State{state | counts: counts})
-  end
-
-  def handle_event({_time, {:trace, leader, :leader, :enter, :candidate, _consensus_state}}, state) do
-    state = %State{state | leader: leader} |> reset_counts()
-
-    {:cont, state}
   end
 
   def handle_event(_event, state), do: {:cont, state}

@@ -2,7 +2,7 @@ defmodule Craft.NexusCase do
   @moduledoc """
   Detects test failures and writes the nexus event log to disk for replay
   """
-  # async: false, so that log capture doesn't steal logs from other concurrent tests
+  # async: false, so that log capture doesn't capture logs from other concurrent tests may be able to remove this
   use ExUnit.CaseTemplate, async: false
 
   alias Craft.TestCluster
@@ -40,9 +40,7 @@ defmodule Craft.NexusCase do
 
         Craft.NexusCase.Formatter.register(context.nexus, context.registered.test_id)
 
-        capture_log(fn ->
-          unquote(block)
-        end)
+        unquote(block)
       end
     end
   end
