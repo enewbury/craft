@@ -88,9 +88,9 @@ defmodule Craft.LivenessTests do
     %{leader: ^leader, term: ^term} = wait_until(nexus, {Stability, :majority})
   end
 
-  #                                                          1 - 2  (5)
-  # initially, full mesh connectivity, then via nemesis ->    \ /
-  #                                                            3 - 4
+  #                                                            1 - 2  5
+  # initially, full mesh connectivity, then via nemesis ->      \ /
+  #                                                             (3) - 4
   #
   # https://decentralizedthoughts.github.io/2020-12-12-raft-liveness-full-omission
   #
