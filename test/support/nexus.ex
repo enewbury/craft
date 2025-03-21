@@ -59,8 +59,8 @@ defmodule Craft.Nexus do
     GenServer.call(nexus, {:nemesis_and_wait_until, nemesis, condition}, 10_000)
   end
 
-  def return_log_and_stop(nexus) do
-    GenServer.call(nexus, :return_log_and_stop)
+  def return_state_and_stop(nexus) do
+    GenServer.call(nexus, :return_state_and_stop)
   end
 
   def init(members) do
@@ -85,18 +85,13 @@ defmodule Craft.Nexus do
     handle_call({:wait_until, condition}, from, state)
   end
 
-  def handle_call(:return_log_and_stop, _, state) do
-    {:stop, :normal, {:ok, state.log}, state}
+  def handle_call(:return_state_and_stop, _, state) do
+    {:stop, :normal, {:ok, state}, state}
   end
 
   def handle_cast({:cast, to, from, message}, state) do
     {_, to_node} = to
     event = {:cast, to_node, from, message}
-
-    state =
-      state
-      |> State.record_event({DateTime.utc_now(), event})
-      |> evaluate_waiter(event)
 
     state =
       case state.nemesis do
@@ -111,29 +106,33 @@ defmodule Craft.Nexus do
                 nemesis.(event, private)
             end
 
-          case action do
-            :drop ->
-              :noop
+          state =
+            case action do
+              :drop ->
+                State.record_event(state, {DateTime.utc_now(), {:DROPPING, event}})
 
-            :forward ->
-              :gen_statem.cast(to, message)
+              :forward ->
+                :gen_statem.cast(to, message)
+                State.record_event(state, {DateTime.utc_now(), event})
 
-            {:forward, modified_message} ->
-              :gen_statem.cast(to, modified_message)
+              {:forward, modified_message} ->
+                event = {:cast, to_node, from, modified_message}
+                State.record_event(state, {DateTime.utc_now(), event})
 
-            {:delay, msecs} ->
-              :timer.apply_after(msecs, :gen_statem, :cast, [to, message])
-          end
+              {:delay, msecs} ->
+                :timer.apply_after(msecs, :gen_statem, :cast, [to, message])
+                State.record_event(state, {DateTime.utc_now(), event})
+            end
 
           %State{state | nemesis: {nemesis, private}}
 
         _ ->
           :gen_statem.cast(to, message)
 
-          state
+          State.record_event(state, {DateTime.utc_now(), event})
       end
 
-    {:noreply, state}
+    {:noreply, evaluate_waiter(state, event)}
   end
 
   def handle_info({_time, {:trace, from, :leader, :enter, :candidate, %ConsensusState{current_term: current_term}}} = event, state) do

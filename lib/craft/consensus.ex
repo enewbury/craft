@@ -444,7 +444,7 @@ defmodule Craft.Consensus do
           end
 
         _ ->
-          {false, %State{data | persistence: Persistence.rewind(data.persistence, append_entries.prev_log_index)}}
+          {false, %State{data | persistence: Persistence.rewind(data.persistence, append_entries.prev_log_index - 1)}}
       end
 
     Logger.debug("leader heartbeat from #{append_entries.leader_id}, restarting timer", logger_metadata(data))

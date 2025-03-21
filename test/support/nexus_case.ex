@@ -66,12 +66,12 @@ defmodule Craft.NexusCase do
 
     @impl true
     def handle_cast({:test_finished, %ExUnit.Test{state: {:failed, _}} = test}, state) do
-      {:ok, log} =
+      {:ok, nexus_state} =
         state
         |> Map.fetch!(test.tags.registered.test_id)
-        |> Craft.Nexus.return_log_and_stop()
+        |> Craft.Nexus.return_state_and_stop()
 
-      log = Enum.sort_by(log, fn {time, _} -> time end)
+      log = Enum.sort_by(nexus_state.log, fn {time, _} -> time end)
 
       lines =
         log

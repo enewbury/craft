@@ -262,6 +262,10 @@ defmodule Craft.Consensus.State.LeaderState do
   end
 
   def handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: false} = results) do
+    # we don't know where we match the followers log
+    match_indices = Map.put(state.leader_state.match_indices, results.from, 0)
+    state = %State{state | leader_state: %__MODULE__{state.leader_state | match_indices: match_indices}}
+
     # is the follower going to need a snapshot?
     case Persistence.fetch(state.persistence, state.leader_state.next_indices[results.from] - 1) do
       {:ok, _entry} ->
