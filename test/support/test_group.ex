@@ -2,7 +2,7 @@ defmodule Craft.TestGroup do
   alias Craft.Consensus
   alias Craft.Persistence
   alias Craft.Persistence.RocksDBPersistence
-  alias Craft.Persistence.MapPersistence
+  # alias Craft.Persistence.MapPersistence
   alias Craft.SimpleMachine
   alias Craft.NexusCase.Formatter
 
@@ -53,7 +53,7 @@ defmodule Craft.TestGroup do
       name: name,
       nodes: nodes,
       machine: machine,
-      persistence: {MapPersistence, []},
+      persistence: {RocksDBPersistence, []},
       nexus_pid: nexus
     }
 
