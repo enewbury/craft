@@ -132,22 +132,20 @@ defmodule Craft.Consensus do
 
       defdelegate callback_mode, to: Craft.Consensus
       def init(data) when is_struct(data) do
+        # forward logs to testing server
+        remote_group_leader = :rpc.call(node(data.nexus_pid), Process, :whereis, [:init])
+        :logger.update_process_metadata(%{gl: remote_group_leader})
+
         {:ok, :ready_to_test, data}
       end
 
       def init(args) do
-        data =
-          %State{
-            State.new(args.name, args.nodes, args.persistence) |
-            nexus_pid: args.nexus_pid,
-            state: :lonely
-          }
-
-        # forward logs to testing server
-        remote_group_leader = :rpc.call(node(args.nexus_pid), Process, :whereis, [:init])
-        :logger.update_process_metadata(%{gl: remote_group_leader})
-
-        {:ok, :ready_to_test, data}
+        %State{
+          State.new(args.name, args.nodes, args.persistence) |
+           nexus_pid: args.nexus_pid,
+           state: :lonely
+        }
+        |> init()
       end
 
       def ready_to_test(:enter, _, _data), do: :keep_state_and_data

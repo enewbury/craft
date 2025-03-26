@@ -21,14 +21,25 @@ defmodule Craft.NexusCase do
     [nodes: TestCluster.spawn_nodes(5)]
   end
 
-  setup %{nodes: nodes} do
-    {:ok, name, nexus} = Craft.TestGroup.start_group(nodes)
+  # this allows the association of test_id -> nexus without passing the test_id around
+  setup %{registered: %{test_id: test_id}} do
+    Process.put(:test_id, test_id)
 
-    on_exit(fn ->
-      Craft.stop_group(name, nodes)
-    end)
+    :ok
+  end
 
-    [name: name, nexus: nexus]
+  setup %{nodes: nodes} = ctx do
+    if ctx[:unmanaged] do
+      :ok
+    else
+      {:ok, name, nexus} = Craft.TestGroup.start_group(nodes)
+
+      on_exit(fn ->
+        Craft.stop_group(name, nodes)
+      end)
+
+      [name: name, nexus: nexus]
+    end
   end
 
   defmacro nexus_test(message, var \\ quote(do: _), do: block) do
@@ -36,9 +47,6 @@ defmodule Craft.NexusCase do
       @test_id :erlang.unique_integer()
       test(unquote(message), context = unquote(var)) do
         import Craft.Nexus, only: [wait_until: 2, nemesis: 2, nemesis_and_wait_until: 3]
-        import ExUnit.CaptureLog
-
-        Craft.NexusCase.Formatter.register(context.nexus, context.registered.test_id)
 
         unquote(block)
       end

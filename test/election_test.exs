@@ -1,21 +1,15 @@
-defmodule Craft.ElectionTests do
-  use ExUnit.Case
+defmodule Craft.ElectionTest do
+  use Craft.NexusCase
 
   alias Craft.Consensus.State
   alias Craft.Log.EmptyEntry
-  alias Craft.Nexus
+  alias Craft.Nexus.Stability
   alias Craft.Persistence
   alias Craft.Persistence.MapPersistence
-  alias Craft.TestCluster
-  alias Craft.TestHelper
+  alias Craft.TestGroup
 
-  import Nexus, only: [wait_until: 2]
-
-  setup_all do
-    [nodes: TestCluster.spawn_nodes(5)]
-  end
-
-  test "pre-chosen candidate becomes leader", %{nodes: nodes} do
+  @tag :unmanaged
+  nexus_test "pre-chosen candidate becomes leader", %{nodes: nodes} do
     state = State.new("abc", nodes, MapPersistence)
 
     states =
@@ -32,16 +26,16 @@ defmodule Craft.ElectionTests do
 
     expected_leader = List.first(nodes)
 
-    {:ok, name, nexus} = TestHelper.start_group(states)
+    {:ok, name, nexus} = TestGroup.start_group(states)
 
-    assert %Nexus.State{leader: ^expected_leader, term: 0} = wait_until(nexus, :all_stable)
+    assert %{leader: ^expected_leader, term: 0} = wait_until(nexus, {Stability, :all})
 
     Craft.stop_group(name, nodes)
-    Nexus.stop(nexus)
   end
 
   describe "5.4.1 election restriction" do
-    test "deny votes to out-of-date candidate, and correct its log", %{nodes: nodes} do
+    @tag :unmanaged
+    nexus_test "deny votes to out-of-date candidate, and correct its log", %{nodes: nodes} do
       state = State.new("abc", nodes, MapPersistence)
 
       shared_log =
@@ -73,11 +67,11 @@ defmodule Craft.ElectionTests do
           ]
         )
 
-      {:ok, name, nexus} = TestHelper.start_group(states)
+      {:ok, name, nexus} = TestGroup.start_group(states)
 
       candidate = List.first(nodes)
 
-      assert %Nexus.State{leader: leader, term: 5} = wait_until(nexus, :all_stable)
+      assert %{leader: leader, term: 5} = wait_until(nexus, {Stability, :all})
       assert leader != candidate
 
       states = Craft.state(name, nodes)
@@ -87,10 +81,10 @@ defmodule Craft.ElectionTests do
       assert caught_up_follower_log == leader_log
 
       Craft.stop_group(name, nodes)
-      Nexus.stop(nexus)
     end
 
-    test "most up-to-date member in a split-brain is elected and corrects out-of-date logs", %{nodes: nodes} do
+    @tag :unmanaged
+    nexus_test "most up-to-date member in a split-brain is elected and corrects out-of-date logs", %{nodes: nodes} do
       state = State.new("abc", nodes, MapPersistence)
 
       shared_log =
@@ -123,11 +117,11 @@ defmodule Craft.ElectionTests do
 
       active_nodes = Keyword.keys(states)
 
-      {:ok, name, nexus} = TestHelper.start_group(states)
+      {:ok, name, nexus} = TestGroup.start_group(states)
 
       up_to_date_node = List.first(nodes)
 
-      assert %Nexus.State{leader: ^up_to_date_node, term: 5} = wait_until(nexus, :majority_stable)
+      assert %{leader: ^up_to_date_node, term: 5} = wait_until(nexus, {Stability, :majority})
       states = Craft.state(name, active_nodes)
 
       {_leader_state, {leader_log, _metadata}} = get_in(states, [up_to_date_node, :consensus])
@@ -138,7 +132,6 @@ defmodule Craft.ElectionTests do
       end
 
       Craft.stop_group(name, active_nodes)
-      Nexus.stop(nexus)
     end
   end
 end

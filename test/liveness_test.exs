@@ -1,4 +1,4 @@
-defmodule Craft.LivenessTests do
+defmodule Craft.LivenessTest do
   use Craft.NexusCase
 
   alias Craft.Nexus.Stability

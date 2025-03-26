@@ -4,6 +4,7 @@ defmodule Craft.TestGroup do
   alias Craft.Persistence.RocksDBPersistence
   alias Craft.Persistence.MapPersistence
   alias Craft.SimpleMachine
+  alias Craft.NexusCase.Formatter
 
   def start_group(states_or_nodes, machine \\ SimpleMachine)
 
@@ -34,6 +35,8 @@ defmodule Craft.TestGroup do
     end)
     |> Stream.run()
 
+    Formatter.register(nexus, Process.get(:test_id))
+
     run(name, nodes)
 
     {:ok, name, nexus}
@@ -58,6 +61,8 @@ defmodule Craft.TestGroup do
       {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes, SimpleMachine, args])
     end)
     |> Stream.run()
+
+    Formatter.register(nexus, Process.get(:test_id))
 
     run(name, nodes)
 

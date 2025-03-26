@@ -109,7 +109,7 @@ defmodule Craft.Nexus do
           state =
             case action do
               :drop ->
-                State.record_event(state, {DateTime.utc_now(), {:DROPPING, event}})
+                State.record_event(state, {DateTime.utc_now(), {:DROPPED, event}})
 
               :forward ->
                 :gen_statem.cast(to, message)
