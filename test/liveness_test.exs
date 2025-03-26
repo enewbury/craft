@@ -98,9 +98,7 @@ defmodule Craft.LivenessTest do
     %{leader: leader} = wait_until(nexus, {Stability, :all})
 
     isolated_node = Enum.random(nodes -- [leader])
-
     connected_nodes = nodes -- [leader, isolated_node]
-
     leader_connected_node = Enum.random(connected_nodes)
 
     nemesis(nexus, fn {:cast, to, from, _msg} ->
