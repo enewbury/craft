@@ -28,8 +28,8 @@ defmodule Craft.Linearizability do
   end
 
   # wing & gong algo
-  defp linearizable?([], _model), do: true
-  defp linearizable?(history, model) do
+  def linearizable?([], _model), do: true
+  def linearizable?(history, model) do
     {:ok, model_state} = model.init("abc")
 
     try do
