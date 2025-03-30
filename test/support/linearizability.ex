@@ -10,10 +10,26 @@ defmodule Craft.Linearizability do
    },
    %{
      client: 2,
-     called_at: 1,
-     received_at: 2,
+     called_at: 4,
+     received_at: 5,
      command: {:get, :a},
      response: {:ok, 1}
+   },
+
+   %{
+     client: 3,
+     called_at: 4,
+     received_at: 5,
+     command: {:get, :a},
+     response: {:ok, 1}
+   },
+
+   %{
+     client: 4,
+     called_at: 5,
+     received_at: 6,
+     command: {:get, :a},
+     response: {:ok, 2}
    },
   ]
 
@@ -27,12 +43,12 @@ defmodule Craft.Linearizability do
     |> linearizable?(Craft.SimpleMachine)
   end
 
-  # wing & gong algo
+  # wing & gong & lowe algo
   def linearizable?([], _model), do: true
   def linearizable?(history, model) do
     {:ok, model_state} = model.init("abc")
 
-    try do
+    result =
       history
       |> Enum.group_by(fn %{client: client} -> client end)
       |> Map.new(fn {client, ops} ->
@@ -40,46 +56,57 @@ defmodule Craft.Linearizability do
         {client, ops}
       end)
       |> do_linearizable?({model, model_state})
-    catch
-      {:linearizable, true} ->
+
+    case result do
+      true ->
         true
-    else
-      false ->
+
+      _ ->
         false
     end
   end
 
-  defp do_linearizable?(histories_by_client, {model, model_state}) do
-    no_ops_left? =
-      histories_by_client
-      |> Map.values()
-      |> Enum.all?(&Enum.empty?/1)
+  defp do_linearizable?(histories_by_client, {model, model_state}, ops_seen \\ MapSet.new(), cache \\ MapSet.new()) do
+    no_ops_left? = Enum.all?(histories_by_client, fn {_client, history} -> Enum.empty?(history) end)
 
     if no_ops_left? do
-      throw {:linearizable, true}
-    end
+      true
+    else
+      first_ops =
+        Enum.flat_map(histories_by_client, fn
+          {_client, []} -> []
+          {_client, [op | _]} -> [op]
+        end)
 
-    first_ops =
-      Enum.flat_map(histories_by_client, fn
-        {_client, []} -> []
-        {_client, [op | _]} -> [op]
+      first_return = Enum.min_by(first_ops, & &1.received_at).received_at
+
+      minimal_ops = Enum.reject(first_ops, & &1.called_at > first_return)
+
+      Enum.reduce_while(minimal_ops, cache, fn op, cache ->
+        {model_response, new_model_state} = model.command(op.command, nil, model_state)
+
+        if model_response == op.response do
+          history_without_op = tl(histories_by_client[op.client])
+          histories_by_client_without_op = Map.put(histories_by_client, op.client, history_without_op)
+          ops_seen = MapSet.put(ops_seen, op)
+          cache_key = {ops_seen, new_model_state}
+
+          if MapSet.member?(cache, cache_key) do
+            {:cont, cache}
+          else
+            case do_linearizable?(histories_by_client_without_op, {model, new_model_state}, ops_seen, cache) do
+              true ->
+                {:halt, true}
+
+              cache ->
+                {:cont, MapSet.put(cache, cache_key)}
+            end
+          end
+        else
+          {:cont, cache}
+        end
       end)
-
-    first_return = Enum.min_by(first_ops, & &1.received_at).received_at
-
-    minimal_ops = Enum.reject(first_ops, & &1.called_at > first_return)
-
-    for op <- minimal_ops do
-      {model_response, new_model_state} = model.command(op.command, nil, model_state)
-
-      if model_response == op.response do
-        history_without_op = tl(histories_by_client[op.client])
-        histories_by_client_without_op = Map.put(histories_by_client, op.client, history_without_op)
-
-        do_linearizable?(histories_by_client_without_op, {model, new_model_state})
-      end
     end
 
-    false
   end
 end
