@@ -50,12 +50,12 @@ defmodule Craft.Linearizability do
 
     result =
       history
-      |> Enum.group_by(fn %{client: client} -> client end)
+      |> Enum.group_by(& &1.client)
       |> Map.new(fn {client, ops} ->
-        ops = Enum.sort_by(ops, fn %{called_at: called_at} -> called_at end)
+        ops = Enum.sort_by(ops, & &1.called_at)
         {client, ops}
       end)
-      |> do_linearizable?({model, model_state})
+      |> do_linearizable({model, model_state})
 
     case result do
       true ->
@@ -66,7 +66,7 @@ defmodule Craft.Linearizability do
     end
   end
 
-  defp do_linearizable?(histories_by_client, {model, model_state}, ops_seen \\ MapSet.new(), cache \\ MapSet.new()) do
+  defp do_linearizable(histories_by_client, {model, model_state}, ops_seen \\ MapSet.new(), cache \\ MapSet.new()) do
     no_ops_left? = Enum.all?(histories_by_client, fn {_client, history} -> Enum.empty?(history) end)
 
     if no_ops_left? do
@@ -94,7 +94,7 @@ defmodule Craft.Linearizability do
           if MapSet.member?(cache, cache_key) do
             {:cont, cache}
           else
-            case do_linearizable?(histories_by_client_without_op, {model, new_model_state}, ops_seen, cache) do
+            case do_linearizable(histories_by_client_without_op, {model, new_model_state}, ops_seen, cache) do
               true ->
                 {:halt, true}
 
@@ -107,6 +107,5 @@ defmodule Craft.Linearizability do
         end
       end)
     end
-
   end
 end
