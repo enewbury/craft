@@ -1,0 +1,117 @@
+<html>
+    <body>
+        <svg id="timeline" width="30000px" height="3000px">
+            <style>
+              .client {
+                  font: 13px sans-serif;
+              }
+              .small {
+                  font: 10px monospace;
+              }
+
+              .op-span {
+                  stroke: #888;
+                  stroke-width: 1;
+                  fill: #42d1f5;
+              }
+
+             .error {
+                 fill: #ff6347;
+             }
+
+             .linearization {
+                 stroke: rgba(8, 143, 143, 0.8);
+                 stroke-width: 2;
+             }
+             .linearization-point {
+                 stroke: rgba(8, 143, 143, 0.8);
+                 stroke-width: 5;
+                 stroke-linecap: round;
+             }
+            </style>
+
+            <%= for {{client, ops}, i} <- @operations_by_client do %>
+                <g transform="translate(20, <%= 30 * i + 10 %>)">
+                    <text x="0" y="13" class="client"><%= inspect(client) %></text>
+                    <%= for op <- ops do %>
+                        <g transform="translate(<%= 150 + op.called_at %>, 0)" >
+                            <rect x="0" y="0" width="<%= op.received_at - op.called_at %>" height="20" rx="5" ry="5" class="op-span <%= if (op.linearized?), do: "", else: "error" %>" data-id="<%= inspect(op.id) %>"/>
+                            <text x="<%= (op.received_at - op.called_at) / 2 %>" y="13" class="small" text-anchor="middle"><%= inspect(op.command) %><%= if (op.linearized?), do: " -> " <> inspect(op.response), else: "" %></text>
+                        </g>
+                    <% end %>
+                </g>
+            <% end %>
+
+            <g id="linearization_path"></g>
+        </svg>
+    </body>
+
+    <script>
+     var linearized_ids = JSON.parse('<%= JSON.encode!(@linearized_ids) %>')
+
+     var op_point = function(id) {
+         var rect = document.querySelectorAll("[data-id='" + id + "'")[0]
+
+         if (rect) {
+             var ctm = rect.getCTM(),
+                 point = document.getElementById("timeline").createSVGPoint()
+
+             point.x = rect.getBBox().x
+             point.y = rect.getBBox().y - 3
+
+             return point.matrixTransform(ctm)
+         } else {
+             return null
+         }
+     }
+
+     var linearization_point_element = function(point) {
+         var line = document.createElementNS("http://www.w3.org/2000/svg", "line")
+
+         line.setAttribute("x1", point.x)
+         line.setAttribute("y1", point.y)
+         line.setAttribute("x2", point.x)
+         line.setAttribute("y2", point.y + 20 + 6)
+         line.setAttribute("class", "linearization-point")
+
+         document.getElementById("linearization_path").appendChild(line)
+     }
+
+     var linearization_points = [op_point(linearized_ids[0])]
+     for(var i=1 ; i < linearized_ids.length ; i = i+1) {
+         var point = linearization_points[i-1],
+             next_point = op_point(linearized_ids[i])
+
+         next_point.x = Math.max(next_point.x, point.x + 10)
+
+         linearization_points.push(next_point)
+     }
+
+     linearization_points.forEach(linearization_point_element)
+
+     for(var i=0 ; i < linearization_points.length ; i = i+1) {
+         var point = linearization_points[i],
+             next_point = linearization_points[i+1]
+
+         if (next_point) {
+             var line = document.createElementNS("http://www.w3.org/2000/svg", "line")
+
+             var y = point.y, y2 = next_point.y
+             if (next_point.y != point.y) {
+                 if (next_point.y > point.y)
+                     y = y + 23
+                 else
+                     y2 = y2 + 23
+             }
+
+             line.setAttribute("x1", point.x)
+             line.setAttribute("y1", y)
+             line.setAttribute("x2", next_point.x)
+             line.setAttribute("y2", y2)
+             line.setAttribute("class", "linearization")
+
+             document.getElementById("linearization_path").appendChild(line)
+         }
+     }
+    </script>
+</html>
