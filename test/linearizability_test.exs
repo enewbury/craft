@@ -28,9 +28,10 @@ defmodule Craft.LinearizabilityTest do
 
     num_clients = 20
 
-    tasks = Enum.map(1..num_clients, fn _ ->
-      Task.async(fn -> do_random_commands(name, nodes, 10) end)
-    end)
+    tasks =
+      Enum.map(1..num_clients, fn _ ->
+        Task.async(fn -> do_random_commands(name, nodes, 10) end)
+      end)
 
     # new_leader = Enum.random(nodes -- [leader])
     # Craft.transfer_leadership(name, new_leader, nodes)

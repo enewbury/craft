@@ -77,7 +77,7 @@ defmodule Craft.Linearizability do
         ops = Enum.sort_by(ops, & &1.called_at)
         {client, ops}
       end)
-      |> do_linearizable({model, model_state})
+      |> do_linearize({model, model_state})
 
     case result do
       {:ok, linearized_history} ->
@@ -88,7 +88,7 @@ defmodule Craft.Linearizability do
     end
   end
 
-  defp do_linearizable(histories_by_client, {model, model_state}, linearized_history \\ [], ops_seen \\ MapSet.new(), cache \\ MapSet.new()) do
+  defp do_linearize(histories_by_client, {model, model_state}, linearized_history \\ [], ops_seen \\ MapSet.new(), cache \\ MapSet.new()) do
     no_ops_left? = Enum.all?(histories_by_client, fn {_client, history} -> Enum.empty?(history) end)
 
     if no_ops_left? do
@@ -127,7 +127,7 @@ defmodule Craft.Linearizability do
             if MapSet.member?(cache, cache_key) do
               {:cont, {:cont, cache}}
             else
-              case do_linearizable(histories_by_client_without_op, {model, model_state}, [op | linearized_history], ops_seen, cache) do
+              case do_linearize(histories_by_client_without_op, {model, model_state}, [op | linearized_history], ops_seen, cache) do
                 {:ok, linearized_history} ->
                   {:halt, {:halt, {:ok, linearized_history}}}
 
