@@ -3,7 +3,11 @@ defmodule Craft.ParallelClients do
 
   def run(fun, num, num_commands) do
     1..num
-    |> Task.async_stream(fn _ -> do_commands(fun, num_commands) end, timeout: :infinity)
+    |> Task.async_stream(fn _ ->
+      for i <- 1..num_commands do
+        do_command(fun, i)
+      end
+    end, timeout: :infinity)
     |> Enum.flat_map(fn {:ok, ops} -> ops end)
   end
 
@@ -41,16 +45,6 @@ defmodule Craft.ParallelClients do
       end
     end
     |> List.flatten()
-  end
-
-  defp do_commands(fun, :infinity) do
-    Stream.iterate(1, & &1 + 1) |> Enum.reduce([], fn i, ops -> [do_command(fun, i) | ops] end)
-  end
-
-  defp do_commands(fun, num) do
-    for i <- 1..num do
-      do_command(fun, i)
-    end
   end
 
   defp do_command(fun, i) do
