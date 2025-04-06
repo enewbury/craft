@@ -12,11 +12,10 @@ defmodule Craft.LinearizabilityTest do
     num_clients = 10
     num_commands = 100
 
-    assert {:ok, _linearized_history, _ignored_ops = []} =
-             ctx
-             |> random_command_fun()
-             |> ParallelClients.run(num_clients, num_commands)
-             |> Linearizability.linearize(Craft.SimpleMachine)
+    ctx
+    |> random_command_fun()
+    |> ParallelClients.run(num_clients, num_commands)
+    |> assert_linearizable
   end
 
   nexus_test "during leadership transfer", %{nodes: nodes, name: name, nexus: nexus} = ctx do
@@ -110,7 +109,7 @@ defmodule Craft.LinearizabilityTest do
   end
 
   def assert_linearizable(history) do
-    assert {:ok, _linearized_history, _ignored_ops} = Craft.Linearizability.linearize(history, Craft.SimpleMachine)
+    assert {:ok, _linearized_history, _ignored_ops} = Linearizability.linearize(history, Craft.SimpleMachine)
   end
 
   defp random_command_fun(ctx) do
