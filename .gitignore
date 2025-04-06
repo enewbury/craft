@@ -12,3 +12,5 @@ tmp
 .elixir_tools
 .#*
 test_logs
+history
+index.html

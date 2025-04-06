@@ -40,9 +40,77 @@ defmodule Craft.LinearizabilityTest do
 
     assert %{leader: ^new_leader} = wait_until(nexus, {Stability, :all})
 
-    assert {:ok, _linearized_history, _ignored_ops} = Craft.Linearizability.linearize(history, Craft.SimpleMachine)
+    assert_linearizable(history)
+    # assert {:ok, _linearized_history, _ignored_ops} = Craft.Linearizability.linearize(history, Craft.SimpleMachine)
     # File.write!("history", :erlang.term_to_binary({linearized_history, ignored_ops}))
     # Craft.Linearizability.Visualization.to_file(nil)
+  end
+
+  nexus_test "when leader loses majority connectivity", %{nodes: nodes, nexus: nexus} = ctx do
+    %{leader: leader} = wait_until(nexus, {Stability, :all})
+
+    majority =
+      Enum.take(
+        nodes -- [leader],
+        div(Enum.count(nodes), 2) + 1
+      )
+
+    num_clients = 10
+
+    clients =
+      ctx
+      |> random_command_fun()
+      |> ParallelClients.start(num_clients)
+
+    Process.sleep(300)
+
+    nemesis(nexus, fn {:cast, to, from, _msg} ->
+      if from == leader and to in majority or from in majority and to == leader do
+        :drop
+      else
+        :forward
+      end
+    end)
+
+    Process.sleep(300)
+
+    history = ParallelClients.stop(clients)
+
+    wait_until(nexus, {Stability, :majority})
+
+    assert_linearizable(history)
+  end
+
+  # TODO: stop and start servers
+  nexus_test "during utter chaos", %{nexus: nexus} = ctx do
+    wait_until(nexus, {Stability, :all})
+
+    num_clients = 10
+
+    clients =
+      ctx
+      |> random_command_fun()
+      |> ParallelClients.start(num_clients)
+
+    Process.sleep(300)
+
+    nemesis(nexus, fn _ ->
+      if :rand.uniform(100) <= 50 do
+        :drop
+      else
+        :forward
+      end
+    end)
+
+    Process.sleep(3000)
+
+    history = ParallelClients.stop(clients)
+
+    assert_linearizable(history)
+  end
+
+  def assert_linearizable(history) do
+    assert {:ok, _linearized_history, _ignored_ops} = Craft.Linearizability.linearize(history, Craft.SimpleMachine)
   end
 
   defp random_command_fun(ctx) do
