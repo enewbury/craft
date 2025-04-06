@@ -9,11 +9,13 @@ defmodule Craft.LinearizabilityTest do
 
   nexus_test "under stable conditions", ctx do
     wait_until(ctx.nexus, {Stability, :all})
+    num_clients = 10
+    num_commands = 100
 
     assert {:ok, _linearized_history, _ignored_ops = []} =
              ctx
              |> random_command_fun()
-             |> ParallelClients.run(10, 100)
+             |> ParallelClients.run(num_clients, num_commands)
              |> Linearizability.linearize(Craft.SimpleMachine)
   end
 
@@ -36,7 +38,9 @@ defmodule Craft.LinearizabilityTest do
 
     history = ParallelClients.stop(clients)
 
-    assert {:ok, linearized_history, ignored_ops} = Craft.Linearizability.linearize(history, Craft.SimpleMachine)
+    assert %{leader: ^new_leader} = wait_until(nexus, {Stability, :all})
+
+    assert {:ok, _linearized_history, _ignored_ops} = Craft.Linearizability.linearize(history, Craft.SimpleMachine)
     # File.write!("history", :erlang.term_to_binary({linearized_history, ignored_ops}))
     # Craft.Linearizability.Visualization.to_file(nil)
   end
