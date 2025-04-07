@@ -12,24 +12,18 @@ defmodule Craft.ParallelClients do
   end
 
   def start(fun, num) do
-    loop =
-      fn ->
-        (fn recurse ->
-          recurse.(recurse, {0, []})
-        end).(fn recurse, {i, ops} ->
-          receive do
-            {:stop, pid} ->
-              send(pid, {self(), ops})
-          after
-            0 ->
-              recurse.(recurse, {i+1, [do_command(fun, i) | ops]})
-          end
-        end
-        )
-      end
-
     for _ <- 1..num do
-      spawn_link(loop)
+      spawn_link(fn -> loop(fun) end)
+    end
+  end
+
+  defp loop(fun, {i, ops} \\ {0, []}) do
+    receive do
+      {:stop, pid} ->
+        send(pid, {self(), ops})
+    after
+      0 ->
+        loop(fun, {i+1, [do_command(fun, i) | ops]})
     end
   end
 
