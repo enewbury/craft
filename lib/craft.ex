@@ -17,6 +17,8 @@ defmodule Craft do
       {:module, Craft} = :rpc.call(node, Code, :ensure_loaded, [Craft])
     end
 
+    opts = Map.new(opts)
+
     for node <- nodes do
       {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes, machine, opts])
     end
