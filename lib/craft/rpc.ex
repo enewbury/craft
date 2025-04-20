@@ -38,7 +38,7 @@ defmodule Craft.RPC do
 
   def respond_append_entries(%AppendEntries{} = append_entries, success, %State{} = state) do
     state
-    |> AppendEntries.Results.new(success)
+    |> AppendEntries.Results.new(append_entries, success)
     |> send_message(append_entries.leader_id, state)
   end
 

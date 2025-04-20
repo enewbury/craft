@@ -26,13 +26,45 @@ defmodule Craft.Machine do
       :name,
       :module,
       :private,
+      :role,
       last_applied: 0,
-      client_requests: %{}
+      client_queries: :gb_trees.empty(),
+      client_commands: %{}
     ]
+
+    def pop_query_results_earlier_than(%__MODULE__{} = state, time) do
+      all_results =
+        time
+        |> :gb_trees.iterator_from(state.client_queries, :reversed)
+        |> do_pop_earlier_than()
+
+      {client_queries, results} =
+        Enum.reduce(all_results, {state.client_queries, MapSet.new()}, fn {key, results}, {tree, all_results} ->
+          {:gb_trees.delete(key, tree), MapSet.union(results, all_results)}
+        end)
+
+      {results, %State{state | client_queries: client_queries}}
+    end
+
+    defp do_pop_earlier_than(iterator, all_results \\ MapSet.new()) do
+      case :gb_trees.next(iterator) do
+        :none ->
+          all_results
+
+        {key, results, iterator} ->
+          do_pop_earlier_than(iterator, MapSet.put(all_results, {key, results}))
+      end
+    end
   end
 
   def start_link(args) do
     GenServer.start_link(__MODULE__, args, name: via(args.name, __MODULE__))
+  end
+
+  def update_role(%ConsensusState{} = state) do
+    state.name
+    |> lookup(__MODULE__)
+    |> GenServer.cast({:update_role, state.state})
   end
 
   def module(name) do
@@ -81,11 +113,25 @@ defmodule Craft.Machine do
     |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence, state.state, should_snapshot?})
   end
 
+  def quorum_reached(%ConsensusState{} = state) do
+    state.name
+    |> lookup(__MODULE__)
+    |> GenServer.cast({:quorum_reached, state.leader_state.last_quorum_at})
+  end
+
   def command(name, node, command, opts \\ []) do
+    request(name, node, :command, command, opts)
+  end
+
+  def query(name, node, query, consistency, opts \\ []) do
+    request(name, node, {:query, consistency}, query, opts)
+  end
+
+  defp request(name, node, type, request, opts) do
     timeout = Keyword.get(opts, :timeout, 5_000)
     id = {self(), make_ref()}
 
-    with :ok <- :rpc.call(node, __MODULE__, :cast_command, [name, id, command]) do
+    with :ok <- :rpc.call(node, __MODULE__, :cast_request, [name, id, type, request]) do
       receive do
         {^id, reply} ->
           reply
@@ -98,10 +144,10 @@ defmodule Craft.Machine do
     end
   end
 
-  def cast_command(name, id, command) do
+  def cast_request(name, id, type, request) do
     name
     |> lookup(__MODULE__)
-    |> GenServer.cast({:command, id, command})
+    |> GenServer.cast({type, id, request})
   end
 
   @impl true
@@ -123,6 +169,45 @@ defmodule Craft.Machine do
     {commit_index, log} = Consensus.catch_up(state.name)
 
     handle_cast({:commit_index_bumped, commit_index, log, nil, false}, state)
+  end
+
+  @impl true
+  def handle_cast({:update_role, role}, state) do
+    # if we were just the leader and are holding in-flight requests, but we've been deposed, we need to let the awaiting clients know
+    {:ok, leader, _members} = Craft.MemberCache.get(state.name)
+
+    # if we're the just-deposed leader, we probably don't know who the new leader is
+    response =
+      if state.role == :leader && role != :leader && node() == leader do
+        {:error, :unknown_leader}
+      else
+        {:error, {:not_leader, leader}}
+      end
+
+    for {{_ref, from} = id, _result} <- state.client_queries |> :gb_trees.to_list() |> Keyword.values() do
+      send(from, {id, response})
+    end
+
+    for {_index, {from, _ref} = id} <- state.client_commands do
+      send(from, {id, response})
+    end
+
+    {:noreply, %State{state | role: role, client_commands: %{}, client_queries: :gb_trees.empty()}}
+  end
+
+  # when a consensus round completes, the consensus process sends us the last time at which we were guaranteed to be the leader
+  def handle_cast({:quorum_reached, time}, state) do
+    if :gb_trees.is_empty(state.client_queries) do
+      {:noreply, state}
+    else
+      {results, state} = State.pop_query_results_earlier_than(state, time)
+
+      for {{from, _ref} = id, result} <- results do
+        send(from, {id, result})
+      end
+
+      {:noreply, state}
+    end
   end
 
   @impl true
@@ -165,10 +250,11 @@ defmodule Craft.Machine do
                 spawn(fn -> apply(m, f, a) end)
               end)
 
-              case Map.pop(state.client_requests, index) do
-                {{pid, _ref} = id, client_requests} ->
+              case Map.pop(state.client_commands, index) do
+                {{pid, _ref} = id, client_commands} ->
                   send(pid, {id, reply})
-                  %State{state | client_requests: client_requests}
+
+                  %State{state | client_commands: client_commands}
 
                 _ ->
                   state
@@ -197,15 +283,61 @@ defmodule Craft.Machine do
     {:noreply, %State{state | last_applied: new_commit_index}}
   end
 
+  #
+  # the leader handles linearizable queries slightly differently, depending on if leases are enabled:
+  #   - if leases are enabled,
+  #       - and we're within the lease period, the leader knows that it is the current leader, so it immediately processes a query
+  #       - and we're outside the lease period, we fall back to quorum-seeking
+  #   - if leases are disabled, we need to see a quorum round succeed to know that we were still the leader when the query was executed. so,
+  #       we execute the query speculatively and store the result along with the current monotonic time, all the while, the consensus process
+  #       is streaming monotonic timestamps of when the most recent quorum was achieved.
+  #     - when the quorum timestamp exceeds the query's timestamp, we send the result to the caller, since we now know we were the leader when we executed the query.
+  #     - if the role of the leader changes before the query's timeout (CheckQuorum triggered, or the leader is deposed), we return an error to the caller
+  #     - otherwise, the query will time out
+  #
   @impl true
+  def handle_cast({{:query, :linearizable}, id, query}, %State{role: :leader} = state) do
+    result = state.module.query(query, state.private)
+
+    now = :erlang.monotonic_time(:millisecond)
+    client_queries =
+      case :gb_trees.lookup(now, state.client_queries) do
+        {:value, queries} ->
+          :gb_trees.update(now, MapSet.put(queries, {id, result}), state.client_queries)
+
+        :none ->
+          :gb_trees.insert(now, MapSet.new([{id, result}]), state.client_queries)
+      end
+
+    {:noreply, %State{state | client_queries: client_queries}}
+  end
+
+  # only the leader can process linearizable queries
+  def handle_cast({{:query, :linearizable}, {from, _ref} = id, _query}, state) do
+    {:ok, leader, _members} = Craft.MemberCache.get(state.name)
+
+    send(from, {id, {:error, {:not_leader, leader}}})
+
+    {:noreply, state}
+  end
+
+  def handle_cast({{:query, :eventual}, {from, _ref} = id, query}, state) do
+    result = state.module.query(query, state.private)
+
+    send(from, {id, result})
+
+    {:noreply, state}
+  end
+
   def handle_cast({:command, {from, _ref} = id, command}, state) do
     case Consensus.command(state.name, command) do
       {:ok, index} ->
-        {:noreply, %State{state | client_requests: Map.put(state.client_requests, index, id)}}
+        {:noreply, %State{state | client_commands: Map.put(state.client_commands, index, id)}}
 
       # not leader etc
       error ->
         send(from, {id, error})
+
         {:noreply, state}
     end
   end

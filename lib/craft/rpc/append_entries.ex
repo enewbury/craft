@@ -11,7 +11,8 @@ defmodule Craft.RPC.AppendEntries do
     :prev_log_term,
     :entries,
     :leader_commit,
-    :leadership_transfer
+    :leadership_transfer,
+    :sent_at
   ]
 
   defmodule LeadershipTransfer do
@@ -48,24 +49,29 @@ defmodule Craft.RPC.AppendEntries do
       prev_log_term: prev_log_term,
       entries: entries,
       leader_commit: state.commit_index,
-      leadership_transfer: leadership_transfer
+      leadership_transfer: leadership_transfer,
+      sent_at: :erlang.monotonic_time(:millisecond)
     }
   end
 
   defmodule Results do
+    alias Craft.RPC.AppendEntries
+
     defstruct [
       :term,
       :from,
       :success,
-      :latest_index
+      :latest_index,
+      :append_entries_sent_at
     ]
 
-    def new(%State{state: :follower} = state, success) do
+    def new(%State{state: :follower} = state, %AppendEntries{} = append_entries, success) do
       %__MODULE__{
         term: state.current_term,
         from: node(),
         success: success,
-        latest_index: Persistence.latest_index(state.persistence)
+        latest_index: Persistence.latest_index(state.persistence),
+        append_entries_sent_at: append_entries.sent_at
       }
     end
   end

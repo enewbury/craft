@@ -4,12 +4,12 @@ defmodule Craft.RocksDBMachine do
   @log_index_column_family {~c"log_index", []}
   @log_index_key "log_index"
 
-  def put(name, nodes, k, v) do
-    Craft.command({:put, k, v}, name, nodes)
+  def put(name, k, v) do
+    Craft.command({:put, k, v}, name)
   end
 
-  def get(name, nodes, k) do
-    Craft.command({:get, k}, name, nodes)
+  def get(name, k) do
+    Craft.command({:get, k}, name)
   end
 
   defmodule State do

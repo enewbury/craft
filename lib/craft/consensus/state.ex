@@ -74,6 +74,7 @@ defmodule Craft.Consensus.State do
       state |
       state: :lonely,
       leader_state: nil,
+      leader_id: nil,
       leadership_transfer_request_id: nil,
       election: Election.new(state.members)
     }
@@ -110,7 +111,6 @@ defmodule Craft.Consensus.State do
       election: Election.new(state.members),
       voted_for: node()
     }
-    |> Metadata.update()
   end
 
   def become_leader(%__MODULE__{} = state) do

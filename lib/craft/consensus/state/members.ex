@@ -61,4 +61,10 @@ defmodule Craft.Consensus.State.Members do
     |> MapSet.union(members.non_voting_nodes)
     |> MapSet.delete(node())
   end
+
+  def all_nodes(%__MODULE__{} = members) do
+    members.voting_nodes
+    |> MapSet.union(members.catching_up_nodes)
+    |> MapSet.union(members.non_voting_nodes)
+  end
 end

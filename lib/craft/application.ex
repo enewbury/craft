@@ -9,11 +9,10 @@ defmodule Craft.Application do
       Logger.add_translator({Craft.SASLLoggerTranslator, :translate})
     end
 
-    Craft.LeaderCache.init()
-
     children = [
       {DynamicSupervisor, [strategy: :one_for_one, name: Craft.Supervisor]},
-      {Registry, keys: :unique, name: Craft.Registry}
+      {Registry, keys: :unique, name: Craft.Registry},
+      Craft.MemberCache
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one)

@@ -27,6 +27,7 @@ defmodule Craft.Consensus do
   alias Craft.Log.CommandEntry
   alias Craft.Log.MembershipEntry
   alias Craft.Machine
+  alias Craft.MemberCache
   alias Craft.Persistence
   alias Craft.RPC
   alias Craft.RPC.AppendEntries
@@ -40,15 +41,20 @@ defmodule Craft.Consensus do
   @behaviour :gen_statem
 
   @heartbeat_interval 100 # ms
+
   # max time in the past within which leader must have a successful quorum, or it'll step down
   @checkquorum_interval @heartbeat_interval * 3
+
   @lonely_timeout @heartbeat_interval + 1_000
+
   # amount of time to wait for votes before concluding that the election has failed
   @election_timeout 1500
+
   # amount of time to wait for new leader to take over before concluding that leadership transfer has failed
   @leadership_transfer_timeout 3000
 
   defp jitter(max \\ 1500), do: :rand.uniform(max)
+
 
   #
   # API
@@ -104,10 +110,6 @@ defmodule Craft.Consensus do
   end
 
   def name(name), do: Module.concat(__MODULE__, name)
-
-  def quorum_reached?(state, num) do
-    num >= State.quorum_needed(state)
-  end
 
   #
   # genstatem implementation
@@ -166,6 +168,8 @@ defmodule Craft.Consensus do
 
     data = State.new(args.name, args.nodes, args.persistence)
 
+    MemberCache.update(data)
+
     Logger.info("started")
 
     {:ok, :lonely, data}
@@ -189,6 +193,10 @@ defmodule Craft.Consensus do
 
   def lonely(:enter, _previous_state, data) do
     data = State.become_lonely(data)
+
+    Machine.update_role(data)
+
+    MemberCache.update(data)
 
     Logger.info("became lonely", logger_metadata(data))
 
@@ -315,6 +323,8 @@ defmodule Craft.Consensus do
   def receiving_snapshot(:enter, _previous_state, data) do
     data = State.become_receiving_snapshot(data)
 
+    Machine.update_role(data)
+
     Logger.info("became receiving_snapshot follower", logger_metadata(data))
 
     {:keep_state, data, []}
@@ -329,6 +339,10 @@ defmodule Craft.Consensus do
     #   stop state machine?
     #
     # initiate new transfer
+
+    data = %State{data | leader_id: install_snapshot.leader_id}
+
+    MemberCache.update(data)
 
     {:ok, data_dir} = Machine.prepare_to_receive_snapshot(data.name)
 
@@ -358,6 +372,10 @@ defmodule Craft.Consensus do
 
   def follower(:enter, _previous_state, data) do
     data = State.become_follower(data)
+
+    Machine.update_role(data)
+
+    MemberCache.update(data)
 
     Logger.info("became follower", logger_metadata(data))
 
@@ -453,6 +471,8 @@ defmodule Craft.Consensus do
       Machine.commit_index_bumped(data, true)
     end
 
+    MemberCache.update(data)
+
     # leader told us to take over leadership when our log is caught up
     if append_entries.leadership_transfer &&
       append_entries.leadership_transfer.latest_index == Persistence.latest_index(data.persistence) &&
@@ -504,6 +524,8 @@ defmodule Craft.Consensus do
   def candidate(:enter, :follower, %State{leadership_transfer_request_id: id} = data) when is_tuple(id) do
     data = State.become_candidate(data)
 
+    Machine.update_role(data)
+
     Logger.info("became candidate, initiating leadership transfer election", logger_metadata(data))
 
     RPC.request_vote(data, leadership_transfer: true)
@@ -514,6 +536,8 @@ defmodule Craft.Consensus do
 
   def candidate(:enter, _previous_state, data) do
     data = State.become_candidate(data)
+
+    Machine.update_role(data)
 
     Logger.info("became candidate", logger_metadata(data))
 
@@ -622,6 +646,10 @@ defmodule Craft.Consensus do
   def leader(:enter, _previous_state, data) do
     data = State.become_leader(data)
 
+    Machine.update_role(data)
+
+    MemberCache.update(data)
+
     #
     # when the cluster starts up, each node is explicitly given the same configuration to
     # hold in-memory to bootstrap the cluster.
@@ -657,11 +685,11 @@ defmodule Craft.Consensus do
     num_replies_in_window =
       data.leader_state.last_heartbeat_replies_at
       |> Map.values()
-      |> Enum.filter(fn last_heartbeat_reply_at -> last_heartbeat_reply_at >= :erlang.monotonic_time(:millisecond) - @checkquorum_interval end)
+      |> Enum.filter(fn {_sent_at, received_at} -> received_at >= :erlang.monotonic_time(:millisecond) - @checkquorum_interval end)
       |> Enum.count()
 
     # + 1 for leader
-    if quorum_reached?(data, num_replies_in_window + 1) do
+    if num_replies_in_window + 1 >= State.quorum_needed(data) do
       {:keep_state_and_data, [{{:timeout, :check_quorum}, @checkquorum_interval, :check_quorum}]}
     else
       Logger.info("unable to make quorum, stepping down.", logger_metadata(data))
@@ -694,7 +722,9 @@ defmodule Craft.Consensus do
 
   def leader(:cast, %AppendEntries.Results{} = results, data) do
     old_commit_index = data.commit_index
-    data = LeaderState.bump_last_heartbeat_reply_at(data, results.from)
+    data = LeaderState.bump_last_heartbeat_reply_at(data, results)
+
+    Machine.quorum_reached(data)
 
     case LeaderState.handle_append_entries_results(data, results) do
       {:needs_snapshot, data} ->
@@ -820,6 +850,8 @@ defmodule Craft.Consensus do
 
       data = %State{data | persistence: Persistence.append(data.persistence, entry)}
 
+      MemberCache.update(data)
+
       {:keep_state, data}
     end
   end
@@ -837,6 +869,8 @@ defmodule Craft.Consensus do
         }
 
       data = %State{data | persistence: Persistence.append(data.persistence, entry)}
+
+      MemberCache.update(data)
 
       {:keep_state, data}
     end

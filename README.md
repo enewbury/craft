@@ -3,20 +3,20 @@
 todo:
 - cluster splitting
 - smart appendentries intervals for commands (immediate, interval-based batching...)
-- nemesis development
-- querying (dirty [leader, follower], linearizable command-based read)
-  - may not need log entry for linearizable read... (leader receives read request, notes at what log index it should take place, when that log index is committed, responds to read as of that index)
-  - leases like cockroachdb?
+- leader leases for linearizable reads
+- broadcast replication lag to clients, to allow them to target non-linearizable reads to specific followers
 - fix Craft top-level API, designate group by {name, nodes} rather than separate args
 - be consistent with "members" vs "nodes" nomenclature
 
 4.2.1 server catch up "rounds" hueristic
 
 done:
+- nemesis development
+- linearizability checker
 - 3.10 leadership transfer extension
+- PreVote
 - CheckQuorum
 - rocksdb backend
-
 
 - snapshots
   when commit index bumps, consensus sends a message to machine to bump index and optionally snapshot
@@ -30,3 +30,6 @@ done:
 
   for consideration: if a follower is slow in catching up, and the log is snapshotted/truncated on the leader, how should the follower respond?
     nuke the follower's current state and start over fresh?
+
+- querying (eventual, linearizable)
+  - linearizable reads without log entry

@@ -4,12 +4,12 @@ defmodule Craft.SimpleMachine do
 
   @behaviour TestModel
 
-  def put(name, nodes, k, v) do
-    Craft.command({:put, k, v}, name, nodes)
+  def put(name, k, v) do
+    Craft.command({:put, k, v}, name)
   end
 
-  def get(name, nodes, k) do
-    Craft.command({:get, k}, name, nodes)
+  def get(name, k) do
+    Craft.query({:get, k}, name, consistency: :linearizable)
   end
 
   @impl TestModel
@@ -26,8 +26,8 @@ defmodule Craft.SimpleMachine do
     {:ok, Map.put(state, k, v)}
   end
 
-  def command({:get, k}, _log_index, state) do
-    {{:ok, Map.get(state, k)}, state}
+  def query({:get, k}, state) do
+    {:ok, Map.get(state, k)}
   end
 
   def snapshot(_at_index, _state) do

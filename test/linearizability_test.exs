@@ -9,6 +9,7 @@ defmodule Craft.LinearizabilityTest do
 
   nexus_test "under stable conditions", ctx do
     wait_until(ctx.nexus, {Stability, :all})
+
     num_clients = 10
     num_commands = 100
 

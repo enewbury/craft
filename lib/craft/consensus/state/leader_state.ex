@@ -1,18 +1,19 @@
 defmodule Craft.Consensus.State.LeaderState do
-  alias Craft.Consensus
   alias Craft.Consensus.State
   alias Craft.Consensus.State.Members
-  alias Craft.Persistence
   alias Craft.Log.MembershipEntry
+  alias Craft.Persistence
   alias Craft.RPC.AppendEntries
   alias Craft.RPC.InstallSnapshot
 
   defstruct [
     :next_indices,
     :match_indices,
-    :last_heartbeat_replies_at, # for CheckQuorum voting members only
+    :last_quorum_reached_at,
     :membership_change,
     :leadership_transfer,
+    :last_quorum_at, # the last time we knew we were leader
+    last_heartbeat_replies_at: %{}, # for CheckQuorum voting members only
     snapshot_transfers: %{}
   ]
 
@@ -155,12 +156,10 @@ defmodule Craft.Consensus.State.LeaderState do
     next_index = Persistence.latest_index(state.persistence) + 1
     next_indices = state.members |> Members.other_nodes() |> Map.new(&{&1, next_index})
     match_indices = state.members |> Members.other_nodes() |> Map.new(&{&1, 0})
-    last_heartbeat_replies_at = state.members |> Members.other_voting_nodes() |> Map.new(&{&1, :erlang.monotonic_time(:millisecond)})
 
     %__MODULE__{
       next_indices: next_indices,
       match_indices: match_indices,
-      last_heartbeat_replies_at: last_heartbeat_replies_at
     }
   end
 
@@ -244,7 +243,8 @@ defmodule Craft.Consensus.State.LeaderState do
         |> Enum.reverse()
         |> Enum.find(fn index ->
           num_members_with_index = Enum.count(match_indices_for_commitment, fn {_node, match_index} -> match_index >= index end)
-          Consensus.quorum_reached?(state, num_members_with_index)
+
+          num_members_with_index >= num_members_with_index
         end)
 
       # only bump commit index when the quorum entry is from the current term (section 5.4.2)
@@ -303,9 +303,30 @@ defmodule Craft.Consensus.State.LeaderState do
     put_in(state.leader_state.leadership_transfer, LeadershipTransfer.new(to_member, from))
   end
 
-  def bump_last_heartbeat_reply_at(%State{} = state, member) do
-    if Members.can_vote?(state.members, member) do
-      last_heartbeat_replies_at = Map.put(state.leader_state.last_heartbeat_replies_at, member, :erlang.monotonic_time(:millisecond))
+  def bump_last_heartbeat_reply_at(%State{} = state, %AppendEntries.Results{} = results) do
+    if Members.can_vote?(state.members, results.from) do
+      last_heartbeat_replies_at = Map.put(state.leader_state.last_heartbeat_replies_at, results.from, {results.append_entries_sent_at, :erlang.monotonic_time(:millisecond)})
+
+      # -1 since we're the leader
+      num_replies_needed = State.quorum_needed(state) - 1
+
+      latest_sent_times =
+        last_heartbeat_replies_at
+        |> Enum.map(fn {_member, {sent_at, _received_at}} -> sent_at end)
+        |> Enum.sort(:desc)
+
+      # if quorum was achieved, the most we can say is that we we were leader when the earliest AppendEntries was sent
+      state =
+        if Enum.count(latest_sent_times) >= num_replies_needed do
+          last_quorum_at =
+            latest_sent_times
+            |> Enum.slice(0, num_replies_needed)
+            |> List.last()
+
+          %State{state | leader_state: %__MODULE__{state.leader_state | last_quorum_at: last_quorum_at}}
+        else
+          state
+        end
 
       %State{state | leader_state: %__MODULE__{state.leader_state | last_heartbeat_replies_at: last_heartbeat_replies_at}}
     else

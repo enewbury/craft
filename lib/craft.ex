@@ -1,6 +1,26 @@
+#
+# commands and queries are handled differently
+#
+# commands modify state, so they're automatically directed to the leader to go through a consensus round
+#
+# queries read state, their handling depends on the level of consistency desired:
+#   - linearizable queries are always directed to the leader
+#     - if leader leases are enabled (you're using an accurate time source), the leader's machine can immediately process the request
+#     - otherwise, we need to wait for a round of consenus to occur to confirm that the leader is still the leader
+#       - when a client makes a query, the machine process simply buffers it
+#       - when the next consensus round achieves consensus, the consensus process informs the machine process of the (possibly bumped) commit index
+#       - the machine process flushes the buffer and processes all waiting queries
+#
+#  - eventually consistent queries are immediately processed by the receiving node (random node or one provided by the user)
+#    - if the user consistently uses the same node, monotonic read consistency is supported
+#    - otherwise, if the user leaves it up to craft to pick a random node, there are no consistency guarantees, state can be arbitrarily stale, and even violate causality
+#
 defmodule Craft do
   alias Craft.Consensus
   alias Craft.Machine
+  alias Craft.MemberCache
+
+  require Logger
 
   # FIXME
   @type command :: any()
@@ -14,24 +34,24 @@ defmodule Craft do
   def start_group(name, nodes, machine, opts \\ []) do
     for node <- nodes do
       :pong = Node.ping(node)
-      {:module, Craft} = :rpc.call(node, Code, :ensure_loaded, [Craft])
+      {:module, __MODULE__} = :rpc.call(node, Code, :ensure_loaded, [__MODULE__])
     end
 
     opts = Map.new(opts)
 
     for node <- nodes do
-      {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes, machine, opts])
+      {:ok, _pid} = :rpc.call(node, __MODULE__, :start_member, [name, nodes, machine, opts])
     end
   end
 
   def stop_group(name, nodes) do
     # TODO: ask group for its nodes instead of relying on user to pass in the correct set of nodes
     for node <- nodes do
-      :ok = :rpc.call(node, Craft, :stop_member, [name])
+      :ok = :rpc.call(node, __MODULE__, :stop_member, [name])
     end
   end
 
-  def add_member(name, node, cluster_nodes) do
+  def add_member(name, node) do
     :pong = Node.ping(node)
 
     {:ok,
@@ -39,15 +59,15 @@ defmodule Craft do
        members: members,
        machine_module: machine_module,
        log_module: log_module
-     }} = with_leader_redirect(name, cluster_nodes, &Consensus.configuration(name, &1))
+     }} = with_leader_redirect(name, &Consensus.configuration(name, &1))
 
-    {:module, Craft} = :rpc.call(node, Code, :ensure_loaded, [Craft])
-    {:module, ^machine_module} = :rpc.call(node, Code, :ensure_loaded, [machine_module])
-    {:module, ^log_module} = :rpc.call(node, Code, :ensure_loaded, [log_module])
+    for module <- [__MODULE__, machine_module, log_module] do
+      {:module, ^module} = :rpc.call(node, Code, :ensure_loaded, [module])
+    end
 
-    {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, members.voting_nodes, machine_module, [log_module: log_module]])
+    {:ok, _pid} = :rpc.call(node, __MODULE__, :start_member, [name, members.voting_nodes, machine_module, [log_module: log_module]])
 
-    with_leader_redirect(name, cluster_nodes, &Consensus.add_member(name, &1, node))
+    with_leader_redirect(name, &Consensus.add_member(name, &1, node))
 
     #
     # the nodes we provide to the new member here will eventually be overwritten when
@@ -57,56 +77,97 @@ defmodule Craft do
     #
   end
 
-  def remove_member(name, node, cluster_nodes) do
-    with_leader_redirect(name, cluster_nodes, &Consensus.remove_member(name, &1, node))
+  def remove_member(name, node) do
+    with_leader_redirect(name, &Consensus.remove_member(name, &1, node))
   end
 
-  def transfer_leadership(name, to_node, cluster_nodes) do
-    with_leader_redirect(name, cluster_nodes, &Consensus.transfer_leadership(name, &1, to_node))
+  def transfer_leadership(name, to_node) do
+    with_leader_redirect(name, &Consensus.transfer_leadership(name, &1, to_node))
   end
 
   defdelegate start_member(name, nodes, machine, opts), to: Craft.MemberSupervisor
   defdelegate stop_member(name), to: Craft.MemberSupervisor
+  defdelegate discover(name, nodes), to: Craft.MemberCache
 
-  def command(command, name, nodes, opts \\ []) do
-    with_leader_redirect(name, nodes, &Machine.command(name, &1, command), opts)
+  def command(command, name, opts \\ []) do
+    with_leader_redirect(name, &Machine.command(name, &1, command, opts))
   end
 
-  defp with_leader_redirect(name, nodes, func, opts \\ []) do
-    redirect_once = Keyword.pop(opts, :redirect_once, true)
 
-    node =
-      case Craft.LeaderCache.get(name) do
-        {:ok, leader} ->
-          leader
+  #
+  # Craft.query(command, name, consistency: :linearizable)
+  # if `consistency` is `:linearizable`, will address leader
+  # if `consistency` is `:eventual`, will address random follower
+  # if `consistency` is `{:eventual, node}`, will address given node
+  #
+  # Craft.command(command, name) # always goes to leader, since it can modify state
+  #
+  # TODO: timeout in opts
+  #       let user choose if query handler in Machine.handle_cast(:query) spawns off a new process, to unblock the machine
+  #         - it'll copy the machine's state to a new process, which could be worth it in some scenarios
+  #
 
-        :not_found ->
-          Enum.random(nodes)
-      end
+  def query(query, name, opts \\ []) do
+    consistency = Keyword.get(opts, :consistency, :eventual)
 
-    case func.(node) do
+    case consistency do
+      :linearizable ->
+        with_leader_redirect(name, &Machine.query(name, &1, query, consistency))
+
+      {:eventual, node} ->
+        Machine.query(name, node, query, :eventual)
+
+      :eventual ->
+        case MemberCache.get(name) do
+          {:ok, _leader, members} ->
+            node = Enum.random(members)
+
+            Machine.query(name, node, query, consistency)
+
+          :not_found ->
+            Logger.error("No known nodes for group '#{inspect name}', have you called Craft.discover/2?")
+
+            {:error, :unknown_group}
+        end
+    end
+  end
+
+  defp with_leader_redirect(name, func) do
+    case MemberCache.get(name) do
+      {:ok, nil, members} ->
+        do_leader_redirect(name, Enum.random(members), members, func)
+
+      {:ok, leader, members} ->
+        do_leader_redirect(name, leader, members, func)
+
+      :not_found ->
+        Logger.error("No known nodes for group '#{inspect name}', have you called Craft.discover/2?")
+
+        {:error, :unknown_group}
+    end
+  end
+
+  defp do_leader_redirect(name, leader, members, func, previous_redirects \\ MapSet.new()) do
+    case func.(leader) do
       {:error, :unknown_leader} ->
-        remaining_nodes = List.delete(nodes, node)
+        members = MapSet.delete(members, leader)
 
-        if Enum.empty?(remaining_nodes) do
+        if Enum.empty?(members) do
           {:error, :unknown_leader}
         else
-          with_leader_redirect(name, remaining_nodes, func, opts)
+          do_leader_redirect(name, Enum.random(members), members, func)
         end
 
       {:error, {:not_leader, leader}} ->
-        Craft.LeaderCache.put(name, leader)
-
-        if redirect_once do
-          opts = Keyword.put(opts, :redirect_once, false)
-          with_leader_redirect(name, nodes, func, opts)
+        if MapSet.member?(previous_redirects, leader) do
+          {:error, :redirect_loop}
         else
-          {:error, {:not_leader, leader}}
+          MemberCache.update_leader(name, leader)
+
+          do_leader_redirect(name, leader, members, func, previous_redirects)
         end
 
       reply ->
-        Craft.LeaderCache.put(name, node)
-
         reply
     end
   end
@@ -116,9 +177,14 @@ defmodule Craft do
   end
 
   def start_dev_cluster(num \\ 5) do
-    num
-    |> Craft.TestCluster.spawn_nodes()
-    |> start_dev_consensus_group()
+    {name, nodes} =
+      num
+      |> Craft.TestCluster.spawn_nodes()
+      |> start_dev_consensus_group()
+
+    discover(name, nodes)
+
+    name
   end
 
   def start_tmux_cluster do
@@ -138,8 +204,8 @@ defmodule Craft do
     {name, nodes}
   end
 
-  def state(name, nodes) do
-    {:ok, %{members: members}} = with_leader_redirect(name, nodes, &Consensus.configuration(name, &1))
+  def state(name) do
+    {:ok, %{members: members}} = with_leader_redirect(name, &Consensus.configuration(name, &1))
 
     members.voting_nodes
     |> MapSet.union(members.non_voting_nodes)
