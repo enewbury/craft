@@ -9,7 +9,6 @@ defmodule Craft.Consensus.State.LeaderState do
   defstruct [
     :next_indices,
     :match_indices,
-    :last_quorum_reached_at,
     :membership_change,
     :leadership_transfer,
     :last_quorum_at, # the last time we knew we were leader

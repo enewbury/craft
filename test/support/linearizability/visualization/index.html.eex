@@ -36,7 +36,7 @@
                     <%= for op <- ops do %>
                         <g transform="translate(<%= 150 + op.called_at %>, 0)" >
                             <rect x="0" y="0" width="<%= op.received_at - op.called_at %>" height="20" rx="5" ry="5" class="op-span <%= if (op.linearized?), do: "", else: "error" %>" data-id="<%= inspect(op.id) %>"/>
-                            <text x="<%= (op.received_at - op.called_at) / 2 %>" y="13" class="small" text-anchor="middle"><%= inspect(op.command) %><%= if (op.linearized?), do: " -> " <> inspect(op.response), else: "" %></text>
+                            <text x="<%= (op.received_at - op.called_at) / 2 %>" y="13" class="small" text-anchor="middle"><%= inspect(op.request) %><%= if (op.linearized?), do: " -> " <> inspect(op.response), else: "" %></text>
                         </g>
                     <% end %>
                 </g>

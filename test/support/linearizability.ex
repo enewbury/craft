@@ -9,7 +9,7 @@ defmodule Craft.Linearizability do
       client: term,
       called_at: number,
       received_at: number,
-      command: term
+      request: term
       response: term
     }
   ```
@@ -23,7 +23,7 @@ defmodule Craft.Linearizability do
       :client,
       :called_at,
       :received_at,
-      :command,
+      :request,
       :response
     ]
   end
@@ -31,6 +31,7 @@ defmodule Craft.Linearizability do
   defmodule TestModel do
     @callback init() :: {:ok, state :: any()}
     @callback command(command :: any(), state :: any()) :: state :: any()
+    @callback query(query :: any(), state :: any()) :: result :: any()
   end
 
   def run do
@@ -44,7 +45,14 @@ defmodule Craft.Linearizability do
 
     result =
       Enum.reduce_while(linearized_operations, model_state, fn op, model_state ->
-        {model_response, new_model_state} = model.command(op.command, model_state)
+        {model_response, new_model_state} =
+          case op.request do
+            {:command, command} ->
+              model.command(command, model_state)
+
+            {:query, query} ->
+              {model.query(query, model_state), model_state}
+          end
 
         if model_response == op.response do
           {:cont, new_model_state}
@@ -105,7 +113,14 @@ defmodule Craft.Linearizability do
       minimal_ops = Enum.reject(first_ops, & &1.called_at > first_return)
 
       Enum.reduce_while(minimal_ops, cache, fn op, cache ->
-        {model_response, new_model_state} = model.command(op.command, model_state)
+        {model_response, new_model_state} =
+          case op.request do
+            {:command, command} ->
+              model.command(command, model_state)
+
+            {:query, query} ->
+              {model.query(query, model_state), model_state}
+          end
 
         # if the operation timed out, consider the possiblity that it occurred but the client just didn't get a response
         {response_ok?, model_states_to_consider} =

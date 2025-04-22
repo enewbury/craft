@@ -138,6 +138,8 @@ defmodule Craft.Consensus do
         remote_group_leader = :rpc.call(node(data.nexus_pid), Process, :whereis, [:init])
         :logger.update_process_metadata(%{gl: remote_group_leader})
 
+        MemberCache.update(data)
+
         {:ok, :ready_to_test, data}
       end
 
@@ -194,9 +196,9 @@ defmodule Craft.Consensus do
   def lonely(:enter, _previous_state, data) do
     data = State.become_lonely(data)
 
-    Machine.update_role(data)
-
     MemberCache.update(data)
+
+    Machine.update_role(data)
 
     Logger.info("became lonely", logger_metadata(data))
 
@@ -373,9 +375,9 @@ defmodule Craft.Consensus do
   def follower(:enter, _previous_state, data) do
     data = State.become_follower(data)
 
-    Machine.update_role(data)
-
     MemberCache.update(data)
+
+    Machine.update_role(data)
 
     Logger.info("became follower", logger_metadata(data))
 
@@ -524,6 +526,8 @@ defmodule Craft.Consensus do
   def candidate(:enter, :follower, %State{leadership_transfer_request_id: id} = data) when is_tuple(id) do
     data = State.become_candidate(data)
 
+    MemberCache.update(data)
+
     Machine.update_role(data)
 
     Logger.info("became candidate, initiating leadership transfer election", logger_metadata(data))
@@ -536,6 +540,8 @@ defmodule Craft.Consensus do
 
   def candidate(:enter, _previous_state, data) do
     data = State.become_candidate(data)
+
+    MemberCache.update(data)
 
     Machine.update_role(data)
 
@@ -646,9 +652,9 @@ defmodule Craft.Consensus do
   def leader(:enter, _previous_state, data) do
     data = State.become_leader(data)
 
-    Machine.update_role(data)
-
     MemberCache.update(data)
+
+    Machine.update_role(data)
 
     #
     # when the cluster starts up, each node is explicitly given the same configuration to

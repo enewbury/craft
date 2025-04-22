@@ -19,6 +19,7 @@ defmodule Craft do
   alias Craft.Consensus
   alias Craft.Machine
   alias Craft.MemberCache
+  alias Craft.Consensus.State.Members
 
   require Logger
 
@@ -44,10 +45,31 @@ defmodule Craft do
     end
   end
 
-  def stop_group(name, nodes) do
-    # TODO: ask group for its nodes instead of relying on user to pass in the correct set of nodes
-    for node <- nodes do
-      :ok = :rpc.call(node, __MODULE__, :stop_member, [name])
+  def stop_group(name) do
+    case with_leader_redirect(name, &Consensus.configuration(name, &1)) do
+      {:ok, %{members: members}} ->
+        results =
+          members
+          |> Members.all_nodes()
+          |> Map.new(fn node ->
+            result =
+              try do
+                :rpc.call(node, __MODULE__, :stop_member, [name])
+              catch :exit, e ->
+                e
+              end
+
+            {node, result}
+          end)
+
+        if Enum.all?(results, fn {_node, result} -> result == :ok end) do
+          :ok
+        else
+          results
+        end
+
+      error ->
+        error
     end
   end
 
@@ -108,7 +130,7 @@ defmodule Craft do
   #
 
   def query(query, name, opts \\ []) do
-    consistency = Keyword.get(opts, :consistency, :eventual)
+    consistency = Keyword.get(opts, :consistency, :linearizable)
 
     case consistency do
       :linearizable ->
@@ -204,19 +226,23 @@ defmodule Craft do
     {name, nodes}
   end
 
+  @doc false
+  def state(name, node) do
+    try do
+      {node,
+       consensus: Consensus.state(name, node),
+       machine: Machine.state(name, node)}
+    catch :exit, e ->
+      {node, e}
+    end
+  end
+
+  @doc false
   def state(name) do
     {:ok, %{members: members}} = with_leader_redirect(name, &Consensus.configuration(name, &1))
 
     members.voting_nodes
     |> MapSet.union(members.non_voting_nodes)
-    |> Enum.into(%{}, fn node ->
-      try do
-        {node,
-         consensus: Consensus.state(name, node),
-         machine: Machine.state(name, node)}
-      catch :exit, e ->
-          {node, e}
-      end
-    end)
+    |> Enum.into(%{}, &state(name, &1))
   end
 end

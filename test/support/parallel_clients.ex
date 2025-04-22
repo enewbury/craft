@@ -1,11 +1,11 @@
 defmodule Craft.ParallelClients do
   alias Craft.Linearizability.Operation
 
-  def run(fun, num, num_commands) do
+  def run(fun, num, num_requests) do
     1..num
     |> Task.async_stream(fn _ ->
-      for i <- 1..num_commands do
-        do_command(fun, i)
+      for i <- 1..num_requests do
+        do_request(fun, i)
       end
     end, timeout: :infinity)
     |> Enum.flat_map(fn {:ok, ops} -> ops end)
@@ -23,7 +23,7 @@ defmodule Craft.ParallelClients do
         send(pid, {self(), ops})
     after
       0 ->
-        loop(fun, {i+1, [do_command(fun, i) | ops]})
+        loop(fun, {i+1, [do_request(fun, i) | ops]})
     end
   end
 
@@ -41,9 +41,9 @@ defmodule Craft.ParallelClients do
     |> List.flatten()
   end
 
-  defp do_command(fun, i) do
+  defp do_request(fun, i) do
     called_at = :erlang.monotonic_time()
-    {command, response} = fun.(i)
+    {request, response} = fun.(i)
     received_at = :erlang.monotonic_time()
 
     %Operation{
@@ -51,7 +51,7 @@ defmodule Craft.ParallelClients do
       client: self(),
       called_at: called_at,
       received_at: received_at,
-      command: command,
+      request: request,
       response: response
     }
   end

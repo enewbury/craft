@@ -35,7 +35,7 @@ defmodule Craft.NexusCase do
       {:ok, name, nexus} = Craft.TestGroup.start_group(nodes)
 
       on_exit(fn ->
-        Craft.stop_group(name, nodes)
+        Craft.stop_group(name)
       end)
 
       [name: name, nexus: nexus]

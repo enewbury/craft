@@ -27,13 +27,16 @@ defmodule Craft.TestGroup do
 
     machine_args = %{
       name: name,
-      machine: machine
+      machine: machine,
+      nexus_pid: nexus
     }
 
     Task.async_stream(states, fn {node, state} ->
       {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes, SimpleMachine, %{consensus_state: state, machine_args: machine_args}])
     end)
     |> Stream.run()
+
+    Craft.discover(name, nodes)
 
     Formatter.register(nexus, Process.get(:test_id))
 
@@ -61,6 +64,8 @@ defmodule Craft.TestGroup do
       {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes, SimpleMachine, args])
     end)
     |> Stream.run()
+
+    Craft.discover(name, nodes)
 
     Formatter.register(nexus, Process.get(:test_id))
 

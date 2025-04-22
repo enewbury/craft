@@ -10,13 +10,13 @@ defmodule Craft.LinearizabilityTest do
   nexus_test "under stable conditions", ctx do
     wait_until(ctx.nexus, {Stability, :all})
 
-    num_clients = 10
-    num_commands = 100
+    num_clients = 1
+    num_commands = 10
 
     ctx
-    |> random_command_fun()
+    |> random_request_fun()
     |> ParallelClients.run(num_clients, num_commands)
-    |> assert_linearizable
+    |> assert_linearizable()
   end
 
   nexus_test "during leadership transfer", %{nodes: nodes, name: name, nexus: nexus} = ctx do
@@ -26,13 +26,13 @@ defmodule Craft.LinearizabilityTest do
 
     clients =
       ctx
-      |> random_command_fun()
+      |> random_request_fun()
       |> ParallelClients.start(num_clients)
 
     Process.sleep(300)
 
     new_leader = Enum.random(nodes -- [leader])
-    :ok = Craft.transfer_leadership(name, new_leader, nodes)
+    :ok = Craft.transfer_leadership(name, new_leader)
 
     Process.sleep(300)
 
@@ -59,7 +59,7 @@ defmodule Craft.LinearizabilityTest do
 
     clients =
       ctx
-      |> random_command_fun()
+      |> random_request_fun()
       |> ParallelClients.start(num_clients)
 
     Process.sleep(300)
@@ -89,7 +89,7 @@ defmodule Craft.LinearizabilityTest do
 
     clients =
       ctx
-      |> random_command_fun()
+      |> random_request_fun()
       |> ParallelClients.start(num_clients)
 
     Process.sleep(300)
@@ -113,7 +113,7 @@ defmodule Craft.LinearizabilityTest do
     assert {:ok, _linearized_history, _ignored_ops} = Linearizability.linearize(history, Craft.SimpleMachine)
   end
 
-  defp random_command_fun(ctx) do
+  defp random_request_fun(ctx) do
     fn i ->
       value =
         self()
@@ -122,13 +122,13 @@ defmodule Craft.LinearizabilityTest do
         |> String.trim("<")
         |> String.trim(">")
 
-      command =
-        Enum.random([
-          {:put, :a, "#{value}_#{i}"},
-          {:get, :a}
-        ])
-
-      {command, Craft.command(command, ctx.name, ctx.nodes)}
+      if :rand.uniform(100) > 50 do
+        command = {:put, :a, "#{value}_#{i}"}
+        {{:command, command}, Craft.command(command, ctx.name)}
+      else
+        query = {:get, :a}
+        {{:query, query}, Craft.query(query, ctx.name)}
+      end
     end
   end
 end

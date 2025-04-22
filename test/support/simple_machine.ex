@@ -26,6 +26,7 @@ defmodule Craft.SimpleMachine do
     {:ok, Map.put(state, k, v)}
   end
 
+  @impl TestModel
   def query({:get, k}, state) do
     {:ok, Map.get(state, k)}
   end

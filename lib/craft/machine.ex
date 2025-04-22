@@ -4,6 +4,7 @@ defmodule Craft.Machine do
 
   alias Craft.Consensus
   alias Craft.Consensus.State, as: ConsensusState
+  alias Craft.Consensus.State.LeaderState
   alias Craft.Persistence
   alias Craft.Log.CommandEntry
   alias Craft.Log.EmptyEntry
@@ -113,11 +114,12 @@ defmodule Craft.Machine do
     |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence, state.state, should_snapshot?})
   end
 
-  def quorum_reached(%ConsensusState{} = state) do
+  def quorum_reached(%ConsensusState{leader_state: %LeaderState{last_quorum_at: last_quorum_at}} = state) when is_integer(last_quorum_at) do
     state.name
     |> lookup(__MODULE__)
-    |> GenServer.cast({:quorum_reached, state.leader_state.last_quorum_at})
+    |> GenServer.cast({:quorum_reached, last_quorum_at})
   end
+  def quorum_reached(_state), do: :noop
 
   def command(name, node, command, opts \\ []) do
     request(name, node, :command, command, opts)
@@ -152,6 +154,11 @@ defmodule Craft.Machine do
 
   @impl true
   def init(args) do
+    if args.nexus_pid do
+      remote_group_leader = :rpc.call(node(args.nexus_pid), Process, :whereis, [:init])
+      :logger.update_process_metadata(%{gl: remote_group_leader})
+    end
+
     {:ok, private} = args.machine.init(args.name)
 
     state =

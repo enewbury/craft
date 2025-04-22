@@ -30,7 +30,7 @@ defmodule Craft.Linearizability.Visualization do
       |> Enum.map(fn op -> op.received_at - op.called_at end)
       |> Enum.min()
 
-    width_per_unit_time = 100 / shortest_duration
+    width_per_unit_time = 10 / shortest_duration
     operations = Enum.map(operations, fn op ->
       %{op | called_at: op.called_at * width_per_unit_time, received_at: op.received_at * width_per_unit_time}
     end)

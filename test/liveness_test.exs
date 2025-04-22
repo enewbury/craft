@@ -11,7 +11,7 @@ defmodule Craft.LivenessTest do
     {majority, minority} = Enum.split(nodes, div(Enum.count(nodes), 2) + 1)
     leader = List.first(majority)
 
-    :ok = Craft.transfer_leadership(name, leader, majority)
+    :ok = Craft.transfer_leadership(name, leader)
 
     assert %{leader: ^leader} = wait_until(nexus, {Stability, :majority})
 
@@ -23,8 +23,8 @@ defmodule Craft.LivenessTest do
       end
     end)
 
-    assert :ok = SimpleMachine.put(name, majority, :a, 123)
-    assert {:ok, 123} = SimpleMachine.get(name, majority, :a)
+    assert :ok = SimpleMachine.put(name, :a, 123)
+    assert {:ok, 123} = SimpleMachine.get(name, :a)
   end
 
   nexus_test "leader without majority connectivity will step down (CheckQuorum)", %{nodes: nodes, nexus: nexus} do

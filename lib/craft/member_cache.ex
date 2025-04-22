@@ -5,7 +5,7 @@ defmodule Craft.MemberCache do
   alias Craft.Consensus.State.Members
 
   def discover(group_name, initial_nodes) do
-    :ets.insert(__MODULE__, {group_name, nil, initial_nodes})
+    :ets.insert(__MODULE__, {group_name, nil, MapSet.new(initial_nodes)})
 
     send(__MODULE__, :start_polling)
 
@@ -24,8 +24,7 @@ defmodule Craft.MemberCache do
     update(state.name, state.leader_id, Members.all_nodes(state.members))
   end
 
-  @doc false
-  def update(group_name, leader, members) do
+  defp update(group_name, leader, members) do
     :ets.insert(__MODULE__, {group_name, leader, members})
   end
 
@@ -73,24 +72,27 @@ defmodule Craft.MemberCache do
   @impl GenServer
   def handle_info(:poll, true) do
     for {group_name, {leader, members}} <- all() do
-      node =
-        if leader do
-          leader
-        else
-          Enum.random(members)
-        end
-
-      case GenServer.call({__MODULE__, node}, {:get, group_name}) do
-        {:ok, leader, members} ->
-          update(group_name, leader, members)
-
-        :not_found ->
-          :noop
-      end
+      do_poll(group_name, [leader | Enum.to_list(members)])
     end
 
     Process.send_after(self(), :poll, 5_000)
 
     {:noreply, true}
+  end
+
+  defp do_poll(_group_name, []), do: :not_found
+  defp do_poll(group_name, [node | nodes]) do
+    try do
+      case GenServer.call({__MODULE__, node}, {:get, group_name}) do
+        {:ok, leader, members} ->
+          update(group_name, leader, members)
+          :ok
+
+        :not_found ->
+          do_poll(group_name, nodes)
+      end
+    catch :exit, _e ->
+      do_poll(group_name, nodes)
+    end
   end
 end

@@ -30,7 +30,7 @@ defmodule Craft.ElectionTest do
 
     assert %{leader: ^expected_leader, term: 0} = wait_until(nexus, {Stability, :all})
 
-    Craft.stop_group(name, nodes)
+    Craft.stop_group(name)
   end
 
   describe "5.4.1 election restriction" do
@@ -74,13 +74,13 @@ defmodule Craft.ElectionTest do
       assert %{leader: leader, term: 5} = wait_until(nexus, {Stability, :all})
       assert leader != candidate
 
-      states = Craft.state(name, nodes)
+      states = Craft.state(name)
 
       {_leader_state, {leader_log, _metadata}} = get_in(states, [leader, :consensus])
       {_caught_up_follower_state, {caught_up_follower_log, _metadata}} = get_in(states, [candidate, :consensus])
       assert caught_up_follower_log == leader_log
 
-      Craft.stop_group(name, nodes)
+      Craft.stop_group(name)
     end
 
     @tag :unmanaged
@@ -122,7 +122,7 @@ defmodule Craft.ElectionTest do
       up_to_date_node = List.first(nodes)
 
       assert %{leader: ^up_to_date_node, term: 5} = wait_until(nexus, {Stability, :majority})
-      states = Craft.state(name, active_nodes)
+      states = Map.new(active_nodes, &Craft.state(name, &1))
 
       {_leader_state, {leader_log, _metadata}} = get_in(states, [up_to_date_node, :consensus])
       for node <- active_nodes -- [up_to_date_node] do
@@ -131,7 +131,7 @@ defmodule Craft.ElectionTest do
         assert follower_log == leader_log
       end
 
-      Craft.stop_group(name, active_nodes)
+      Craft.stop_group(name)
     end
   end
 end
