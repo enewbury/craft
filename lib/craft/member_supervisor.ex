@@ -33,15 +33,16 @@ defmodule Craft.MemberSupervisor do
 
   # TODO: - :data_dir implies {RocksDBPersistence, data_dir: data_dir}
   #       - allow passing :persistence key has a {module, args} tuple
-  def start_member(name, nodes, machine, opts \\ %{}) do
+  def start_member(name, nodes, machine, opts \\ []) do
     args =
-      %{
+      [
         name: name,
         nodes: nodes,
         machine: machine,
         persistence: {RocksDBPersistence, []}
-      }
-      |> Map.merge(opts)
+      ]
+      |> Keyword.merge(opts)
+      |> Map.new()
 
     DynamicSupervisor.start_child(Craft.Supervisor, {__MODULE__, args})
   end
