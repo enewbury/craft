@@ -144,9 +144,7 @@ defmodule Craft do
             Machine.query(name, node, query, consistency)
 
           :not_found ->
-            Logger.error(
-              "No known nodes for group '#{inspect(name)}', have you called Craft.discover/2?"
-            )
+            Logger.error("No known nodes for group '#{inspect(name)}', have you called Craft.discover/2?")
 
             {:error, :unknown_group}
         end
@@ -162,9 +160,7 @@ defmodule Craft do
         do_leader_redirect(name, leader, members, func)
 
       :not_found ->
-        Logger.error(
-          "No known nodes for group '#{inspect(name)}', have you called Craft.discover/2?"
-        )
+        Logger.error("No known nodes for group '#{inspect(name)}', have you called Craft.discover/2?")
 
         {:error, :unknown_group}
     end

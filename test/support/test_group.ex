@@ -16,13 +16,10 @@ defmodule Craft.TestGroup do
 
     states =
       Enum.map(states, fn {node, state} ->
-        {node,
-         %{
-           state
-           | current_term: Persistence.latest_term(state.persistence),
-             name: name,
-             nexus_pid: nexus
-         }}
+        {node, %{state |
+                 current_term: Persistence.latest_term(state.persistence),
+                 name: name,
+                 nexus_pid: nexus}}
       end)
 
     prepare_nodes(nodes)
@@ -30,13 +27,7 @@ defmodule Craft.TestGroup do
     opts = [nexus_pid: nexus, manual_start: true]
 
     Task.async_stream(states, fn {node, state} ->
-      {:ok, _pid} =
-        :rpc.call(node, Craft, :start_member, [
-          name,
-          nodes,
-          machine,
-          %{consensus_data: state, opts: opts}
-        ])
+      {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes, machine, %{consensus_data: state, opts: opts}])
     end)
     |> Stream.run()
 
