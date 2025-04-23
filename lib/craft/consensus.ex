@@ -17,7 +17,6 @@ defmodule Craft.Consensus do
   # candidate: follower that's called an election after a successful majority pre-vote
   # leader: candidate that's won majority vote
 
-
   alias Craft.Consensus.State
   alias Craft.Consensus.State.LeaderState
   alias Craft.Consensus.State.LeaderState.LeadershipTransfer
@@ -40,7 +39,8 @@ defmodule Craft.Consensus do
 
   @behaviour :gen_statem
 
-  @heartbeat_interval 100 # ms
+  # ms
+  @heartbeat_interval 100
 
   # max time in the past within which leader must have a successful quorum, or it'll step down
   @checkquorum_interval @heartbeat_interval * 3
@@ -54,7 +54,6 @@ defmodule Craft.Consensus do
   @leadership_transfer_timeout 3000
 
   defp jitter(max \\ 1500), do: :rand.uniform(max)
-
 
   #
   # API
@@ -73,10 +72,9 @@ defmodule Craft.Consensus do
     receive do
       {^id, reply} ->
         reply
-
-      after
-        timeout ->
-          {:error, :timeout}
+    after
+      timeout ->
+        {:error, :timeout}
     end
   end
 
@@ -123,7 +121,17 @@ defmodule Craft.Consensus do
 
   if Mix.env() == :test do
     defoverridable start_link: 1
-    def start_link(state), do: :gen_statem.start_link({:local, name(state.name)}, Craft.Consensus.Tracer, state, [])
+
+    def start_link(args) do
+      name = args.name
+      args =
+        case Map.pop(args, :consensus_data) do
+          {nil, args} -> args
+          {data, args} -> {data, args}
+        end
+
+      :gen_statem.start_link({:local, name(name)}, Craft.Consensus.Tracer, args, [])
+    end
 
     defmodule Tracer do
       @moduledoc """
@@ -133,32 +141,43 @@ defmodule Craft.Consensus do
       """
 
       defdelegate callback_mode, to: Craft.Consensus
-      def init(data) when is_struct(data) do
+
+      def init({data, args}) when is_struct(data) do
         # forward logs to testing server
         remote_group_leader = :rpc.call(node(data.nexus_pid), Process, :whereis, [:init])
         :logger.update_process_metadata(%{gl: remote_group_leader})
 
         MemberCache.update(data)
 
-        {:ok, :ready_to_test, data}
+        state = if args[:manual_start], do: :ready_to_test, else: :lonely
+
+        {:ok, state, data}
       end
 
       def init(args) do
-        %State{
-          State.new(args.name, args.nodes, args.persistence) |
-           nexus_pid: args.nexus_pid,
-           state: :lonely
+        data = %State{
+          State.new(args.name, args.nodes, args.persistence)
+          | nexus_pid: args.nexus_pid,
+            state: :lonely
         }
-        |> init()
+
+        init({data, args})
       end
 
       def ready_to_test(:enter, _, _data), do: :keep_state_and_data
-      def ready_to_test(:cast, :run, %State{state: state} = data), do: {:next_state, state, data, []}
+
+      def ready_to_test(:cast, :run, %State{state: state} = data),
+        do: {:next_state, state, data, []}
+
       def ready_to_test({:call, _from}, :catch_up, _data), do: {:keep_state_and_data, [:postpone]}
 
       for state <- [:lonely, :receiving_snapshot, :follower, :candidate, :leader] do
         def unquote(state)(event, msg, data) do
-          send(data.nexus_pid, {DateTime.utc_now(), {:trace,  node(), unquote(state), event, msg, data}})
+          send(
+            data.nexus_pid,
+            {DateTime.utc_now(), {:trace, node(), unquote(state), event, msg, data}}
+          )
+
           apply(Craft.Consensus, unquote(state), [event, msg, data])
         end
       end
@@ -180,7 +199,7 @@ defmodule Craft.Consensus do
   def child_spec(args) do
     %{
       id: __MODULE__,
-      start: {__MODULE__, :start_link, args}
+      start: {__MODULE__, :start_link, [args]}
     }
   end
 
@@ -222,14 +241,18 @@ defmodule Craft.Consensus do
   # if we receive a message with a higher term, bump our term and process the message
   #
   # this would have been implemented as a `:postpone`, but :gen_statem doesn't process postpones for :repeat_state so we have to fake it
-  def lonely(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term > current_term do
+  def lonely(:cast, %{term: term} = msg, %State{current_term: current_term} = data)
+      when term > current_term do
     lonely(:cast, msg, State.become_lonely(data, term))
   end
 
   def lonely(:cast, %RequestVote{pre_vote: true} = request_vote, data) do
     vote_granted = State.vote_for?(data, request_vote)
 
-    Logger.info("#{if vote_granted, do: "granting", else: "denying"} pre-vote to #{request_vote.candidate_id}", logger_metadata(data))
+    Logger.info(
+      "#{if vote_granted, do: "granting", else: "denying"} pre-vote to #{request_vote.candidate_id}",
+      logger_metadata(data)
+    )
 
     RPC.respond_vote(request_vote, vote_granted, data)
 
@@ -244,7 +267,10 @@ defmodule Craft.Consensus do
         {false, data}
       end
 
-    Logger.info("#{if vote_granted, do: "granting", else: "denying"} vote to #{request_vote.candidate_id}", logger_metadata(data))
+    Logger.info(
+      "#{if vote_granted, do: "granting", else: "denying"} vote to #{request_vote.candidate_id}",
+      logger_metadata(data)
+    )
 
     RPC.respond_vote(request_vote, vote_granted, data)
 
@@ -256,9 +282,11 @@ defmodule Craft.Consensus do
     {:keep_state, data}
   end
 
-
   def lonely(:cast, %RequestVote.Results{pre_vote: true} = results, data) do
-    Logger.info("pre-vote #{if results.vote_granted, do: "granted", else: "denied"} by #{results.from}", logger_metadata(data))
+    Logger.info(
+      "pre-vote #{if results.vote_granted, do: "granted", else: "denied"} by #{results.from}",
+      logger_metadata(data)
+    )
 
     data = State.record_vote(data, results)
 
@@ -307,7 +335,7 @@ defmodule Craft.Consensus do
   end
 
   def lonely(type, msg, data) do
-    Logger.info("ignoring #{inspect type} message #{inspect msg}", logger_metadata(data))
+    Logger.info("ignoring #{inspect(type)} message #{inspect(msg)}", logger_metadata(data))
 
     :keep_state_and_data
   end
@@ -331,6 +359,7 @@ defmodule Craft.Consensus do
 
     {:keep_state, data, []}
   end
+
   # def receiving_snapshot(:state_timeout, :become_lonely, data), do: {:next_state, :lonely, data}
 
   def receiving_snapshot(:cast, %InstallSnapshot{} = install_snapshot, data) do
@@ -351,7 +380,10 @@ defmodule Craft.Consensus do
     persistence =
       data.persistence
       |> Persistence.rewind(-1)
-      |> Persistence.append(install_snapshot.snapshot_transfer.log_entry, install_snapshot.snapshot_transfer.log_index)
+      |> Persistence.append(
+        install_snapshot.snapshot_transfer.log_entry,
+        install_snapshot.snapshot_transfer.log_index
+      )
 
     SnapshotTransfer.receive(install_snapshot.snapshot_transfer, data_dir)
 
@@ -364,7 +396,6 @@ defmodule Craft.Consensus do
     # {:keep_state, data, []}
     {:next_state, :follower, data}
   end
-
 
   #
   # Follower
@@ -383,9 +414,15 @@ defmodule Craft.Consensus do
 
     {:keep_state, data, [become_lonely_timeout()]}
   end
+
   def follower(:state_timeout, :become_lonely, data), do: {:next_state, :lonely, data}
 
-  def follower(:cast, %RequestVote{leadership_transfer: true, term: term} = request_vote, %State{current_term: current_term} = data) when term > current_term do
+  def follower(
+        :cast,
+        %RequestVote{leadership_transfer: true, term: term} = request_vote,
+        %State{current_term: current_term} = data
+      )
+      when term > current_term do
     {vote_granted, data} =
       if State.vote_for?(data, request_vote) do
         {true, State.set_current_term(data, term, request_vote.candidate_id)}
@@ -393,7 +430,10 @@ defmodule Craft.Consensus do
         {false, data}
       end
 
-    Logger.info("#{if vote_granted, do: "granting", else: "denying"} vote to #{request_vote.candidate_id}", logger_metadata(data))
+    Logger.info(
+      "#{if vote_granted, do: "granting", else: "denying"} vote to #{request_vote.candidate_id}",
+      logger_metadata(data)
+    )
 
     RPC.respond_vote(request_vote, vote_granted, data)
 
@@ -402,7 +442,10 @@ defmodule Craft.Consensus do
 
   # followers are happy with the leader, they vote "no" to all non-transfer elections types, regardless of term
   def follower(:cast, %RequestVote{} = request_vote, data) do
-    Logger.info("denying #{if request_vote.pre_vote, do: "pre-", else: ""}vote to #{request_vote.candidate_id}", logger_metadata(data))
+    Logger.info(
+      "denying #{if request_vote.pre_vote, do: "pre-", else: ""}vote to #{request_vote.candidate_id}",
+      logger_metadata(data)
+    )
 
     RPC.respond_vote(request_vote, false, data)
 
@@ -412,7 +455,8 @@ defmodule Craft.Consensus do
   # if we receive an AppendEntries message with a higher term, bump our term and process the message
   #
   # this would have been implemented as a `:postpone`, but :gen_statem doesn't process postpones for :repeat_state so we have to fake it
-  def follower(:cast, %AppendEntries{term: term} = msg, %State{current_term: current_term} = data) when term > current_term do
+  def follower(:cast, %AppendEntries{term: term} = msg, %State{current_term: current_term} = data)
+      when term > current_term do
     follower(:cast, msg, State.set_current_term(data, term))
   end
 
@@ -424,14 +468,20 @@ defmodule Craft.Consensus do
     {success, data} =
       case Persistence.fetch(data.persistence, append_entries.prev_log_index) do
         {:ok, %{term: ^prev_log_term}} ->
-          rewound_entries = Persistence.fetch_from(data.persistence, append_entries.prev_log_index + 1)
+          rewound_entries =
+            Persistence.fetch_from(data.persistence, append_entries.prev_log_index + 1)
 
           persistence =
             data.persistence
             |> Persistence.rewind(append_entries.prev_log_index)
             |> Persistence.append(append_entries.entries)
 
-          data = %State{data | persistence: persistence, commit_index: min(append_entries.leader_commit, Persistence.latest_index(persistence))}
+          data = %State{
+            data
+            | persistence: persistence,
+              commit_index:
+                min(append_entries.leader_commit, Persistence.latest_index(persistence))
+          }
 
           new_membership_entry =
             append_entries.entries
@@ -462,10 +512,18 @@ defmodule Craft.Consensus do
           end
 
         _ ->
-          {false, %State{data | persistence: Persistence.rewind(data.persistence, append_entries.prev_log_index - 1)}}
+          {false,
+           %State{
+             data
+             | persistence:
+                 Persistence.rewind(data.persistence, append_entries.prev_log_index - 1)
+           }}
       end
 
-    Logger.debug("leader heartbeat from #{append_entries.leader_id}, restarting timer", logger_metadata(data))
+    Logger.debug(
+      "leader heartbeat from #{append_entries.leader_id}, restarting timer",
+      logger_metadata(data)
+    )
 
     RPC.respond_append_entries(append_entries, success, data)
 
@@ -477,9 +535,12 @@ defmodule Craft.Consensus do
 
     # leader told us to take over leadership when our log is caught up
     if append_entries.leadership_transfer &&
-      append_entries.leadership_transfer.latest_index == Persistence.latest_index(data.persistence) &&
-      append_entries.leadership_transfer.latest_term == Persistence.latest_term(data.persistence) do
-      {:next_state, :candidate, %State{data | leadership_transfer_request_id: append_entries.leadership_transfer.from}}
+         append_entries.leadership_transfer.latest_index ==
+           Persistence.latest_index(data.persistence) &&
+         append_entries.leadership_transfer.latest_term ==
+           Persistence.latest_term(data.persistence) do
+      {:next_state, :candidate,
+       %State{data | leadership_transfer_request_id: append_entries.leadership_transfer.from}}
     else
       {:keep_state, data, [become_lonely_timeout()]}
     end
@@ -514,7 +575,7 @@ defmodule Craft.Consensus do
   end
 
   def follower(type, msg, data) do
-    Logger.info("ignoring #{inspect type} message #{inspect msg}", logger_metadata(data))
+    Logger.info("ignoring #{inspect(type)} message #{inspect(msg)}", logger_metadata(data))
 
     :keep_state_and_data
   end
@@ -523,14 +584,18 @@ defmodule Craft.Consensus do
   # Candidate
   #
 
-  def candidate(:enter, :follower, %State{leadership_transfer_request_id: id} = data) when is_tuple(id) do
+  def candidate(:enter, :follower, %State{leadership_transfer_request_id: id} = data)
+      when is_tuple(id) do
     data = State.become_candidate(data)
 
     MemberCache.update(data)
 
     Machine.update_role(data)
 
-    Logger.info("became candidate, initiating leadership transfer election", logger_metadata(data))
+    Logger.info(
+      "became candidate, initiating leadership transfer election",
+      logger_metadata(data)
+    )
 
     RPC.request_vote(data, leadership_transfer: true)
 
@@ -551,6 +616,7 @@ defmodule Craft.Consensus do
 
     {:keep_state, data, [{:state_timeout, @election_timeout, :election_failed}]}
   end
+
   def candidate(:state_timeout, :election_failed, data) do
     Logger.info("election failed, becoming lonely", logger_metadata(data))
 
@@ -558,18 +624,27 @@ defmodule Craft.Consensus do
   end
 
   # ignore messages from earlier terms
-  def candidate(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term < current_term do
-    Logger.info("ignoring message #{inspect msg} for earlier term #{term}", logger_metadata(data))
+  def candidate(:cast, %{term: term} = msg, %State{current_term: current_term} = data)
+      when term < current_term do
+    Logger.info(
+      "ignoring message #{inspect(msg)} for earlier term #{term}",
+      logger_metadata(data)
+    )
 
     :keep_state_and_data
   end
 
   # become follower if any message from a higher term arrives
-  def candidate(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term > current_term, do: become_follower(msg, data)
+  def candidate(:cast, %{term: term} = msg, %State{current_term: current_term} = data)
+      when term > current_term,
+      do: become_follower(msg, data)
 
   # refuse to vote for another candidate
   def candidate(:cast, %RequestVote{} = request_vote, data) do
-    Logger.info("denying #{(if request_vote.pre_vote, do: "pre-", else: "")}vote to #{request_vote.candidate_id}", logger_metadata(data))
+    Logger.info(
+      "denying #{if request_vote.pre_vote, do: "pre-", else: ""}vote to #{request_vote.candidate_id}",
+      logger_metadata(data)
+    )
 
     RPC.respond_vote(request_vote, false, data)
 
@@ -634,7 +709,7 @@ defmodule Craft.Consensus do
   end
 
   def candidate(type, msg, data) do
-    Logger.info("ignoring #{inspect type} message #{inspect msg}", logger_metadata(data))
+    Logger.info("ignoring #{inspect(type)} message #{inspect(msg)}", logger_metadata(data))
 
     :keep_state_and_data
   end
@@ -643,7 +718,11 @@ defmodule Craft.Consensus do
   # Leader
   #
 
-  def leader(:enter, previous_state, %State{leadership_transfer_request_id: {caller_pid, _ref} = id} = data) do
+  def leader(
+        :enter,
+        previous_state,
+        %State{leadership_transfer_request_id: {caller_pid, _ref} = id} = data
+      ) do
     send(caller_pid, {id, :ok})
 
     leader(:enter, previous_state, %State{data | leadership_transfer_request_id: nil})
@@ -667,7 +746,10 @@ defmodule Craft.Consensus do
     # appending an entry from the current term also allows us to commit any possibly uncommitted entries
     # from previous terms (section 5.4.2)
     #
-    data = %State{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
+    data = %State{
+      data
+      | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))
+    }
 
     Logger.info("became leader", logger_metadata(data))
 
@@ -691,7 +773,9 @@ defmodule Craft.Consensus do
     num_replies_in_window =
       data.leader_state.last_heartbeat_replies_at
       |> Map.values()
-      |> Enum.filter(fn {_sent_at, received_at} -> received_at >= :erlang.monotonic_time(:millisecond) - @checkquorum_interval end)
+      |> Enum.filter(fn {_sent_at, received_at} ->
+        received_at >= :erlang.monotonic_time(:millisecond) - @checkquorum_interval
+      end)
       |> Enum.count()
 
     # + 1 for leader
@@ -704,19 +788,28 @@ defmodule Craft.Consensus do
   end
 
   # ignore any messages from earlier terms
-  def leader(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term < current_term do
-    Logger.info("ignoring message #{inspect msg} for earlier term #{term}", logger_metadata(data))
+  def leader(:cast, %{term: term} = msg, %State{current_term: current_term} = data)
+      when term < current_term do
+    Logger.info(
+      "ignoring message #{inspect(msg)} for earlier term #{term}",
+      logger_metadata(data)
+    )
 
     :keep_state_and_data
   end
 
   # become follower if any message from a higher term arrives
-  def leader(:cast, %{term: term} = msg, %State{current_term: current_term} = data) when term > current_term, do: become_follower(msg, data)
+  def leader(:cast, %{term: term} = msg, %State{current_term: current_term} = data)
+      when term > current_term,
+      do: become_follower(msg, data)
 
   def leader(:cast, %RequestVote{pre_vote: true} = request_vote, data) do
     vote_granted = State.vote_for?(data, request_vote)
 
-    Logger.info("#{if vote_granted, do: "granting", else: "denying"} pre-vote to #{request_vote.candidate_id}", logger_metadata(data))
+    Logger.info(
+      "#{if vote_granted, do: "granting", else: "denying"} pre-vote to #{request_vote.candidate_id}",
+      logger_metadata(data)
+    )
 
     RPC.respond_vote(request_vote, vote_granted, data)
 
@@ -747,12 +840,16 @@ defmodule Craft.Consensus do
 
         data =
           Enum.reduce(data.members.catching_up_nodes, data, fn node, data ->
-            if Persistence.latest_index(data.persistence) <= Map.get(data.leader_state.match_indices, node) do
-              Logger.info("node #{inspect node} is caught up", logger_metadata(data))
+            if Persistence.latest_index(data.persistence) <=
+                 Map.get(data.leader_state.match_indices, node) do
+              Logger.info("node #{inspect(node)} is caught up", logger_metadata(data))
 
               data = %State{data | members: Members.allow_node_to_vote(data.members, node)}
 
-              %State{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
+              %State{
+                data
+                | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))
+              }
             else
               data
             end
@@ -767,7 +864,12 @@ defmodule Craft.Consensus do
           # leadership is being transferred
           if membership_change.action == :remove && membership_change.node == node() do
             data = LeaderState.transfer_leadership(data)
-            actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :self_removal} | actions]
+
+            actions = [
+              {{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout,
+               :self_removal}
+              | actions
+            ]
 
             RPC.append_entries(data)
 
@@ -793,16 +895,28 @@ defmodule Craft.Consensus do
   end
 
   # user asked to transfer leadership to existing leader, noop
-  def leader(:cast, {:user_command, {caller_pid, _ref} = id, {:transfer_leadership, to_node}}, _data) when to_node == node() do
+  def leader(
+        :cast,
+        {:user_command, {caller_pid, _ref} = id, {:transfer_leadership, to_node}},
+        _data
+      )
+      when to_node == node() do
     send(caller_pid, {id, :ok})
 
     :keep_state_and_data
   end
 
-  def leader(:cast, {:user_command, {caller_pid, _ref} = id, {:transfer_leadership, to_node}}, data) do
+  def leader(
+        :cast,
+        {:user_command, {caller_pid, _ref} = id, {:transfer_leadership, to_node}},
+        data
+      ) do
     if Members.can_vote?(data.members, to_node) do
       data = LeaderState.transfer_leadership(data, to_node, id)
-      actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :user_requested}]
+
+      actions = [
+        {{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :user_requested}
+      ]
 
       RPC.append_entries(data)
 
@@ -814,8 +928,16 @@ defmodule Craft.Consensus do
     end
   end
 
-  def leader({:call, from}, {:machine_command, _command}, %State{leader_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
-    {:keep_state_and_data, [{:reply, from, {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}}]}
+  def leader({:call, from}, {:machine_command, _command}, %State{
+        leader_state: %LeaderState{
+          leadership_transfer: %LeadershipTransfer{} = leadership_transfer
+        }
+      }) do
+    {:keep_state_and_data,
+     [
+       {:reply, from,
+        {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}}
+     ]}
   end
 
   def leader({:call, from}, {:machine_command, command}, data) do
@@ -826,18 +948,25 @@ defmodule Craft.Consensus do
     {:keep_state, %State{data | persistence: persistence}, [{:reply, from, {:ok, entry_index}}]}
   end
 
-  def leader({:call, from}, _msg, %State{leader_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
-    {:keep_state_and_data, [{:reply, from, {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}}]}
+  def leader({:call, from}, _msg, %State{
+        leader_state: %LeaderState{
+          leadership_transfer: %LeadershipTransfer{} = leadership_transfer
+        }
+      }) do
+    {:keep_state_and_data,
+     [
+       {:reply, from,
+        {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}}
+     ]}
   end
 
   def leader({:call, from}, :configuration, data) do
     {:ok, machine_module} = Machine.module(data.name)
 
-    config = %{
-      members: data.members,
-      machine_module: machine_module,
-      log_module: data.persistence.module
-    }
+    config =
+      data
+      |> Map.take([:members, :nexus_pid])
+      |> Map.merge(%{machine_module: machine_module, log_module: data.persistence.module})
 
     {:keep_state_and_data, [{:reply, from, {:ok, config}}]}
   end
@@ -846,7 +975,8 @@ defmodule Craft.Consensus do
     if LeaderState.config_change_in_progress?(data) do
       {:keep_state_and_data, [{:reply, from, {:error, :config_change_in_progress}}]}
     else
-      data = LeaderState.add_node(data, node, from, Persistence.latest_index(data.persistence) + 1)
+      data =
+        LeaderState.add_node(data, node, from, Persistence.latest_index(data.persistence) + 1)
 
       entry =
         %MembershipEntry{
@@ -866,7 +996,8 @@ defmodule Craft.Consensus do
     if LeaderState.config_change_in_progress?(data) do
       {:keep_state_and_data, [{:reply, from, {:error, :config_change_in_progress}}]}
     else
-      data = LeaderState.remove_node(data, node, from, Persistence.latest_index(data.persistence) + 1)
+      data =
+        LeaderState.remove_node(data, node, from, Persistence.latest_index(data.persistence) + 1)
 
       entry =
         %MembershipEntry{
@@ -893,7 +1024,7 @@ defmodule Craft.Consensus do
   end
 
   def leader(type, msg, data) do
-    Logger.info("ignoring #{inspect type} message #{inspect msg}", logger_metadata(data))
+    Logger.info("ignoring #{inspect(type)} message #{inspect(msg)}", logger_metadata(data))
 
     :keep_state_and_data
   end
@@ -903,7 +1034,10 @@ defmodule Craft.Consensus do
   end
 
   defp become_follower(%{term: term} = msg, data) do
-    Logger.info("received message #{inspect msg} from later term #{term}, becoming/remaining follower", logger_metadata(data))
+    Logger.info(
+      "received message #{inspect(msg)} from later term #{term}, becoming/remaining follower",
+      logger_metadata(data)
+    )
 
     {:next_state, :follower, State.set_current_term(data, term), [:postpone]}
   end

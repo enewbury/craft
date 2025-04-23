@@ -13,19 +13,9 @@ defmodule Craft.MemberSupervisor do
 
   @impl Supervisor
   def init(args) do
-    {consensus_args, machine_args} =
-      case args do
-        # for testing
-        %{consensus_state: consensus_args, machine_args: machine_args} ->
-          {consensus_args, machine_args}
-
-        _ ->
-          {args, args}
-      end
-
     children = [
-      {Craft.Consensus, [consensus_args]},
-      {Craft.Machine, machine_args}
+      {Craft.Consensus, args},
+      {Craft.Machine, args}
     ]
 
     Supervisor.init(children, strategy: :one_for_all)
@@ -34,15 +24,24 @@ defmodule Craft.MemberSupervisor do
   # TODO: - :data_dir implies {RocksDBPersistence, data_dir: data_dir}
   #       - allow passing :persistence key has a {module, args} tuple
   def start_member(name, nodes, machine, opts \\ []) do
+    defaults = [
+      name: name,
+      nodes: nodes,
+      machine: machine,
+      persistence: {RocksDBPersistence, []}
+    ]
+
+
     args =
-      [
-        name: name,
-        nodes: nodes,
-        machine: machine,
-        persistence: {RocksDBPersistence, []}
-      ]
-      |> Keyword.merge(opts)
-      |> Map.new()
+      case opts do
+        # for testing
+        %{consensus_data: consensus_data, opts: opts} ->
+          args = opts |> Keyword.merge(defaults) |> Map.new()
+          Map.put(args, :consensus_data, consensus_data)
+
+        _ ->
+          opts |> Keyword.merge(defaults) |> Map.new()
+      end
 
     DynamicSupervisor.start_child(Craft.Supervisor, {__MODULE__, args})
   end

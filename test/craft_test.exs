@@ -19,4 +19,25 @@ defmodule CraftTest do
 
     assert %{leader: ^new_leader} = wait_until(nexus, {Stability, :all})
   end
+
+  nexus_test "remove a member", %{nodes: nodes, name: name, nexus: nexus} do
+    %{leader: leader} = wait_until(nexus, {Stability, :all})
+
+    member = Enum.random(nodes -- [leader])
+    Craft.remove_member(name, member)
+    members = Craft.state(name) |> Map.keys()
+    assert members == nodes -- [member]
+  end
+
+  nexus_test "add a member", %{nodes: nodes, name: name, nexus: nexus} do
+    wait_until(nexus, {Stability, :all})
+
+    [new_node] = Craft.TestCluster.spawn_nodes(1)
+    Craft.add_member(name, new_node)
+
+    wait_until(nexus, {Stability, :all})
+
+    members = name |> Craft.state() |> Map.keys() |> MapSet.new()
+    assert members == MapSet.new([new_node | nodes])
+  end
 end

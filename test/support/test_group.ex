@@ -1,7 +1,6 @@
 defmodule Craft.TestGroup do
   alias Craft.Consensus
   alias Craft.Persistence
-  alias Craft.Persistence.RocksDBPersistence
   # alias Craft.Persistence.MapPersistence
   alias Craft.SimpleMachine
   alias Craft.NexusCase.Formatter
@@ -17,22 +16,27 @@ defmodule Craft.TestGroup do
 
     states =
       Enum.map(states, fn {node, state} ->
-        {node, %{state |
-                 current_term: Persistence.latest_term(state.persistence),
-                 name: name,
-                 nexus_pid: nexus}}
+        {node,
+         %{
+           state
+           | current_term: Persistence.latest_term(state.persistence),
+             name: name,
+             nexus_pid: nexus
+         }}
       end)
 
     prepare_nodes(nodes)
 
-    machine_args = %{
-      name: name,
-      machine: machine,
-      nexus_pid: nexus
-    }
+    opts = [nexus_pid: nexus, manual_start: true]
 
     Task.async_stream(states, fn {node, state} ->
-      {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes, SimpleMachine, %{consensus_state: state, machine_args: machine_args}])
+      {:ok, _pid} =
+        :rpc.call(node, Craft, :start_member, [
+          name,
+          nodes,
+          machine,
+          %{consensus_data: state, opts: opts}
+        ])
     end)
     |> Stream.run()
 
@@ -52,16 +56,10 @@ defmodule Craft.TestGroup do
 
     prepare_nodes(nodes)
 
-    args = %{
-      name: name,
-      nodes: nodes,
-      machine: machine,
-      persistence: {RocksDBPersistence, []},
-      nexus_pid: nexus
-    }
+    opts = [nexus_pid: nexus, manual_start: true]
 
     Task.async_stream(nodes, fn node ->
-      {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes, SimpleMachine, args])
+      {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes, machine, opts])
     end)
     |> Stream.run()
 
