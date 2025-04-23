@@ -7,6 +7,8 @@ defmodule Craft.MemberSupervisor do
 
   import Craft.Application, only: [via: 2, lookup: 2]
 
+  @consensus_module Application.compile_env(:craft, :consensus_module, Craft.Consensus)
+
   def start_link(args) do
     Supervisor.start_link(__MODULE__, args, name: via(args.name, __MODULE__))
   end
@@ -14,7 +16,7 @@ defmodule Craft.MemberSupervisor do
   @impl Supervisor
   def init(args) do
     children = [
-      {Craft.Consensus, args},
+      {@consensus_module, args},
       {Craft.Machine, args}
     ]
 
@@ -30,7 +32,6 @@ defmodule Craft.MemberSupervisor do
       machine: machine,
       persistence: {RocksDBPersistence, []}
     ]
-
 
     args =
       case opts do
