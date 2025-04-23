@@ -46,7 +46,7 @@ defmodule Craft do
   end
 
   def stop_group(name) do
-    case with_leader_redirect(name, &Consensus.configuration(name, &1)) do
+    case with_leader_redirect(name, &configuration(name, &1)) do
       {:ok, %{members: members}} ->
         results =
           members
@@ -81,7 +81,7 @@ defmodule Craft do
        members: members,
        machine_module: machine_module,
        log_module: log_module
-     }} = with_leader_redirect(name, &Consensus.configuration(name, &1))
+     }} = with_leader_redirect(name, &configuration(name, &1))
 
     for module <- [__MODULE__, machine_module, log_module] do
       {:module, ^module} = :rpc.call(node, Code, :ensure_loaded, [module])
@@ -239,10 +239,18 @@ defmodule Craft do
 
   @doc false
   def state(name) do
-    {:ok, %{members: members}} = with_leader_redirect(name, &Consensus.configuration(name, &1))
+    {:ok, %{members: members}} = with_leader_redirect(name, &configuration(name, &1))
 
     members.voting_nodes
     |> MapSet.union(members.non_voting_nodes)
     |> Enum.into(%{}, &state(name, &1))
+  end
+
+  defp configuration(name, node) do
+    try do
+      Consensus.configuration(name, node)
+    catch :exit, e ->
+      {:error, e}
+    end
   end
 end
