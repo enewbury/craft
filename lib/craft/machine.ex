@@ -154,8 +154,8 @@ defmodule Craft.Machine do
 
   @impl true
   def init(args) do
-    if args.nexus_pid do
-      remote_group_leader = :rpc.call(node(args.nexus_pid), Process, :whereis, [:init])
+    if nexus_pid = args[:nexus_pid] do
+      remote_group_leader = :rpc.call(node(nexus_pid), Process, :whereis, [:init])
       :logger.update_process_metadata(%{gl: remote_group_leader})
     end
 
