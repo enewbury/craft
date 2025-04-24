@@ -74,18 +74,18 @@ defmodule Craft do
   def add_member(name, node) do
     :pong = Node.ping(node)
 
-    {:ok,
-     %{
-       members: members,
-       machine_module: machine_module,
-       log_module: log_module
-     }} = with_leader_redirect(name, &configuration(name, &1))
+    {:ok, config} = with_leader_redirect(name, &configuration(name, &1))
 
-    for module <- [__MODULE__, machine_module, log_module] do
+    {%{
+       members: members,
+       machine_module: machine_module
+     }, opts} = Map.split(config, [:members, :machine_module])
+
+    for module <- [__MODULE__, machine_module, Map.get(opts, :log_module)] do
       {:module, ^module} = :rpc.call(node, Code, :ensure_loaded, [module])
     end
 
-    {:ok, _pid} = :rpc.call(node, __MODULE__, :start_member, [name, members.voting_nodes, machine_module, [log_module: log_module]])
+    {:ok, _pid} = :rpc.call(node, __MODULE__, :start_member, [name, members.voting_nodes, machine_module, Keyword.new(opts)])
 
     with_leader_redirect(name, &Consensus.add_member(name, &1, node))
 
@@ -112,7 +112,6 @@ defmodule Craft do
   def command(command, name, opts \\ []) do
     with_leader_redirect(name, &Machine.command(name, &1, command, opts))
   end
-
 
   #
   # Craft.query(command, name, consistency: :linearizable)
@@ -145,7 +144,7 @@ defmodule Craft do
             Machine.query(name, node, query, consistency)
 
           :not_found ->
-            Logger.error("No known nodes for group '#{inspect name}', have you called Craft.discover/2?")
+            Logger.error("No known nodes for group '#{inspect(name)}', have you called Craft.discover/2?")
 
             {:error, :unknown_group}
         end
@@ -161,7 +160,7 @@ defmodule Craft do
         do_leader_redirect(name, leader, members, func)
 
       :not_found ->
-        Logger.error("No known nodes for group '#{inspect name}', have you called Craft.discover/2?")
+        Logger.error("No known nodes for group '#{inspect(name)}', have you called Craft.discover/2?")
 
         {:error, :unknown_group}
     end

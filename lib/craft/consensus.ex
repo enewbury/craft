@@ -17,7 +17,6 @@ defmodule Craft.Consensus do
   # candidate: follower that's called an election after a successful majority pre-vote
   # leader: candidate that's won majority vote
 
-
   alias Craft.Consensus.State
   alias Craft.Consensus.State.LeaderState
   alias Craft.Consensus.State.LeaderState.LeadershipTransfer
@@ -54,7 +53,6 @@ defmodule Craft.Consensus do
   @leadership_transfer_timeout 3000
 
   defp jitter(max \\ 1500), do: :rand.uniform(max)
-
 
   #
   # API
@@ -121,50 +119,6 @@ defmodule Craft.Consensus do
     :gen_statem.start_link({:local, name(args.name)}, __MODULE__, args, [])
   end
 
-  if Mix.env() == :test do
-    defoverridable start_link: 1
-    def start_link(state), do: :gen_statem.start_link({:local, name(state.name)}, Craft.Consensus.Tracer, state, [])
-
-    defmodule Tracer do
-      @moduledoc """
-      decorator to capture state machine events in test
-
-      :erlang.trace/3 can't guarantee delivery order between trace messages and messages that this process sends, so we decorate instead
-      """
-
-      defdelegate callback_mode, to: Craft.Consensus
-      def init(data) when is_struct(data) do
-        # forward logs to testing server
-        remote_group_leader = :rpc.call(node(data.nexus_pid), Process, :whereis, [:init])
-        :logger.update_process_metadata(%{gl: remote_group_leader})
-
-        MemberCache.update(data)
-
-        {:ok, :ready_to_test, data}
-      end
-
-      def init(args) do
-        %State{
-          State.new(args.name, args.nodes, args.persistence) |
-           nexus_pid: args.nexus_pid,
-           state: :lonely
-        }
-        |> init()
-      end
-
-      def ready_to_test(:enter, _, _data), do: :keep_state_and_data
-      def ready_to_test(:cast, :run, %State{state: state} = data), do: {:next_state, state, data, []}
-      def ready_to_test({:call, _from}, :catch_up, _data), do: {:keep_state_and_data, [:postpone]}
-
-      for state <- [:lonely, :receiving_snapshot, :follower, :candidate, :leader] do
-        def unquote(state)(event, msg, data) do
-          send(data.nexus_pid, {DateTime.utc_now(), {:trace,  node(), unquote(state), event, msg, data}})
-          apply(Craft.Consensus, unquote(state), [event, msg, data])
-        end
-      end
-    end
-  end
-
   def init(args) do
     Logger.metadata(name: args.name, node: node())
 
@@ -180,7 +134,7 @@ defmodule Craft.Consensus do
   def child_spec(args) do
     %{
       id: __MODULE__,
-      start: {__MODULE__, :start_link, args}
+      start: {__MODULE__, :start_link, [args]}
     }
   end
 
@@ -256,7 +210,6 @@ defmodule Craft.Consensus do
     {:keep_state, data}
   end
 
-
   def lonely(:cast, %RequestVote.Results{pre_vote: true} = results, data) do
     Logger.info("pre-vote #{if results.vote_granted, do: "granted", else: "denied"} by #{results.from}", logger_metadata(data))
 
@@ -331,6 +284,7 @@ defmodule Craft.Consensus do
 
     {:keep_state, data, []}
   end
+
   # def receiving_snapshot(:state_timeout, :become_lonely, data), do: {:next_state, :lonely, data}
 
   def receiving_snapshot(:cast, %InstallSnapshot{} = install_snapshot, data) do
@@ -365,7 +319,6 @@ defmodule Craft.Consensus do
     {:next_state, :follower, data}
   end
 
-
   #
   # Follower
   #
@@ -383,6 +336,7 @@ defmodule Craft.Consensus do
 
     {:keep_state, data, [become_lonely_timeout()]}
   end
+
   def follower(:state_timeout, :become_lonely, data), do: {:next_state, :lonely, data}
 
   def follower(:cast, %RequestVote{leadership_transfer: true, term: term} = request_vote, %State{current_term: current_term} = data) when term > current_term do
@@ -477,8 +431,8 @@ defmodule Craft.Consensus do
 
     # leader told us to take over leadership when our log is caught up
     if append_entries.leadership_transfer &&
-      append_entries.leadership_transfer.latest_index == Persistence.latest_index(data.persistence) &&
-      append_entries.leadership_transfer.latest_term == Persistence.latest_term(data.persistence) do
+       append_entries.leadership_transfer.latest_index == Persistence.latest_index(data.persistence) &&
+       append_entries.leadership_transfer.latest_term == Persistence.latest_term(data.persistence) do
       {:next_state, :candidate, %State{data | leadership_transfer_request_id: append_entries.leadership_transfer.from}}
     else
       {:keep_state, data, [become_lonely_timeout()]}
@@ -551,6 +505,7 @@ defmodule Craft.Consensus do
 
     {:keep_state, data, [{:state_timeout, @election_timeout, :election_failed}]}
   end
+
   def candidate(:state_timeout, :election_failed, data) do
     Logger.info("election failed, becoming lonely", logger_metadata(data))
 
@@ -767,6 +722,7 @@ defmodule Craft.Consensus do
           # leadership is being transferred
           if membership_change.action == :remove && membership_change.node == node() do
             data = LeaderState.transfer_leadership(data)
+
             actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :self_removal} | actions]
 
             RPC.append_entries(data)
@@ -802,6 +758,7 @@ defmodule Craft.Consensus do
   def leader(:cast, {:user_command, {caller_pid, _ref} = id, {:transfer_leadership, to_node}}, data) do
     if Members.can_vote?(data.members, to_node) do
       data = LeaderState.transfer_leadership(data, to_node, id)
+
       actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :user_requested}]
 
       RPC.append_entries(data)
@@ -833,11 +790,10 @@ defmodule Craft.Consensus do
   def leader({:call, from}, :configuration, data) do
     {:ok, machine_module} = Machine.module(data.name)
 
-    config = %{
-      members: data.members,
-      machine_module: machine_module,
-      log_module: data.persistence.module
-    }
+    config =
+      data
+      |> Map.take([:members, :nexus_pid])
+      |> Map.merge(%{machine_module: machine_module, log_module: data.persistence.module})
 
     {:keep_state_and_data, [{:reply, from, {:ok, config}}]}
   end

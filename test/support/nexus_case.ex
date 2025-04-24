@@ -33,6 +33,7 @@ defmodule Craft.NexusCase do
       :ok
     else
       {:ok, name, nexus} = Craft.TestGroup.start_group(nodes)
+      Craft.MemberCache.discover(name, nodes)
 
       on_exit(fn ->
         Craft.stop_group(name)
