@@ -108,11 +108,10 @@ defmodule Craft.Consensus.State do
     %__MODULE__{
       state |
       state: :candidate,
-      current_term: state.current_term + 1,
       leader_state: nil,
       election: Election.new(state.members),
-      voted_for: node()
     }
+    |> set_current_term(state.current_term + 1, node())
   end
 
   def become_leader(%__MODULE__{} = state) do
@@ -123,6 +122,7 @@ defmodule Craft.Consensus.State do
       leader_state: LeaderState.new(state),
       election: nil
     }
+    |> set_current_term(state.current_term)
   end
 
   # voting for others
