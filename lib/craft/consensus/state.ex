@@ -14,6 +14,7 @@ defmodule Craft.Consensus.State do
     :name,
     :members,
     :persistence,
+    :machine,
     :nexus_pid,
     :leader_id,
     {:snapshots, %{}},
@@ -27,14 +28,15 @@ defmodule Craft.Consensus.State do
     :snapshot_transfer # receiving_snapshot only
   ]
 
-  def new(name, nodes, persistence) do
+  def new(name, nodes, persistence, machine) do
     persistence = Persistence.new(name, persistence)
 
     state =
       %__MODULE__{
         name: name,
         members: Members.new(nodes),
-        persistence: persistence
+        persistence: persistence,
+        machine: machine
       }
 
     case Metadata.fetch(persistence) do
@@ -150,11 +152,11 @@ defmodule Craft.Consensus.State do
     div(num_members, 2) + 1
   end
 
-  def snapshot_ready(%__MODULE__{} = state, index, path) do
+  def snapshot_ready(%__MODULE__{} = state, index, path_or_content) do
     {:ok, %{term: term}} = Persistence.fetch(state.persistence, index)
-    persistence = Persistence.truncate(state.persistence, index, SnapshotEntry.new(state, term))
+    persistence = Persistence.truncate(state.persistence, index, SnapshotEntry.new(state, term, path_or_content))
 
-    %__MODULE__{state | snapshots: Map.put(state.snapshots, index, path), persistence: persistence}
+    %__MODULE__{state | snapshots: Map.put(state.snapshots, index, path_or_content), persistence: persistence}
   end
 
   def latest_snapshot_index(%__MODULE__{} = state) do

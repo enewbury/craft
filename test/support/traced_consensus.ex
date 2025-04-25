@@ -45,7 +45,7 @@ defmodule Craft.TracedConsensus do
 
   def init(args) do
     data = %State{
-      State.new(args.name, args.nodes, args.persistence)
+      State.new(args.name, args.nodes, args.persistence, args.machine)
       | nexus_pid: args.nexus_pid,
         state: :lonely
     }

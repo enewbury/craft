@@ -24,10 +24,10 @@ defmodule Craft do
   require Logger
 
   # FIXME
+  @type group_name :: any()
   @type command :: any()
   @type reply :: any()
   @type side_effects :: any()
-  @type group_name :: any()
   @type query() :: any()
   @type log_index() :: non_neg_integer()
 

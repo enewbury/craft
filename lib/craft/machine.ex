@@ -18,9 +18,27 @@ defmodule Craft.Machine do
 
   @callback init(Craft.group_name()) :: {:ok, private()}
   @callback command(Craft.command(), Craft.log_index(), private()) :: {Craft.reply(), private()} | {Craft.reply(), Craft.side_effects(), private()}
+  @callback query(Craft.query(), private()) :: Craft.reply()
   # TODO: document that we want an int or nil if no entries have been applied
-  @callback last_applied_log_index(private()) :: Craft.log_index() | nil
-  @callback snapshot(Craft.log_index(), private()) :: {:ok, snapshot()}
+
+  defmodule MutableMachine do
+    @type private() :: Craft.Machine.private()
+    @type snapshot() :: Craft.Machine.snapshot()
+    @type data_dir :: Path.t()
+
+    @callback last_applied_log_index(private()) :: Craft.log_index() | nil
+    @callback snapshot(Craft.log_index(), private()) :: {:ok, snapshot()}
+    @callback prepare_to_receive_snapshot(private()) :: {:ok, data_dir, snapshot()}
+    @callback receive_snapshot(private()) :: {:ok, private()}
+  end
+
+  defmodule LogStoredMachine do
+    @type private() :: Craft.Machine.private()
+    @type snapshot() :: Craft.Machine.snapshot()
+
+    @callback snapshot(private()) :: {:ok, snapshot()}
+    @callback receive_snapshot(snapshot(), private()) :: {:ok, private()}
+  end
 
   defmodule State do
     defstruct [
@@ -68,22 +86,16 @@ defmodule Craft.Machine do
     |> GenServer.cast({:update_role, state.state})
   end
 
-  def module(name) do
-    name
-    |> lookup(__MODULE__)
-    |> GenServer.call(:module)
-  end
-
   def prepare_to_receive_snapshot(name) do
     name
     |> lookup(__MODULE__)
     |> GenServer.call(:prepare_to_receive_snapshot)
   end
 
-  def receive_snapshot(name) do
+  def receive_snapshot(name, install_snapshot \\ nil) do
     name
     |> lookup(__MODULE__)
-    |> GenServer.call(:receive_snapshot)
+    |> GenServer.call({:receive_snapshot, install_snapshot})
   end
 
   def state(name) do
@@ -220,7 +232,7 @@ defmodule Craft.Machine do
   @impl true
   def handle_cast({:commit_index_bumped, new_commit_index, log, role, should_snapshot?}, state) do
     last_applied_log_index =
-      with true <- state.module.__craft_persistent__(),
+      with true <- state.module.__craft_mutable__(),
            last_applied when is_integer(last_applied) <- state.module.last_applied_log_index(state.private) do
         last_applied
       else
@@ -228,11 +240,37 @@ defmodule Craft.Machine do
           state.last_applied
       end
 
+    # right now, this is a synchronous process, later we should allow for async snapshots at
+    # the provided index, and the user will call back when it's done (and we'll send a message
+    # to the consensus module to tell it that a snapshot at the given index completed)
+    #
+    # should probably provide sync/async semantics as well as ability to store small snapshots directly in the log
+    #
+    # only snapshot up to one entry before the latest, since we need the prev log entry to create AppendEntries
+
+    if should_snapshot? do
+      if state.module.__craft_mutable__() do
+        snapshot_index = new_commit_index - 1
+        snapshot_dir = state.module.snapshot(snapshot_index, state.private)
+
+        :ok = Consensus.snapshot_ready(state.name, snapshot_index, snapshot_dir)
+      else
+        snapshot_index = last_applied_log_index
+        snapshot_content = state.private
+
+        :ok = Consensus.snapshot_ready(state.name, snapshot_index, snapshot_content)
+      end
+    end
+
     state =
       Enum.reduce(last_applied_log_index+1..new_commit_index//1, state, fn index, state ->
         case Persistence.fetch(log, index) do
-          {:ok, %SnapshotEntry{}} ->
-            state
+          {:ok, %SnapshotEntry{} = entry} ->
+            if state.module.__craft_mutable__() do
+              state
+            else
+              %State{state | private: entry.machine_private}
+            end
 
           {:ok, %EmptyEntry{}} ->
             state
@@ -271,21 +309,6 @@ defmodule Craft.Machine do
             end
         end
       end)
-
-    # right now, this is a synchronous process, later we should allow for async snapshots at
-    # the provided index, and the user will call back when it's done (and we'll send a message
-    # to the consensus module to tell it that a snapshot at the given index completed)
-    #
-    # should probably provide sync/async semantics as well as ability to store small snapshots
-    # directly in the log
-    #
-    # only snapshot up to one entry before the latest, since we need the prev log entry to create AppendEntries
-
-    if should_snapshot? do
-    #   snapshot_index = new_commit_index - 1
-    #   snapshot_dir = state.module.snapshot(snapshot_index, state.private)
-    #   :ok = Consensus.snapshot_ready(state.name, snapshot_index, snapshot_dir)
-    end
 
     {:noreply, %State{state | last_applied: new_commit_index}}
   end
@@ -349,11 +372,6 @@ defmodule Craft.Machine do
     end
   end
 
-  @impl true
-  def handle_call(:module, _from, state) do
-    {:reply, {:ok, state.module}, state}
-  end
-
   # delete on-disk machine files etc...
   @impl true
   def handle_call(:prepare_to_receive_snapshot, _from, state) do
@@ -363,10 +381,21 @@ defmodule Craft.Machine do
   end
 
   @impl true
-  def handle_call(:receive_snapshot, _from, state) do
-    {:ok, private} = state.module.receive_snapshot(state.private)
+  def handle_call({:receive_snapshot, install_snapshot}, _from, state) do
+    {private, last_applied} =
+      if state.module.__craft_mutable__() do
+        private = state.module.receive_snapshot(state.private)
+        last_applied = state.module.last_applied_log_index(state.private)
 
-    {:reply, :ok, %State{state | private: private}}
+        {private, last_applied}
+      else
+        private = state.module.receive_snapshot(install_snapshot.log_entry.machine_private, state.private)
+        last_applied = install_snapshot.log_index
+
+        {private, last_applied}
+      end
+
+    {:reply, :ok, %State{state | private: private, last_applied: last_applied}}
   end
 
   @impl true
@@ -377,11 +406,15 @@ defmodule Craft.Machine do
   end
 
   defmacro __using__(opts) do
-    persistent = Keyword.fetch!(opts, :persistent)
+    mutable = !!Keyword.fetch!(opts, :mutable)
+
     quote do
-      # FIXME: better error
-      # @behaviour persistentmachine (implements last_applied_log_index/1)
-      def __craft_persistent__(), do: unquote(persistent)
+      if unquote(mutable) do
+        @behaviour MutableMachine
+      else
+        @behaviour LogStoredMachine
+      end
+      def __craft_mutable__(), do: unquote(mutable)
     end
   end
 end

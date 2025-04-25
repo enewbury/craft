@@ -25,15 +25,10 @@ defmodule Craft.RPC do
     |> send_message(request_vote.candidate_id, state)
   end
 
-  # TODO: parallelize
-  def append_entries(%State{} = state) do
-    for to_node <- Members.other_nodes(state.members) do
-      unless state.leader_state.snapshot_transfers[to_node] do
-        state
-        |> AppendEntries.new(to_node)
-        |> send_message(to_node, state)
-      end
-    end
+  def append_entries(%State{} = state, to_node) do
+    state
+    |> AppendEntries.new(to_node)
+    |> send_message(to_node, state)
   end
 
   def respond_append_entries(%AppendEntries{} = append_entries, success, %State{} = state) do
@@ -43,15 +38,13 @@ defmodule Craft.RPC do
   end
 
   def install_snapshot(%State{} = state, to_node) do
-    snapshot_transfer = state.leader_state.snapshot_transfers[to_node]
-
     state
-    |> InstallSnapshot.new(snapshot_transfer)
+    |> InstallSnapshot.new(to_node)
     |> send_message(to_node, state)
   end
 
   def respond_install_snapshot(%InstallSnapshot{} = install_snapshot, success, %State{state: :receiving_snapshot} = state) do
-    InstallSnapshot.Results.new(success)
+    InstallSnapshot.Results.new(install_snapshot, success)
     |> send_message(install_snapshot.leader_id, state)
   end
 

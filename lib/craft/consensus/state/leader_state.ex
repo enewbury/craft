@@ -51,31 +51,27 @@ defmodule Craft.Consensus.State.LeaderState do
 
   defmodule SnapshotTransfer do
     # send entire snapshot as a single message to start, later we'll use :file.sendfile
-
-    defstruct [
-      :log_index,
-      :log_entry,
-      :files
-    ]
+    defstruct [:files]
 
     def new(state) do
-      log_index = State.latest_snapshot_index(state)
-      {:ok, log_entry} = Persistence.fetch(state.persistence, log_index)
+      :FIXME
+      # log_index = State.latest_snapshot_index(state)
+      # {:ok, log_entry} = Persistence.fetch(state.persistence, log_index)
 
-      dir = Map.fetch!(state.snapshots, log_index)
-      files =
-        dir
-        |> File.ls!()
-        |> Map.new(fn name ->
-          file = dir |> Path.join(name) |> File.read!()
-          {name, file}
-        end)
+      # dir = Map.fetch!(state.snapshots, log_index)
+      # files =
+      #   dir
+      #   |> File.ls!()
+      #   |> Map.new(fn name ->
+      #     file = dir |> Path.join(name) |> File.read!()
+      #     {name, file}
+      #   end)
 
-      %__MODULE__{
-        log_index: log_index,
-        log_entry: log_entry,
-        files: files
-      }
+      # %__MODULE__{
+      #   log_index: log_index,
+      #   log_entry: log_entry,
+      #   files: files
+      # }
     end
 
     #TODO: handle directories
@@ -266,32 +262,45 @@ defmodule Craft.Consensus.State.LeaderState do
     state = %State{state | leader_state: %__MODULE__{state.leader_state | match_indices: match_indices}}
 
     # is the follower going to need a snapshot?
-    case Persistence.fetch(state.persistence, state.leader_state.next_indices[results.from] - 1) do
-      {:ok, _entry} ->
-        next_indices = Map.update!(state.leader_state.next_indices, results.from, fn next_index -> next_index - 1 end)
+    if needs_snapshot?(state, results.from) do
+      if state.machine.__craft_mutable__() do
+        {:needs_snapshot, create_snapshot_transfer(state, results.from)}
+      else
+        {:needs_snapshot, state}
+      end
+    else
+      next_indices = Map.update!(state.leader_state.next_indices, results.from, fn next_index -> next_index - 1 end)
 
-        %State{state | leader_state: %__MODULE__{state.leader_state | next_indices: next_indices}}
-
-      :error ->
-        snapshot_transfers = Map.put(state.leader_state.snapshot_transfers, results.from, SnapshotTransfer.new(state))
-
-        {:needs_snapshot, %State{state | leader_state: %__MODULE__{state.leader_state | snapshot_transfers: snapshot_transfers}}}
+      %State{state | leader_state: %__MODULE__{state.leader_state | next_indices: next_indices}}
     end
   end
 
+  def create_snapshot_transfer(%State{} = state, node) do
+    snapshot_transfers = Map.put(state.leader_state.snapshot_transfers, node, SnapshotTransfer.new(state))
+
+    %State{state | leader_state: %__MODULE__{state.leader_state | snapshot_transfers: snapshot_transfers}}
+  end
+
   def handle_install_snapshot_results(%State{} = state, %InstallSnapshot.Results{success: true} = results) do
-    log_index = state.leader_state.snapshot_transfers[results.from].log_index
     snapshot_transfers = Map.delete(state.leader_state.snapshot_transfers, results.from)
 
     leader_state =
       %__MODULE__{
         state.leader_state |
         snapshot_transfers: snapshot_transfers,
-        match_indices: Map.put(state.leader_state.next_indices, results.from, log_index),
-        next_indices: Map.put(state.leader_state.next_indices, results.from, log_index + 1)
+        match_indices: Map.put(state.leader_state.next_indices, results.from, results.latest_index),
+        next_indices: Map.put(state.leader_state.next_indices, results.from, results.latest_index + 1)
       }
 
     %State{state | leader_state: leader_state}
+  end
+
+  def needs_snapshot?(%State{} = state, node) do
+    not match?({:ok, _}, Persistence.fetch(state.persistence, state.leader_state.next_indices[node] - 1))
+  end
+
+  def sending_snapshot?(%State{} = state, node) do
+    !!state.leader_state.snapshot_transfers[node]
   end
 
   def transfer_leadership(%State{} = state) do

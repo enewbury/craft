@@ -1,5 +1,5 @@
 defmodule Craft.SimpleMachine do
-  use Craft.Machine, persistent: false
+  use Craft.Machine, mutable: false
   alias Craft.Linearizability.TestModel
 
   @behaviour TestModel
@@ -31,9 +31,14 @@ defmodule Craft.SimpleMachine do
     {:ok, Map.get(state, k)}
   end
 
-  def snapshot(_at_index, _state) do
-    # Logger.debug("snapshotting #{at_index}", State.logger_metadata(data))
-    ""
+  @impl true
+  def receive_snapshot(snapshot, _state) do
+    snapshot
+  end
+
+  @impl true
+  def snapshot(state) do
+    state
   end
 
   def dump(state), do: state
