@@ -122,7 +122,7 @@ defmodule Craft.Consensus do
   def init(args) do
     Logger.metadata(name: args.name, node: node())
 
-    data = State.new(args.name, args.nodes, args.persistence)
+    data = State.new(args.name, args.nodes, args.persistence, args.machine)
 
     MemberCache.update(data)
 
@@ -300,16 +300,15 @@ defmodule Craft.Consensus do
 
     MemberCache.update(data)
 
-    {:ok, data_dir} = Machine.prepare_to_receive_snapshot(data.name)
+    persistence = Persistence.truncate(data.persistence, install_snapshot.log_index, install_snapshot.log_entry)
 
-    persistence =
-      data.persistence
-      |> Persistence.rewind(-1)
-      |> Persistence.append(install_snapshot.snapshot_transfer.log_entry, install_snapshot.snapshot_transfer.log_index)
+    if data.machine.__craft_mutable__() do
+      {:ok, data_dir} = Machine.prepare_to_receive_snapshot(data.name)
 
-    SnapshotTransfer.receive(install_snapshot.snapshot_transfer, data_dir)
+      SnapshotTransfer.receive(install_snapshot.snapshot_transfer, data_dir)
+    end
 
-    :ok = Machine.receive_snapshot(data.name)
+    :ok = Machine.receive_snapshot(data.name, install_snapshot)
 
     RPC.respond_install_snapshot(install_snapshot, true, data)
 
@@ -457,8 +456,8 @@ defmodule Craft.Consensus do
     {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
   end
 
-  def follower({:call, from}, {:snapshot_ready, index, path}, data) do
-    data = State.snapshot_ready(data, index, path)
+  def follower({:call, from}, {:snapshot_ready, index, path_or_content}, data) do
+    data = State.snapshot_ready(data, index, path_or_content)
 
     {:keep_state, data, [{:reply, from, :ok}]}
   end
@@ -578,8 +577,8 @@ defmodule Craft.Consensus do
     {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
   end
 
-  def candidate({:call, from}, {:snapshot_ready, index, path}, data) do
-    data = State.snapshot_ready(data, index, path)
+  def candidate({:call, from}, {:snapshot_ready, index, path_or_content}, data) do
+    data = State.snapshot_ready(data, index, path_or_content)
 
     {:keep_state, data, [{:reply, from, :ok}]}
   end
@@ -637,7 +636,7 @@ defmodule Craft.Consensus do
   def leader(:state_timeout, :heartbeat, data) do
     Logger.debug("heartbeat", logger_metadata(data))
 
-    RPC.append_entries(data)
+    heartbeat(data)
 
     {:keep_state_and_data, [{:state_timeout, @heartbeat_interval, :heartbeat}]}
   end
@@ -695,9 +694,12 @@ defmodule Craft.Consensus do
 
       data ->
         if data.commit_index > old_commit_index do
-          # only snapshot if there are no outstanding snapshot transfers
-          # only snapshot if all followers are caught up
-          Machine.commit_index_bumped(data, Enum.empty?(data.leader_state.snapshot_transfers))
+          #TODO: these rules will need more thought, just roughed out to start
+          no_snapshot_transfers = Enum.empty?(data.leader_state.snapshot_transfers)
+          all_followers_caught_up = Enum.empty?(data.members.catching_up_nodes)
+          # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
+
+          Machine.commit_index_bumped(data, no_snapshot_transfers && all_followers_caught_up)
         end
 
         data =
@@ -725,7 +727,7 @@ defmodule Craft.Consensus do
 
             actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :self_removal} | actions]
 
-            RPC.append_entries(data)
+            heartbeat(data)
 
             {:keep_state, data, actions}
           else
@@ -761,7 +763,7 @@ defmodule Craft.Consensus do
 
       actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :user_requested}]
 
-      RPC.append_entries(data)
+      heartbeat(data)
 
       {:keep_state, data, actions}
     else
@@ -788,12 +790,10 @@ defmodule Craft.Consensus do
   end
 
   def leader({:call, from}, :configuration, data) do
-    {:ok, machine_module} = Machine.module(data.name)
-
     config =
       data
       |> Map.take([:members, :nexus_pid])
-      |> Map.merge(%{machine_module: machine_module, log_module: data.persistence.module})
+      |> Map.merge(%{machine_module: data.machine, log_module: data.persistence.module})
 
     {:keep_state_and_data, [{:reply, from, {:ok, config}}]}
   end
@@ -842,8 +842,8 @@ defmodule Craft.Consensus do
     {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
   end
 
-  def leader({:call, from}, {:snapshot_ready, index, path}, data) do
-    data = State.snapshot_ready(data, index, path)
+  def leader({:call, from}, {:snapshot_ready, index, path_or_content}, data) do
+    data = State.snapshot_ready(data, index, path_or_content)
 
     {:keep_state, data, [{:reply, from, :ok}]}
   end
@@ -866,4 +866,30 @@ defmodule Craft.Consensus do
 
   defp not_leader_response(%State{leader_id: nil}), do: {:error, :unknown_leader}
   defp not_leader_response(%State{leader_id: leader_id}), do: {:error, {:not_leader, leader_id}}
+
+  #TODO: parallelize?
+  defp heartbeat(%State{} = state) do
+    Enum.reduce(Members.other_nodes(state.members), state, fn to_node, state ->
+      if LeaderState.needs_snapshot?(state, to_node) do
+        if LeaderState.sending_snapshot?(state, to_node) do
+          state
+        else
+          state =
+            if state.machine.__craft_mutable__() do
+              LeaderState.create_snapshot_transfer(state, to_node)
+            else
+              state
+            end
+
+          RPC.install_snapshot(state, to_node)
+
+          state
+        end
+      else
+        RPC.append_entries(state, to_node)
+
+        state
+      end
+    end)
+  end
 end

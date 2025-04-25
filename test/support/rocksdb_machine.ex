@@ -1,5 +1,5 @@
 defmodule Craft.RocksDBMachine do
-  use Craft.Machine, persistent: true
+  use Craft.Machine, mutable: true
 
   @log_index_column_family {~c"log_index", []}
   @log_index_key "log_index"
