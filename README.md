@@ -7,6 +7,7 @@ todo:
 - broadcast replication lag to clients, to allow them to target non-linearizable reads to specific followers
 - fix Craft top-level API, designate group by {name, nodes} rather than separate args
 - be consistent with "members" vs "nodes" nomenclature
+- snapshot deletion when no longer needed
 
 4.2.1 server catch up "rounds" hueristic
 

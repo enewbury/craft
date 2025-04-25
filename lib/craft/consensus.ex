@@ -296,7 +296,9 @@ defmodule Craft.Consensus do
     #
     # initiate new transfer
 
-    data = %State{data | leader_id: install_snapshot.leader_id}
+    data =
+      %State{data | leader_id: install_snapshot.leader_id}
+      |> State.set_current_term(install_snapshot.term)
 
     MemberCache.update(data)
 
@@ -370,53 +372,60 @@ defmodule Craft.Consensus do
   end
 
   # TODO: move most of this into State module?
-  def follower(:cast, %AppendEntries{prev_log_term: prev_log_term} = append_entries, data) do
+  def follower(:cast, %AppendEntries{} = append_entries, data) do
+    prev_log_term = append_entries.prev_log_term
     old_commit_index = data.commit_index
     data = %State{data | leader_id: append_entries.leader_id}
 
     {success, data} =
-      case Persistence.fetch(data.persistence, append_entries.prev_log_index) do
-        {:ok, %{term: ^prev_log_term}} ->
-          rewound_entries = Persistence.fetch_from(data.persistence, append_entries.prev_log_index + 1)
+      if Enum.empty?(append_entries.entries) do
+        {true, data}
+      else
+        case Persistence.fetch(data.persistence, append_entries.prev_log_index) do
+          {:ok, %{term: ^prev_log_term} = e} ->
+            rewound_entries = Persistence.fetch_from(data.persistence, append_entries.prev_log_index + 1)
 
-          persistence =
-            data.persistence
-            |> Persistence.rewind(append_entries.prev_log_index)
-            |> Persistence.append(append_entries.entries)
+            persistence =
+              data.persistence
+              |> Persistence.rewind(append_entries.prev_log_index)
+              |> Persistence.append(append_entries.entries)
 
-          data = %State{data | persistence: persistence, commit_index: min(append_entries.leader_commit, Persistence.latest_index(persistence))}
+            data = %State{data | persistence: persistence}
 
-          new_membership_entry =
-            append_entries.entries
-            |> Enum.reverse()
-            |> Enum.find(fn
-              %MembershipEntry{} ->
-                true
-
-              _ ->
-                false
-            end)
-
-          case new_membership_entry do
-            %MembershipEntry{members: members} ->
-              {true, %State{data | members: members}}
-
-            # if the entries that we've rewound contained a membership entry, and the incoming entries from the
-            # leader don't include a new membership entry, we need to look back through the log until we find one
-            # to determine the current cluster membership (section 4.1)
-            nil ->
-              Enum.find_value(rewound_entries, {true, data}, fn
-                %MembershipEntry{members: members} ->
-                  {true, %State{data | members: members}}
+            new_membership_entry =
+              append_entries.entries
+              |> Enum.reverse()
+              |> Enum.find(fn
+                %MembershipEntry{} ->
+                  true
 
                 _ ->
                   false
               end)
-          end
 
-        _ ->
-          {false, %State{data | persistence: Persistence.rewind(data.persistence, append_entries.prev_log_index - 1)}}
+            case new_membership_entry do
+              %MembershipEntry{members: members} ->
+                {true, %State{data | members: members}}
+
+              # if the entries that we've rewound contained a membership entry, and the incoming entries from the
+              # leader don't include a new membership entry, we need to look back through the log until we find one
+              # to determine the current cluster membership (section 4.1)
+              nil ->
+                Enum.find_value(rewound_entries, {true, data}, fn
+                  %MembershipEntry{members: members} ->
+                    {true, %State{data | members: members}}
+
+                  _ ->
+                    false
+                end)
+            end
+
+          _ ->
+            {false, %State{data | persistence: Persistence.rewind(data.persistence, append_entries.prev_log_index - 1)}}
+        end
       end
+
+    data = %State{data | commit_index: min(append_entries.leader_commit, Persistence.latest_index(data.persistence))}
 
     Logger.debug("leader heartbeat from #{append_entries.leader_id}, restarting timer", logger_metadata(data))
 
