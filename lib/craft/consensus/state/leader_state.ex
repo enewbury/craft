@@ -239,7 +239,7 @@ defmodule Craft.Consensus.State.LeaderState do
         |> Enum.find(fn index ->
           num_members_with_index = Enum.count(match_indices_for_commitment, fn {_node, match_index} -> match_index >= index end)
 
-          num_members_with_index >= num_members_with_index
+          num_members_with_index >= State.quorum_needed(state)
         end)
 
       # only bump commit index when the quorum entry is from the current term (section 5.4.2)
