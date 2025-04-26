@@ -382,7 +382,7 @@ defmodule Craft.Consensus do
         {true, data}
       else
         case Persistence.fetch(data.persistence, append_entries.prev_log_index) do
-          {:ok, %{term: ^prev_log_term} = e} ->
+          {:ok, %{term: ^prev_log_term}} ->
             rewound_entries = Persistence.fetch_from(data.persistence, append_entries.prev_log_index + 1)
 
             persistence =
@@ -651,18 +651,12 @@ defmodule Craft.Consensus do
   end
 
   def leader({:timeout, :check_quorum}, :check_quorum, data) do
-    num_replies_in_window =
-      data.leader_state.last_heartbeat_replies_at
-      |> Map.values()
-      |> Enum.filter(fn {_sent_at, received_at} -> received_at >= :erlang.monotonic_time(:millisecond) - @checkquorum_interval end)
-      |> Enum.count()
-
-    # + 1 for leader
-    if num_replies_in_window + 1 >= State.quorum_needed(data) do
-      {:keep_state_and_data, [{{:timeout, :check_quorum}, @checkquorum_interval, :check_quorum}]}
-    else
+    if data.leader_state.last_quorum_at < :erlang.monotonic_time(:millisecond) - @checkquorum_interval do
       Logger.info("unable to make quorum, stepping down.", logger_metadata(data))
+
       {:next_state, :lonely, data}
+    else
+      {:keep_state_and_data, [{{:timeout, :check_quorum}, @checkquorum_interval, :check_quorum}]}
     end
   end
 
