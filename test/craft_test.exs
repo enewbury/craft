@@ -34,6 +34,25 @@ defmodule CraftTest do
     # assert successful linearizable query when network returns
     nemesis(nexus, fn _ -> :forward end)
     assert {:ok, 123} = Craft.query({:get, :a}, name, consistency: :linearizable)
+
+    # assert concurrent query doesn't block
+    test_pid = self()
+    spawn_link(fn ->
+      send(test_pid, :proc_running)
+      Craft.query({:get, :blocking}, name, concurrency: :non_blocking)
+    end)
+
+    assert_receive :proc_running
+    assert {:ok, _} = Craft.query({:get, :a}, name)
+
+    # assert atomic query does block
+    spawn_link(fn ->
+      send(test_pid, :proc_running)
+      Craft.query({:get, :blocking}, name)
+    end)
+
+    assert_receive :proc_running
+    assert {:error, :timeout} = Craft.query({:get, :a}, name, timeout: 50)
   end
 
 

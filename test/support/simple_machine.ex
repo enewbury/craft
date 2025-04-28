@@ -28,6 +28,7 @@ defmodule Craft.SimpleMachine do
 
   @impl TestModel
   def query({:get, k}, state) do
+    if k == :blocking, do: Process.sleep(100)
     {:ok, Map.get(state, k)}
   end
 
