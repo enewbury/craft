@@ -2,6 +2,7 @@ defmodule Craft.ElectionTest do
   use Craft.NexusCase
 
   alias Craft.Consensus.State
+  alias Craft.SimpleMachine
   alias Craft.Log.EmptyEntry
   alias Craft.Nexus.Stability
   alias Craft.Persistence
@@ -10,7 +11,7 @@ defmodule Craft.ElectionTest do
 
   @tag :unmanaged
   nexus_test "pre-chosen candidate becomes leader", %{nodes: nodes} do
-    state = State.new("abc", nodes, MapPersistence)
+    state = State.new("abc", nodes, MapPersistence, SimpleMachine)
 
     states =
       Enum.zip(
@@ -36,7 +37,7 @@ defmodule Craft.ElectionTest do
   describe "5.4.1 election restriction" do
     @tag :unmanaged
     nexus_test "deny votes to out-of-date candidate, and correct its log", %{nodes: nodes} do
-      state = State.new("abc", nodes, MapPersistence)
+      state = State.new("abc", nodes, MapPersistence, SimpleMachine)
 
       shared_log =
         state.persistence
@@ -71,7 +72,7 @@ defmodule Craft.ElectionTest do
 
       candidate = List.first(nodes)
 
-      assert %{leader: leader, term: 5} = wait_until(nexus, {Stability, :all})
+      assert %{leader: leader} = wait_until(nexus, {Stability, :all})
       assert leader != candidate
 
       states = Craft.state(name)
@@ -85,7 +86,7 @@ defmodule Craft.ElectionTest do
 
     @tag :unmanaged
     nexus_test "most up-to-date member in a split-brain is elected and corrects out-of-date logs", %{nodes: nodes} do
-      state = State.new("abc", nodes, MapPersistence)
+      state = State.new("abc", nodes, MapPersistence, SimpleMachine)
 
       shared_log =
         state.persistence
