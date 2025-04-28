@@ -788,6 +788,12 @@ defmodule Craft.Consensus do
     {:keep_state, %State{data | persistence: persistence}, [{:reply, from, {:ok, entry_index}}]}
   end
 
+  def leader({:call, from}, {:snapshot_ready, index, path_or_content}, data) do
+    data = State.snapshot_ready(data, index, path_or_content)
+
+    {:keep_state, data, [{:reply, from, :ok}]}
+  end
+
   def leader({:call, from}, _msg, %State{leader_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
     {:keep_state_and_data, [{:reply, from, {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}}]}
   end
@@ -843,12 +849,6 @@ defmodule Craft.Consensus do
 
   def leader({:call, from}, :state, data) do
     {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
-  end
-
-  def leader({:call, from}, {:snapshot_ready, index, path_or_content}, data) do
-    data = State.snapshot_ready(data, index, path_or_content)
-
-    {:keep_state, data, [{:reply, from, :ok}]}
   end
 
   def leader(type, msg, data) do
