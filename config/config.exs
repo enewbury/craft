@@ -9,6 +9,12 @@ config :logger, :console,
   format: "[$level] $metadata\t| $message\n",
   metadata: [:name, :t, :term, :node]
 
+if config_env() in [:test, :dev] do
+  config :craft, :base_data_dir, "data"
+else
+  config :craft, :data_dir, "data"
+end
+
 if config_env() == :test do
   config :craft, :consensus_module, Craft.TracedConsensus
 end

@@ -29,9 +29,13 @@ defmodule Craft.Persistence do
   @callback rewind(any(), index :: integer()) :: any() # remove all long entries after index
   @callback truncate(any(), index :: integer(), SnapshotEntry.t()) :: any() # atomically remove log entries up to and including `index` and replace with SnapshotEntry
   @callback reverse_find(any(), fun()) :: entry() | nil
+  @callback reduce_while(any(), any(), fun()) :: any()
   @callback put_metadata(any(), binary()) :: any()
   @callback fetch_metadata(any()) :: {:ok, binary()} | :error
   @callback dump(any()) :: any()
+  @callback close(any()) :: :ok
+
+  @optional_callbacks [close: 1]
 
   defstruct [
     :module,
@@ -95,11 +99,17 @@ defmodule Craft.Persistence do
   # this makes the rest of the codebase a lot simpler
   #
   def new(group_name, {module, args}) do
-    %__MODULE__{
-      module: module,
-      private: module.new(group_name, args)
-    }
-    |> append(%EmptyEntry{term: -1})
+    persistence =
+      %__MODULE__{
+        module: module,
+        private: module.new(group_name, args)
+      }
+
+    if first(persistence) do
+      persistence
+    else
+      append(persistence, %EmptyEntry{term: -1})
+    end
   end
 
   def new(group_name, module) when is_atom(module) do
@@ -139,8 +149,20 @@ defmodule Craft.Persistence do
     %__MODULE__{persistence | private: module.truncate(private, index, snapshot_entry)}
   end
 
-  def reverse_find(%__MODULE__{module: module, private: private} = persistence, fun) do
-    %__MODULE__{persistence | private: module.reverse_search(private, fun)}
+  def reverse_find(%__MODULE__{module: module, private: private}, fun) do
+    module.reverse_find(private, fun)
+  end
+
+  def reduce_while(%__MODULE__{module: module, private: private}, initial_value, fun) do
+    module.reduce_while(private, initial_value, fun)
+  end
+
+  def first(%__MODULE__{} = persistence) do
+    reduce_while(persistence, nil, fn {index, entry}, nil -> {:halt, {index, entry}} end)
+  end
+
+  def close(%__MODULE__{module: module, private: private} = persistence) do
+    %__MODULE__{persistence | private: module.close(private)}
   end
 
   def dump(%__MODULE__{module: module, private: private}) do

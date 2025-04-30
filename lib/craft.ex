@@ -38,17 +38,22 @@ defmodule Craft do
   `machine` must be a module that uses `Craft.Machine` for functionality and implements its behaviour.
 
   ### Opts
-    - `:persistence` - Configure how the WAL is persisted with a {module, args} tuple where module aheres to the `Craft.Persistence` behaviour
-    - `:data_dir` - Customizes where rocksdb stores its WAL file.
+    - `:persistence` - Configure how the raft log is persisted with a {module, args} tuple where module aheres to the `Craft.Persistence` behaviour
   """
-  def start_group(name, nodes, machine, opts \\ []) do
+  def start_group(name, nodes, machine, opts \\ %{}) do
     for node <- nodes do
       :pong = Node.ping(node)
       {:module, __MODULE__} = :rpc.call(node, Code, :ensure_loaded, [__MODULE__])
     end
 
+    opts =
+      Map.merge(opts, %{
+        nodes: nodes,
+        machine: machine
+      })
+
     for node <- nodes do
-      {:ok, _pid} = :rpc.call(node, __MODULE__, :start_member, [name, nodes, machine, opts])
+      {:ok, _pid} = :rpc.call(node, Craft.MemberSupervisor, :start_member, [name, opts])
     end
   end
 
@@ -82,20 +87,32 @@ defmodule Craft do
   def add_member(name, node) do
     :pong = Node.ping(node)
 
-    {:ok, config} = with_leader_redirect(name, &configuration(name, &1))
+    case :rpc.call(node, Craft.MemberSupervisor, :start_member, [name]) do
+      {:error, :not_found} ->
+        {:ok, config} = with_leader_redirect(name, &configuration(name, &1))
 
-    {%{
-       members: members,
-       machine_module: machine_module
-     }, opts} = Map.split(config, [:members, :machine_module])
+        {%{
+          members: members,
+          machine_module: machine_module
+        }, opts} = Map.split(config, [:members, :machine_module])
 
-    for module <- [__MODULE__, machine_module] do
-      {:module, ^module} = :rpc.call(node, Code, :ensure_loaded, [module])
+        opts =
+          Map.merge(opts, %{
+            nodes: members.voting_nodes,
+            machine: machine_module
+          })
+
+        for module <- [__MODULE__, machine_module] do
+          {:module, ^module} = :rpc.call(node, Code, :ensure_loaded, [module])
+        end
+
+        # The nodes we provide to the new member here will eventually be overwritten when
+        # the new member processes the MembershipEntry as it catches up to the leader.
+        {:ok, _pid} = :rpc.call(node, Craft.MemberSupervisor, :start_member, [name, opts])
+
+      {:ok, pid} ->
+        {:ok, pid}
     end
-
-    # The nodes we provide to the new member here will eventually be overwritten when
-    # the new member processes the MembershipEntry as it catches up to the leader.
-    {:ok, _pid} = :rpc.call(node, __MODULE__, :start_member, [name, members.voting_nodes, machine_module, Keyword.new(opts)])
 
     with_leader_redirect(name, &Consensus.add_member(name, &1, node))
   end
@@ -110,9 +127,9 @@ defmodule Craft do
     with_leader_redirect(name, &Consensus.transfer_leadership(name, &1, to_node))
   end
 
-  @doc "Starts the supervised processes for the named raft group on the node"
-  defdelegate start_member(name, nodes, machine, opts), to: Craft.MemberSupervisor
-  @doc "Stops the supervised processes for the named raft group on the node"
+  @doc "Starts the local member with the given name"
+  defdelegate start_member(name), to: Craft.MemberSupervisor
+  @doc "Stops the local member with the given name"
   defdelegate stop_member(name), to: Craft.MemberSupervisor
   @doc "Initializes the MemberCache for a raft group with the given nodes"
   defdelegate discover(name, nodes), to: Craft.MemberCache

@@ -4,6 +4,7 @@ defmodule Craft.MemberSupervisor do
   use Supervisor
 
   alias Craft.Persistence.RocksDBPersistence
+  alias Craft.Configuration
 
   import Craft.Application, only: [via: 2, lookup: 2]
 
@@ -16,35 +17,41 @@ defmodule Craft.MemberSupervisor do
   @impl Supervisor
   def init(args) do
     children = [
-      {@consensus_module, args},
-      {Craft.Machine, args}
+      {Craft.Machine, args},
+      {@consensus_module, args}
     ]
 
     Supervisor.init(children, strategy: :one_for_all)
   end
 
-  # TODO: - :data_dir implies {RocksDBPersistence, data_dir: data_dir}
-  #       - allow passing :persistence key has a {module, args} tuple
-  def start_member(name, nodes, machine, opts \\ []) do
-    defaults = [
-      name: name,
-      nodes: nodes,
-      machine: machine,
-      persistence: {RocksDBPersistence, []}
-    ]
+  def start_member(name) do
+    case Configuration.find(name) do
+      config when is_map(config) ->
+        do_start_member(config)
 
-    args =
-      case opts do
-        # for testing
-        %{consensus_data: consensus_data, opts: opts} ->
-          args = opts |> Keyword.merge(defaults) |> Map.new()
-          Map.put(args, :consensus_data, consensus_data)
+      _ ->
+        {:error, :not_found}
+    end
+  end
 
-        _ ->
-          opts |> Keyword.merge(defaults) |> Map.new()
-      end
+  def start_member(name, opts) do
+    opts =
+      Map.merge(%{
+        name: name,
+        persistence: {RocksDBPersistence, []}
+      }, opts)
 
-    case DynamicSupervisor.start_child(Craft.Supervisor, {__MODULE__, args}) do
+    if Configuration.find(name) do
+      {:error, :already_exists}
+    else
+      Configuration.write_new!(name, %{machine: opts.machine, persistence: opts.persistence, nodes: opts.nodes})
+
+      do_start_member(opts)
+    end
+  end
+
+  defp do_start_member(opts) do
+    case DynamicSupervisor.start_child(Craft.Supervisor, {__MODULE__, opts}) do
       {:ok, pid} -> {:ok, pid}
       {:error, {:already_started, pid}} -> {:ok, pid}
     end

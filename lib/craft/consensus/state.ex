@@ -1,7 +1,9 @@
 defmodule Craft.Consensus.State do
+  alias Craft.Configuration
   alias Craft.Consensus.State.Election
   alias Craft.Consensus.State.LeaderState
   alias Craft.Consensus.State.Members
+  alias Craft.Log.MembershipEntry
   alias Craft.Log.SnapshotEntry
   alias Craft.Persistence
   alias Craft.Persistence.Metadata
@@ -31,10 +33,32 @@ defmodule Craft.Consensus.State do
   def new(name, nodes, persistence, machine) do
     persistence = Persistence.new(name, persistence)
 
+    # if we're restoring state from disk, search the log backwards for group members
+    members =
+      if nodes do
+        Members.new(nodes)
+      else
+        entry =
+          Persistence.reverse_find(persistence, fn
+            %MembershipEntry{} -> true
+            %SnapshotEntry{} -> true
+            _ -> false
+          end)
+
+        # fall back to the nodes that the cluster was originally initialized with, the leader should contact us soon.
+        if entry do
+          entry.members
+        else
+          %{nodes: nodes} = Configuration.find(name)
+
+          Members.new(nodes)
+        end
+      end
+
     state =
       %__MODULE__{
         name: name,
-        members: Members.new(nodes),
+        members: members,
         persistence: persistence,
         machine: machine
       }

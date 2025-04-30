@@ -5,9 +5,17 @@ defmodule Craft.Application do
 
   @impl Application
   def start(_type, _args) do
-    if Mix.env() in [:dev, :test] do
-      Logger.add_translator({Craft.SASLLoggerTranslator, :translate})
+    silence_sasl_logger()
+
+    case :net_kernel.get_state() do
+      %{started: :no} ->
+        ensure_disterl!()
+
+      _ ->
+        :ok
     end
+
+    create_data_dir!()
 
     children = [
       {DynamicSupervisor, [strategy: :one_for_one, name: Craft.Supervisor]},
@@ -26,5 +34,38 @@ defmodule Craft.Application do
     [{pid, _meta}] = Registry.lookup(Craft.Registry, {name, component})
 
     pid
+  end
+
+  if Mix.env() in [:dev, :test] do
+    defp silence_sasl_logger do
+      Logger.add_translator({Craft.SASLLoggerTranslator, :translate})
+    end
+
+    defp ensure_disterl! do
+      case Node.start(:craft, :shortnames) do
+        {:ok, _} ->
+          :ok
+
+        {:error, {:already_started, _}} ->
+          :ok
+      end
+    end
+
+    defp create_data_dir! do
+      data_dir =
+        Path.join([
+          Application.get_env(:craft, :base_data_dir),
+          to_string(Mix.env()),
+          to_string(node())
+        ])
+
+      File.mkdir_p!(data_dir)
+
+      Application.put_env(:craft, :data_dir, data_dir)
+    end
+  else
+    defp silence_sasl_logger, do: :noop
+    defp ensure_disterl!, do: raise "Craft requires the node to be in distributed mode."
+    defp create_data_dir!, do: Application.get_env(:craft, :data_dir) |> File.mkdir_p!()
   end
 end

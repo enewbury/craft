@@ -24,10 +24,16 @@ defmodule Craft.TestGroup do
 
     prepare_nodes(nodes)
 
-    opts = [nexus_pid: nexus, manual_start: true]
-
     Task.async_stream(states, fn {node, state} ->
-      {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes, machine, %{consensus_data: state, opts: opts}])
+      opts = %{
+        machine: machine,
+        consensus_state: state,
+        nodes: nodes,
+        nexus_pid: nexus,
+        manual_start: true
+      }
+
+      {:ok, _pid} = :rpc.call(node, Craft.MemberSupervisor, :start_member, [name, opts])
     end)
     |> Stream.run()
 
@@ -47,10 +53,15 @@ defmodule Craft.TestGroup do
 
     prepare_nodes(nodes)
 
-    opts = [nexus_pid: nexus, manual_start: true]
-
     Task.async_stream(nodes, fn node ->
-      {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, nodes, machine, opts])
+      opts = %{
+        machine: machine,
+        nodes: nodes,
+        nexus_pid: nexus,
+        manual_start: true
+      }
+
+      {:ok, _pid} = :rpc.call(node, Craft.MemberSupervisor, :start_member, [name, opts])
     end)
     |> Stream.run()
 

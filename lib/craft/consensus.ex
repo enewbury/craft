@@ -98,11 +98,6 @@ defmodule Craft.Consensus do
     cast_user_command(name, node, {:transfer_leadership, to_node})
   end
 
-  # called after the machine restarts to get any committed entries that need to be applied
-  def catch_up(name) do
-    :gen_statem.call({name(name), node()}, :catch_up)
-  end
-
   def snapshot_ready(name, index, path) do
     :gen_statem.call({name(name), node()}, {:snapshot_ready, index, path})
   end
@@ -122,9 +117,11 @@ defmodule Craft.Consensus do
   def init(args) do
     Logger.metadata(name: args.name, node: node())
 
-    data = State.new(args.name, args.nodes, args.persistence, args.machine)
+    data = State.new(args.name, args[:nodes], args.persistence, args.machine)
 
     MemberCache.update(data)
+
+    :ok = Machine.init_or_restore(data)
 
     Logger.info("started")
 
@@ -239,10 +236,6 @@ defmodule Craft.Consensus do
     send(caller_pid, {id, not_leader_response(data)})
 
     :keep_state_and_data
-  end
-
-  def lonely({:call, from}, :catch_up, data) do
-    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.persistence}}]}
   end
 
   def lonely({:call, from}, :state, data) do
@@ -457,10 +450,6 @@ defmodule Craft.Consensus do
     :keep_state_and_data
   end
 
-  def follower({:call, from}, :catch_up, data) do
-    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.persistence}}]}
-  end
-
   def follower({:call, from}, :state, data) do
     {:keep_state_and_data, [{:reply, from, {data, Persistence.dump(data.persistence)}}]}
   end
@@ -575,11 +564,6 @@ defmodule Craft.Consensus do
     send(caller_pid, {id, not_leader_response(data)})
 
     :keep_state_and_data
-  end
-
-  # this should only happen in test, it'd be nice to throw an assertion in here,
-  def candidate({:call, from}, :catch_up, data) do
-    {:keep_state_and_data, [{:reply, from, {data.commit_index, data.persistence}}]}
   end
 
   def candidate({:call, from}, :state, data) do
@@ -702,6 +686,7 @@ defmodule Craft.Consensus do
           all_followers_caught_up = Enum.empty?(data.members.catching_up_nodes)
           # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
 
+          # Machine.commit_index_bumped(data, false)
           Machine.commit_index_bumped(data, no_snapshot_transfers && all_followers_caught_up)
         end
 
@@ -843,6 +828,10 @@ defmodule Craft.Consensus do
     Logger.info("ignoring #{inspect type} message #{inspect msg}", logger_metadata(data))
 
     :keep_state_and_data
+  end
+
+  def terminate(_reason, _state, data) do
+    Persistence.close(data.persistence)
   end
 
   defp become_lonely_timeout do

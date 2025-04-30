@@ -21,8 +21,6 @@ defmodule Craft.MixProject do
 
   defp deps do
     [
-      # {:arq, "~> 0.3.0"},
-      # {:rocksdb, "~> 1.8", optional: true}
       {:rocksdb, git: "git@github.com:emqx/erlang-rocksdb.git"}
     ]
   end

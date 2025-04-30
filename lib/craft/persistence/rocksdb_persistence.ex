@@ -8,6 +8,8 @@ defmodule Craft.Persistence.RocksDBPersistence do
   """
   @behaviour Craft.Persistence
 
+  alias Craft.Configuration
+
   @log_column_family {~c"log", []}
   @metadata_column_family {~c"metadata", []}
 
@@ -22,10 +24,15 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
   @impl true
   def new(group_name, opts \\ []) do
-    data_dir = Keyword.get(opts, :data_dir, Path.join([File.cwd!(), "data", to_string(node()), group_name, "log"]))
-    write_opts = Keyword.get(opts, :write_opts, [sync: true])
+    data_dir =
+      group_name
+      |> Configuration.find()
+      |> Map.fetch!(:data_dir)
+      |> Path.join("log")
 
     File.mkdir_p!(data_dir)
+
+    write_opts = Keyword.get(opts, :write_opts, [sync: true])
 
     db_opts = [create_if_missing: true, create_missing_column_families: true]
 
@@ -34,19 +41,20 @@ defmodule Craft.Persistence.RocksDBPersistence do
       |> :erlang.binary_to_list()
       |> :rocksdb.open_optimistic_transaction_db(db_opts, [{~c"default", []}, @log_column_family, @metadata_column_family])
 
-    latest_index =
+    {latest_index, latest_term} =
       with {:ok, iterator} <- :rocksdb.iterator(db, log_column_family_handle, []),
-           {:ok, index, _value} <- :rocksdb.iterator_move(iterator, :last) do
+           {:ok, index, entry} <- :rocksdb.iterator_move(iterator, :last) do
         :ok = :rocksdb.iterator_close(iterator)
-        decode(index)
+        {decode(index), decode(entry).term}
       else
         {:error, :invalid_iterator} ->
-          -1
+          {-1, -1}
       end
 
     %__MODULE__{
       db: db,
       latest_index: latest_index,
+      latest_term: latest_term,
       log_cf: log_column_family_handle,
       metadata_cf: metadata_column_family_handle,
       write_opts: write_opts
@@ -57,7 +65,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
   def latest_index(%__MODULE__{} = state), do: state.latest_index
 
   @impl true
-  def latest_term(%__MODULE__{} = state), do: state.latest_index
+  def latest_term(%__MODULE__{} = state), do: state.latest_term
 
   @impl true
   def fetch(%__MODULE__{} = state, index) do
@@ -205,6 +213,39 @@ defmodule Craft.Persistence.RocksDBPersistence do
   end
 
   @impl true
+  def reduce_while(%__MODULE__{} = state, acc, fun) do
+    {:ok, iterator} = :rocksdb.iterator(state.db, state.log_cf, [])
+    with {:ok, index, value} <- :rocksdb.iterator_move(iterator, :first),
+         {:cont, acc} <- fun.({decode(index), decode(value)}, acc) do
+        Stream.repeatedly(fn ->
+          case :rocksdb.iterator_move(iterator, :next) do
+            {:ok, index, value} ->
+              {decode(index), decode(value)}
+
+            _ ->
+              :ok = :rocksdb.iterator_close(iterator)
+              :eof
+          end
+        end)
+        |> Stream.take_while(fn
+          :eof ->
+            false
+
+          _ ->
+            true
+        end)
+        |> Enum.reduce_while(acc, fun)
+    else
+      {:halt, acc} ->
+        acc
+
+      {:error, :invalid_iterator} ->
+        acc
+    end
+  end
+
+
+  @impl true
   def put_metadata(%__MODULE__{} = state, metadata) do
     dumped =
       metadata
@@ -225,6 +266,11 @@ defmodule Craft.Persistence.RocksDBPersistence do
       _ ->
         :error
     end
+  end
+
+  @impl true
+  def close(%__MODULE__{} = state) do
+    :rocksdb.close(state.db)
   end
 
   @impl true

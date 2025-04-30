@@ -80,6 +80,12 @@ defmodule Craft.Machine do
     GenServer.start_link(__MODULE__, args, name: via(args.name, __MODULE__))
   end
 
+  def init_or_restore(%ConsensusState{} = state) do
+    state.name
+    |> lookup(__MODULE__)
+    |> GenServer.call({:init_or_restore, state.persistence})
+  end
+
   def update_role(%ConsensusState{} = state) do
     state.name
     |> lookup(__MODULE__)
@@ -171,23 +177,7 @@ defmodule Craft.Machine do
       :logger.update_process_metadata(%{gl: remote_group_leader})
     end
 
-    {:ok, private} = args.machine.init(args.name)
-
-    state =
-      %State{
-        name: args.name,
-        module: args.machine,
-        private: private
-      }
-
-    {:ok, state, {:continue, :restore_machine_state}}
-  end
-
-  @impl true
-  def handle_continue(:restore_machine_state, state) do
-    {commit_index, log} = Consensus.catch_up(state.name)
-
-    handle_cast({:commit_index_bumped, commit_index, log, nil, false}, state)
+    {:ok, %State{name: args.name, module: args.machine}}
   end
 
   @impl true
@@ -265,13 +255,6 @@ defmodule Craft.Machine do
     state =
       Enum.reduce(last_applied_log_index+1..new_commit_index//1, state, fn index, state ->
         case Persistence.fetch(log, index) do
-          {:ok, %SnapshotEntry{} = entry} ->
-            if state.module.__craft_mutable__() do
-              state
-            else
-              %State{state | private: entry.machine_private}
-            end
-
           {:ok, %EmptyEntry{}} ->
             state
 
@@ -383,6 +366,29 @@ defmodule Craft.Machine do
 
         {:noreply, state}
     end
+  end
+
+  @impl true
+  def handle_call({:init_or_restore, log}, _from, state) do
+    {last_applied, private} =
+      if state.module.__craft_mutable__() do
+        {:ok, private} = state.machine.init(state.name)
+        last_applied = state.module.last_applied_log_index(private)
+
+        {last_applied, private}
+      else
+        case Persistence.first(log) do
+          {index, %SnapshotEntry{} = snapshot} ->
+            {index, snapshot.machine_private}
+
+          _ ->
+            {:ok, private} = state.module.init(state.name)
+
+            {0, private}
+        end
+      end
+
+    {:reply, :ok, %State{state | last_applied: last_applied, private: private}}
   end
 
   # delete on-disk machine files etc...

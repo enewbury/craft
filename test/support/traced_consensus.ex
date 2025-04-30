@@ -9,12 +9,13 @@ defmodule Craft.TracedConsensus do
 
   alias Craft.Consensus.State
   alias Craft.MemberCache
+  alias Craft.Machine
 
   def start_link(args) do
     name = args.name
 
     args =
-      case Map.pop(args, :consensus_data) do
+      case Map.pop(args, :consensus_state) do
         {nil, args} -> args
         {data, args} -> {data, args}
       end
@@ -38,6 +39,8 @@ defmodule Craft.TracedConsensus do
 
     MemberCache.update(data)
 
+    :ok = Machine.init_or_restore(data)
+
     state = if args[:manual_start], do: :ready_to_test, else: :lonely
 
     {:ok, state, data}
@@ -45,7 +48,7 @@ defmodule Craft.TracedConsensus do
 
   def init(args) do
     data = %State{
-      State.new(args.name, args.nodes, args.persistence, args.machine)
+      State.new(args.name, args[:nodes], args.persistence, args.machine)
       | nexus_pid: args.nexus_pid,
         state: :lonely
     }
