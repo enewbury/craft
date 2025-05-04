@@ -2,14 +2,16 @@ defmodule Craft.Machine do
   @doc false
   use GenServer
 
+  alias Craft.Configuration
   alias Craft.Consensus
   alias Craft.Consensus.State, as: ConsensusState
   alias Craft.Consensus.State.LeaderState
-  alias Craft.Persistence
+  alias Craft.SnapshotServer.RemoteFile
   alias Craft.Log.CommandEntry
   alias Craft.Log.EmptyEntry
   alias Craft.Log.MembershipEntry
   alias Craft.Log.SnapshotEntry
+  alias Craft.Persistence
 
   import Craft.Application, only: [via: 2, lookup: 2]
 
@@ -27,8 +29,8 @@ defmodule Craft.Machine do
     @type data_dir :: Path.t()
 
     @callback last_applied_log_index(private()) :: Craft.log_index() | nil
-    @callback snapshot(Craft.log_index(), private()) :: {:ok, snapshot()}
-    @callback prepare_to_receive_snapshot(private()) :: {:ok, data_dir, snapshot()}
+    @callback snapshot(private()) :: {index :: pos_integer(), snapshot(), private()} | nil
+    @callback prepare_to_receive_snapshot(private()) :: {:ok, data_dir, private()}
     @callback receive_snapshot(private()) :: {:ok, private()}
   end
 
@@ -234,23 +236,9 @@ defmodule Craft.Machine do
     # the provided index, and the user will call back when it's done (and we'll send a message
     # to the consensus module to tell it that a snapshot at the given index completed)
     #
-    # should probably provide sync/async semantics as well as ability to store small snapshots directly in the log
+    # should probably provide sync/async semantics as well
     #
     # only snapshot up to one entry before the latest, since we need the prev log entry to create AppendEntries
-
-    if should_snapshot? do
-      if state.module.__craft_mutable__() do
-        snapshot_index = new_commit_index - 1
-        snapshot_dir = state.module.snapshot(snapshot_index, state.private)
-
-        :ok = Consensus.snapshot_ready(state.name, snapshot_index, snapshot_dir)
-      else
-        snapshot_index = last_applied_log_index
-        snapshot_content = state.private
-
-        :ok = Consensus.snapshot_ready(state.name, snapshot_index, snapshot_content)
-      end
-    end
 
     state =
       Enum.reduce(last_applied_log_index+1..new_commit_index//1, state, fn index, state ->
@@ -293,7 +281,42 @@ defmodule Craft.Machine do
         end
       end)
 
-    {:noreply, %State{state | last_applied: new_commit_index}}
+    private =
+      if should_snapshot? do
+        if state.module.__craft_mutable__() do
+          case state.module.snapshot(state.private) do
+            {index, path, private} ->
+              files =
+                path
+                |> ls_flat()
+                |> Enum.map(fn file ->
+                  %RemoteFile{
+                    name: Path.relative_to(file, path),
+                    md5: md5(file),
+                    byte_size: File.stat!(file).size
+                  }
+                end)
+
+              relative_path = Path.relative_to(path, Configuration.data_dir())
+
+              :ok = Consensus.snapshot_ready(state.name, index, {relative_path, files})
+
+              private
+
+            # machine decided not to snapshot (perhaps no commands have run)
+            _ ->
+              state.private
+          end
+        else
+          :ok = Consensus.snapshot_ready(state.name, state.last_applied, state.module.snapshot(state.private))
+
+          state.private
+        end
+      else
+        state.private
+      end
+
+    {:noreply, %State{state | last_applied: new_commit_index, private: private}}
   end
 
   #
@@ -372,7 +395,7 @@ defmodule Craft.Machine do
   def handle_call({:init_or_restore, log}, _from, state) do
     {last_applied, private} =
       if state.module.__craft_mutable__() do
-        {:ok, private} = state.machine.init(state.name)
+        {:ok, private} = state.module.init(state.name)
         last_applied = state.module.last_applied_log_index(private)
 
         {last_applied, private}
@@ -404,7 +427,7 @@ defmodule Craft.Machine do
     {private, last_applied} =
       if state.module.__craft_mutable__() do
         private = state.module.receive_snapshot(state.private)
-        last_applied = state.module.last_applied_log_index(state.private)
+        last_applied = state.module.last_applied_log_index(private)
 
         {private, last_applied}
       else
@@ -422,6 +445,27 @@ defmodule Craft.Machine do
     machine_state = state.module.dump(state.private)
 
     {:reply, %{state: state, machine_state: machine_state}, state}
+  end
+
+  def ls_flat(path) do
+    path
+    |> File.ls!()
+    |> Enum.flat_map(fn entry ->
+      entry = Path.join(path, entry)
+
+      if File.dir?(entry) do
+        ls_flat(entry)
+      else
+        [entry]
+      end
+    end)
+  end
+
+  def md5(file) do
+    file
+    |> File.stream!(100_000)
+    |> Enum.reduce(:erlang.md5_init(), &:erlang.md5_update(&2, &1))
+    |> :erlang.md5_final()
   end
 
   defmacro __using__(opts) do

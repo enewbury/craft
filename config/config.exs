@@ -9,6 +9,8 @@ config :logger, :console,
   format: "[$level] $metadata\t| $message\n",
   metadata: [:name, :t, :term, :node]
 
+config :craft, :snapshot_server_port, 1337
+
 if config_env() in [:test, :dev] do
   config :craft, :base_data_dir, "data"
 else

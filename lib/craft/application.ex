@@ -18,12 +18,14 @@ defmodule Craft.Application do
     create_data_dir!()
 
     children = [
+      Craft.SnapshotServer,
+      {Task.Supervisor, name: Craft.SnapshotServer.Supervisor},
       {DynamicSupervisor, [strategy: :one_for_one, name: Craft.Supervisor]},
       {Registry, keys: :unique, name: Craft.Registry},
       Craft.MemberCache
     ]
 
-    Supervisor.start_link(children, strategy: :one_for_one)
+    Supervisor.start_link(children, strategy: :rest_for_one)
   end
 
   def via(name, component) do

@@ -1,6 +1,8 @@
 defmodule Craft.RocksDBMachine do
   use Craft.Machine, mutable: true
 
+  alias Craft.Configuration
+
   @log_index_column_family {~c"log_index", []}
   @log_index_key "log_index"
 
@@ -9,7 +11,7 @@ defmodule Craft.RocksDBMachine do
   end
 
   def get(name, k) do
-    Craft.command({:get, k}, name)
+    Craft.query({:get, k}, name)
   end
 
   defmodule State do
@@ -17,7 +19,14 @@ defmodule Craft.RocksDBMachine do
   end
 
   def init(group_name) do
-    data_dir = Path.join([File.cwd!(), "data", to_string(node()), group_name, "machine"])
+    group_dir =
+      group_name
+      |> Configuration.find()
+      |> Map.fetch!(:data_dir)
+
+    data_dir = Path.join([Configuration.data_dir(), group_dir, "machine"])
+
+    File.mkdir_p!(data_dir)
 
     %State{
       data_dir: data_dir,
@@ -38,11 +47,13 @@ defmodule Craft.RocksDBMachine do
   end
 
   def receive_snapshot(state) do
-    do_init(state)
+    {:ok, state} = do_init(state)
+
+    state
   end
 
   def prepare_to_receive_snapshot(state) do
-    :ok = :rocksdb.close(state.db)
+    :rocksdb.close(state.db)
 
     File.rm_rf!(state.data_dir)
 
@@ -59,33 +70,41 @@ defmodule Craft.RocksDBMachine do
     {:ok, state}
   end
 
-  def command({:get, k}, log_index, state) do
-    :ok = :rocksdb.put(state.db, state.log_index_column_family, @log_index_key, encode(log_index), sync: true)
-
-    case :rocksdb.get(state.db, encode(k), []) do
-      {:ok, value} ->
-        {{:ok, decode(value)}, state}
-
-      :not_found ->
-        {{:error, :not_found}, state}
-
-      error ->
-        {error, state}
-    end
-  end
-
   # TODO: inject this clause via `use Craft.Machine`
   def command(_, _log_index, state) do
     {{:error, :unknown_command}, state}
   end
 
-  def snapshot(at_index, state) do
-    path = Path.join(state.snapshots_dir, to_string(at_index))
+  def query({:get, k}, state) do
+    case :rocksdb.get(state.db, encode(k), []) do
+      {:ok, value} ->
+        {:ok, decode(value)}
 
-    File.mkdir_p!(state.snapshots_dir)
-    :ok = :rocksdb.checkpoint(state.db, :erlang.binary_to_list(path))
+      :not_found ->
+        {:error, :not_found}
 
-    path
+      error ->
+        error
+    end
+  end
+
+  def snapshot(state) do
+    index =
+      state
+      |> last_applied_log_index()
+      |> to_string()
+
+    path = Path.join(state.snapshots_dir, index)
+
+    if not File.exists?(path) do
+      File.mkdir_p!(state.snapshots_dir)
+
+      :ok = :rocksdb.checkpoint(state.db, :erlang.binary_to_list(path))
+
+      {last_applied_log_index(state), path, state}
+    else
+      nil
+    end
   end
 
   def snapshots(state) do
@@ -98,7 +117,7 @@ defmodule Craft.RocksDBMachine do
         decode(value)
 
       :not_found ->
-        nil
+        0
     end
   end
 

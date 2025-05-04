@@ -21,7 +21,7 @@ defmodule Craft.Configuration do
           |> :erlang.binary_to_term()
 
         if config.name == name do
-          Map.put(config, :data_dir, path)
+          Map.put(config, :data_dir, dir)
         end
       end
     end)
@@ -61,7 +61,7 @@ defmodule Craft.Configuration do
     find(name)
   end
 
-  defp make_new_directory do
+  def make_new_directory do
     name = random_string()
     path = Path.join(data_dir(), name)
 
@@ -74,12 +74,12 @@ defmodule Craft.Configuration do
     end
   end
 
+  def data_dir do
+    Application.get_env(:craft, :data_dir)
+  end
+
   defp random_string do
     :crypto.strong_rand_bytes(16)
     |> Base.encode16(case: :lower)
-  end
-
-  defp data_dir do
-    Application.get_env(:craft, :data_dir)
   end
 end

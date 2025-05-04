@@ -21,7 +21,6 @@ defmodule Craft.Consensus do
   alias Craft.Consensus.State.LeaderState
   alias Craft.Consensus.State.LeaderState.LeadershipTransfer
   alias Craft.Consensus.State.LeaderState.MembershipChange
-  alias Craft.Consensus.State.LeaderState.SnapshotTransfer
   alias Craft.Consensus.State.Members
   alias Craft.Log.CommandEntry
   alias Craft.Log.MembershipEntry
@@ -32,6 +31,7 @@ defmodule Craft.Consensus do
   alias Craft.RPC.AppendEntries
   alias Craft.RPC.RequestVote
   alias Craft.RPC.InstallSnapshot
+  alias Craft.SnapshotServerClient
 
   require Logger
 
@@ -280,14 +280,8 @@ defmodule Craft.Consensus do
 
   # def receiving_snapshot(:state_timeout, :become_lonely, data), do: {:next_state, :lonely, data}
 
-  def receiving_snapshot(:cast, %InstallSnapshot{} = install_snapshot, data) do
-    # TODO: for sendfile implementation
-    # if current snapshot transfer:
-    #   tell sending node to abort
-    #   nuke current snapshot transfer files
-    #   stop state machine?
-    #
-    # initiate new transfer
+  def receiving_snapshot(:cast, %InstallSnapshot{snapshot_transfer: s} = install_snapshot, %State{incoming_snapshot_transfer: {_pid, s}} = data) do
+    Logger.info("ignoring identical snapshot transfer request")
 
     data =
       %State{data | leader_id: install_snapshot.leader_id}
@@ -295,22 +289,58 @@ defmodule Craft.Consensus do
 
     MemberCache.update(data)
 
-    persistence = Persistence.truncate(data.persistence, install_snapshot.log_index, install_snapshot.log_entry)
+    {:keep_state, data}
+  end
+
+  def receiving_snapshot(:cast, %InstallSnapshot{} = install_snapshot, %State{} = data) do
+    data =
+      %State{data | leader_id: install_snapshot.leader_id}
+      |> State.set_current_term(install_snapshot.term)
+
+    MemberCache.update(data)
 
     if data.machine.__craft_mutable__() do
+      case data.incoming_snapshot_transfer do
+        {_old_pid, _old_transfer} ->
+          # FIXME: abort current transfer
+          :abort
+
+        nil ->
+          :noop
+      end
+
       {:ok, data_dir} = Machine.prepare_to_receive_snapshot(data.name)
 
-      SnapshotTransfer.receive(install_snapshot.snapshot_transfer, data_dir)
+      me = self()
+      {:ok, pid} =
+        SnapshotServerClient.start_link(
+          install_snapshot.snapshot_transfer,
+          data_dir,
+          fn :ok ->
+            :gen_statem.cast(me, {:download_succeeded, install_snapshot})
+          end
+        )
+
+      {:keep_state, %State{data | incoming_snapshot_transfer: {pid, install_snapshot.snapshot_transfer}}}
+    else
+      receiving_snapshot(:cast, {:download_succeeded, install_snapshot}, data)
     end
+  end
+
+  def receiving_snapshot(:cast, {:download_succeeded, %InstallSnapshot{} = install_snapshot}, %State{} = data) do
+    persistence = Persistence.truncate(data.persistence, install_snapshot.log_index, install_snapshot.log_entry)
 
     :ok = Machine.receive_snapshot(data.name, install_snapshot)
 
     RPC.respond_install_snapshot(install_snapshot, true, data)
 
-    data = %State{data | persistence: persistence}
+    {:next_state, :follower, %State{data | persistence: persistence}}
+  end
 
-    # {:keep_state, data, []}
-    {:next_state, :follower, data}
+  def receiving_snapshot(:cast, {:download_failed, reason}, %State{} = data) do
+    Logger.warning("snapshot download failed because #{inspect reason}")
+
+    {:repeat_state, %State{data | incoming_snapshot_transfer: nil}}
   end
 
   #
@@ -332,6 +362,11 @@ defmodule Craft.Consensus do
   end
 
   def follower(:state_timeout, :become_lonely, data), do: {:next_state, :lonely, data}
+
+  # we just installed this snapshot, the leader hasn't heard yet, ignore it.
+  def follower(:cast, %InstallSnapshot{snapshot_transfer: s}, %State{incoming_snapshot_transfer: {_pid, s}}) do
+    :keep_state_and_data
+  end
 
   def follower(:cast, %RequestVote{leadership_transfer: true, term: term} = request_vote, %State{current_term: current_term} = data) when term > current_term do
     {vote_granted, data} =

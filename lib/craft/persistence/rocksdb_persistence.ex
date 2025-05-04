@@ -24,11 +24,12 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
   @impl true
   def new(group_name, opts \\ []) do
-    data_dir =
+    group_dir =
       group_name
       |> Configuration.find()
       |> Map.fetch!(:data_dir)
-      |> Path.join("log")
+
+    data_dir = Path.join([Configuration.data_dir(), group_dir, "log"])
 
     File.mkdir_p!(data_dir)
 
