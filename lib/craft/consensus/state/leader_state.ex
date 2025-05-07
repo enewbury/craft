@@ -13,7 +13,7 @@ defmodule Craft.Consensus.State.LeaderState do
     :membership_change,
     :leadership_transfer,
     :last_quorum_at, # the last time we knew we were leader
-    last_heartbeat_replies_at: %{}, # for CheckQuorum voting members only
+    last_heartbeat_replies_at: %{}, # for CheckQuorum, voting members only
     snapshot_transfers: %{}
   ]
 
@@ -61,6 +61,7 @@ defmodule Craft.Consensus.State.LeaderState do
     %__MODULE__{
       next_indices: next_indices,
       match_indices: match_indices,
+      last_quorum_at: :erlang.monotonic_time(:millisecond)
     }
   end
 
@@ -226,29 +227,23 @@ defmodule Craft.Consensus.State.LeaderState do
   def bump_last_heartbeat_reply_at(%State{} = state, %AppendEntries.Results{} = results) do
     if Members.can_vote?(state.members, results.from) do
       last_heartbeat_replies_at = Map.put(state.leader_state.last_heartbeat_replies_at, results.from, {results.append_entries_sent_at, :erlang.monotonic_time(:millisecond)})
+      state = %State{state | leader_state: %__MODULE__{state.leader_state | last_heartbeat_replies_at: last_heartbeat_replies_at}}
 
       # -1 since we're the leader
       num_replies_needed = State.quorum_needed(state) - 1
 
-      latest_sent_times =
+      quorum_making_sent_times =
         last_heartbeat_replies_at
         |> Enum.map(fn {_member, {sent_at, _received_at}} -> sent_at end)
-        |> Enum.sort(:desc)
+        |> Enum.sort()
+        |> Enum.slice(0, num_replies_needed)
 
       # if quorum was achieved, the most we can say is that we we were leader when the earliest AppendEntries was sent
-      state =
-        if Enum.count(latest_sent_times) >= num_replies_needed do
-          last_quorum_at =
-            latest_sent_times
-            |> Enum.slice(0, num_replies_needed)
-            |> List.last()
-
-          %State{state | leader_state: %__MODULE__{state.leader_state | last_quorum_at: last_quorum_at}}
-        else
-          state
-        end
-
-      %State{state | leader_state: %__MODULE__{state.leader_state | last_heartbeat_replies_at: last_heartbeat_replies_at}}
+      if Enum.count(quorum_making_sent_times) >= num_replies_needed do
+        %State{state | leader_state: %__MODULE__{state.leader_state | last_quorum_at: List.first(quorum_making_sent_times)}}
+      else
+        state
+      end
     else
       state
     end
