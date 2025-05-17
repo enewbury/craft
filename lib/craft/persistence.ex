@@ -48,7 +48,8 @@ defmodule Craft.Persistence do
 
     defstruct [
       :current_term,
-      :voted_for
+      :voted_for,
+      :leader_leased_at
     ]
 
     def init(%State{} = state) do
@@ -59,12 +60,15 @@ defmodule Craft.Persistence do
       module.fetch_metadata(private)
     end
 
+    # TODO: don't update metadata as a monolithic blob, update per-key, it'll be faster
+    # like `update(state, key, value)``
     def update(%State{} = state) do
       get_and_update(state, fn metadata ->
         %__MODULE__{
           metadata |
           current_term: state.current_term,
-          voted_for: state.voted_for
+          voted_for: state.voted_for,
+          leader_leased_at: state.leader_leased_at
         }
       end)
     end

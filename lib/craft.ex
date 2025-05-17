@@ -40,17 +40,16 @@ defmodule Craft do
   ### Opts
     - `:persistence` - Configure how the raft log is persisted with a {module, args} tuple where module aheres to the `Craft.Persistence` behaviour
   """
-  def start_group(name, nodes, machine, opts \\ %{}) do
+  def start_group(name, nodes, machine, opts \\ []) do
     for node <- nodes do
       :pong = Node.ping(node)
       {:module, __MODULE__} = :rpc.call(node, Code, :ensure_loaded, [__MODULE__])
     end
 
     opts =
-      Map.merge(opts, %{
-        nodes: nodes,
-        machine: machine
-      })
+      opts
+      |> Enum.into(%{})
+      |> Map.merge(%{nodes: nodes, machine: machine})
 
     for node <- nodes do
       {:ok, _pid} = :rpc.call(node, Craft.MemberSupervisor, :start_member, [name, opts])

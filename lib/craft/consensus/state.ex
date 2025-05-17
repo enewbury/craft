@@ -17,6 +17,7 @@ defmodule Craft.Consensus.State do
     :members,
     :persistence,
     :machine,
+    :global_clock,
     :nexus_pid,
     :leader_id,
     {:snapshots, %{}},
@@ -27,10 +28,11 @@ defmodule Craft.Consensus.State do
     :voted_for, # lonely and follower
     :election, # lonely and candidate
     :leadership_transfer_request_id, # candidate only
-    :incoming_snapshot_transfer # receiving_snapshot only
+    :incoming_snapshot_transfer, # receiving_snapshot only
+    :leader_leased_at
   ]
 
-  def new(name, nodes, persistence, machine) do
+  def new(name, nodes, persistence, machine, global_clock) do
     persistence = Persistence.new(name, persistence)
 
     # if we're restoring state from disk, search the log backwards for group members
@@ -60,7 +62,8 @@ defmodule Craft.Consensus.State do
         name: name,
         members: members,
         persistence: persistence,
-        machine: machine
+        machine: machine,
+        global_clock: global_clock
       }
 
     case Metadata.fetch(persistence) do
@@ -68,7 +71,8 @@ defmodule Craft.Consensus.State do
         %__MODULE__{
           state |
           current_term: metadata.current_term,
-          voted_for: metadata.voted_for
+          voted_for: metadata.voted_for,
+          leader_leased_at: metadata.leader_leased_at
         }
 
       :error ->
@@ -83,6 +87,14 @@ defmodule Craft.Consensus.State do
         current_term: new_current_term,
         voted_for: voted_for
       }
+
+    Metadata.update(state)
+
+    state
+  end
+
+  def set_leader_leased_at(%__MODULE__{} = state, leader_leased_at) do
+    state = %__MODULE__{state | leader_leased_at: leader_leased_at}
 
     Metadata.update(state)
 

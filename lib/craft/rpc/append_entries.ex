@@ -1,8 +1,10 @@
 defmodule Craft.RPC.AppendEntries do
-  alias Craft.RPC.AppendEntries.LeadershipTransfer
   alias Craft.Consensus.State
   alias Craft.Consensus.State.LeaderState
   alias Craft.Persistence
+  alias Craft.RPC.AppendEntries.LeadershipTransfer
+
+  require Logger
 
   defstruct [
     :term,
@@ -12,7 +14,8 @@ defmodule Craft.RPC.AppendEntries do
     :entries,
     :leader_commit,
     :leadership_transfer,
-    :sent_at
+    :sent_at,
+    :leader_leased_at
   ]
 
   defmodule LeadershipTransfer do
@@ -50,7 +53,8 @@ defmodule Craft.RPC.AppendEntries do
       entries: entries,
       leader_commit: state.commit_index,
       leadership_transfer: leadership_transfer,
-      sent_at: :erlang.monotonic_time(:millisecond)
+      sent_at: state.leader_state.last_heartbeat_sent_at,
+      leader_leased_at: state.leader_leased_at
     }
   end
 
@@ -62,7 +66,7 @@ defmodule Craft.RPC.AppendEntries do
       :from,
       :success,
       :latest_index,
-      :append_entries_sent_at
+      :heartbeat_sent_at
     ]
 
     def new(%State{state: :follower} = state, %AppendEntries{} = append_entries, success) do
@@ -71,7 +75,7 @@ defmodule Craft.RPC.AppendEntries do
         from: node(),
         success: success,
         latest_index: Persistence.latest_index(state.persistence),
-        append_entries_sent_at: append_entries.sent_at
+        heartbeat_sent_at: append_entries.sent_at
       }
     end
   end

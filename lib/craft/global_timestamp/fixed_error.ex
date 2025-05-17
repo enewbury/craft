@@ -1,0 +1,19 @@
+# A clock source with fixed error for development/testing, do not use in production.
+defmodule Craft.GlobalTimestamp.FixedError do
+  @moduledoc false
+
+  alias Craft.GlobalTimestamp
+
+  @behaviour GlobalTimestamp
+
+  @error 100 # ms
+
+  def now do
+    now = DateTime.utc_now()
+
+    earliest = DateTime.add(now, -1 * @error, :millisecond)
+    latest = DateTime.add(now, @error, :millisecond)
+
+    {:ok, %GlobalTimestamp{earliest: earliest, latest: latest}}
+  end
+end

@@ -29,7 +29,8 @@ defmodule Craft.RPC.RequestVote do
       :term,
       :from,
       :vote_granted,
-      :pre_vote
+      :pre_vote,
+      :leader_leased_at
     ]
 
     def new(%State{} = state, pre_vote, vote_granted) do
@@ -37,7 +38,8 @@ defmodule Craft.RPC.RequestVote do
         term: state.current_term,
         from: node(),
         vote_granted: vote_granted,
-        pre_vote: pre_vote
+        pre_vote: pre_vote,
+        leader_leased_at: state.leader_leased_at
       }
     end
   end

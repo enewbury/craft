@@ -44,7 +44,14 @@ defmodule Craft.MemberSupervisor do
     if Configuration.find(name) do
       {:error, :already_exists}
     else
-      Configuration.write_new!(name, %{machine: opts.machine, persistence: opts.persistence, nodes: opts.nodes})
+      config = %{
+        machine: opts.machine,
+        persistence: opts.persistence,
+        nodes: opts.nodes,
+        global_clock: opts.global_clock
+      }
+
+      Configuration.write_new!(name, config)
 
       do_start_member(opts)
     end

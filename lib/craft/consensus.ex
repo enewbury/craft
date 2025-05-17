@@ -22,6 +22,7 @@ defmodule Craft.Consensus do
   alias Craft.Consensus.State.LeaderState.LeadershipTransfer
   alias Craft.Consensus.State.LeaderState.MembershipChange
   alias Craft.Consensus.State.Members
+  alias Craft.GlobalTimestamp
   alias Craft.Log.CommandEntry
   alias Craft.Log.MembershipEntry
   alias Craft.Machine
@@ -29,8 +30,8 @@ defmodule Craft.Consensus do
   alias Craft.Persistence
   alias Craft.RPC
   alias Craft.RPC.AppendEntries
-  alias Craft.RPC.RequestVote
   alias Craft.RPC.InstallSnapshot
+  alias Craft.RPC.RequestVote
   alias Craft.SnapshotServerClient
 
   require Logger
@@ -46,13 +47,21 @@ defmodule Craft.Consensus do
 
   @lonely_timeout @heartbeat_interval + 1_000
 
+  # setting the leader lease length to something a bit less than the lonely timeout ensures that the new leader
+  # can pick up the lease immediately after it's elected. this is probably what you want, it increses availability
+  # in split-brain scenarios (this is what TiKV does).
+  #
+  # you don't have to do this, you're free to set the value however you like, the new leader will just wait out the old lease.
+  @leader_lease_timeout @lonely_timeout - 200
+
   # amount of time to wait for votes before concluding that the election has failed
   @election_timeout 1500
 
+  # max jitter for lonely election initiation
+  @election_jitter 1500
+
   # amount of time to wait for new leader to take over before concluding that leadership transfer has failed
   @leadership_transfer_timeout 3000
-
-  defp jitter(max \\ 1500), do: :rand.uniform(max)
 
   #
   # API
@@ -117,13 +126,17 @@ defmodule Craft.Consensus do
   def init(args) do
     Logger.metadata(name: args.name, node: node())
 
-    data = State.new(args.name, args[:nodes], args.persistence, args.machine)
+    data = State.new(args.name, args[:nodes], args.persistence, args.machine, args[:global_clock])
 
     MemberCache.update(data)
 
     :ok = Machine.init_or_restore(data)
 
-    Logger.info("started")
+    if data.global_clock do
+      Logger.info("consensus process started, global clock present, leader leases enabled")
+    else
+      Logger.info("consensus process started, no global clock present, leader leases disabled")
+    end
 
     {:ok, :lonely, data}
   end
@@ -153,7 +166,7 @@ defmodule Craft.Consensus do
 
     Logger.info("became lonely", logger_metadata(data))
 
-    {:keep_state, data, [{:state_timeout, jitter(), :begin_pre_vote}]}
+    {:keep_state, data, [{:state_timeout, :rand.uniform(@election_jitter), :begin_pre_vote}]}
   end
 
   def lonely(:state_timeout, :begin_pre_vote, data) do
@@ -204,6 +217,7 @@ defmodule Craft.Consensus do
 
   def lonely(:cast, %RequestVote{pre_vote: false} = request_vote, data) do
     RPC.respond_vote(request_vote, false, data)
+
     {:keep_state, data}
   end
 
@@ -376,7 +390,7 @@ defmodule Craft.Consensus do
         {false, data}
       end
 
-    Logger.info("#{if vote_granted, do: "granting", else: "denying"} vote to #{request_vote.candidate_id}", logger_metadata(data))
+    Logger.info("#{if vote_granted, do: "granting", else: "denying"} leadership transfer vote to #{request_vote.candidate_id}", logger_metadata(data))
 
     RPC.respond_vote(request_vote, vote_granted, data)
 
@@ -403,7 +417,9 @@ defmodule Craft.Consensus do
   def follower(:cast, %AppendEntries{} = append_entries, data) do
     prev_log_term = append_entries.prev_log_term
     old_commit_index = data.commit_index
-    data = %State{data | leader_id: append_entries.leader_id}
+    data =
+      %State{data | leader_id: append_entries.leader_id}
+      |> State.set_leader_leased_at(append_entries.leader_leased_at)
 
     {success, data} =
       if Enum.empty?(append_entries.entries) do
@@ -465,7 +481,7 @@ defmodule Craft.Consensus do
 
     MemberCache.update(data)
 
-    # leader told us to take over leadership when our log is caught up
+    # leader told us to take over leadership if our log is caught up
     if append_entries.leadership_transfer &&
        append_entries.leadership_transfer.latest_index == Persistence.latest_index(data.persistence) &&
        append_entries.leadership_transfer.latest_term == Persistence.latest_term(data.persistence) do
@@ -509,7 +525,7 @@ defmodule Craft.Consensus do
   # Candidate
   #
 
-  def candidate(:enter, :follower, %State{leadership_transfer_request_id: id} = data) when is_tuple(id) do
+  def candidate(:enter, :follower, %State{leadership_transfer_request_id: id} = data) when is_tuple(id) or id == :internal do
     data = State.become_candidate(data)
 
     MemberCache.update(data)
@@ -568,7 +584,6 @@ defmodule Craft.Consensus do
     {:next_state, :follower, data, [:postpone]}
   end
 
-  # handle incoming RequestVote response, becoming leader if a quorum votes for us
   def candidate(:cast, %RequestVote.Results{} = results, data) do
     if results.vote_granted do
       Logger.info("vote granted by #{results.from}", logger_metadata(data))
@@ -576,10 +591,35 @@ defmodule Craft.Consensus do
       Logger.info("vote denied by #{results.from}", logger_metadata(data))
     end
 
-    data = State.record_vote(data, results)
+    # keep the future-most lease timestamp
+    latest_leader_lease =
+      case {data.leader_leased_at, results.leader_leased_at} do
+        {nil, nil} ->
+          nil
+
+        {nil, %GlobalTimestamp{} = follower_ts} ->
+          follower_ts
+
+        {%GlobalTimestamp{} = our_ts, nil} ->
+          our_ts
+
+        {%GlobalTimestamp{} = our_ts, %GlobalTimestamp{} = follower_ts} ->
+          if DateTime.compare(our_ts.latest, follower_ts.latest) == :lt do
+            follower_ts
+          else
+            our_ts
+          end
+      end
+
+    data =
+      data
+      |> State.set_leader_leased_at(latest_leader_lease)
+      |> State.record_vote(results)
 
     case State.election_result(data) do
       :won ->
+        Logger.info inspect(data.leader_leased_at), logger_metadata(data)
+
         {:next_state, :leader, data}
 
       :lost ->
@@ -639,6 +679,34 @@ defmodule Craft.Consensus do
     Machine.update_role(data)
 
     #
+    # HERE
+    # HERE
+    # HERE
+    # wait out the old lease, refuse any writes or reads until we hold the lease.
+    # don't write the Membership entry below until then, either.
+    #
+    # just do empty heartbeats to maintain leadership
+    #
+    # write leadership status to ets and provide public functions to read it
+    # HERE
+    # HERE
+    # HERE
+    #
+    #
+
+    lease_wait_out_period =
+      case data.leader_leased_at do
+        %GlobalTimestamp{latest: lease_latest} ->
+          {:ok, %GlobalTimestamp{earliest: now_earliest}} = GlobalTimestamp.now(data)
+
+          DateTime.diff(now_earliest, lease_latest, :millisecond)
+          |> IO.inspect(label: :waiting)
+
+        _ ->
+          []
+      end
+
+    #
     # when the cluster starts up, each node is explicitly given the same configuration to
     # hold in-memory to bootstrap the cluster.
     #
@@ -664,9 +732,7 @@ defmodule Craft.Consensus do
   def leader(:state_timeout, :heartbeat, data) do
     Logger.debug("heartbeat", logger_metadata(data))
 
-    heartbeat(data)
-
-    {:keep_state_and_data, [{:state_timeout, @heartbeat_interval, :heartbeat}]}
+    {:keep_state, heartbeat(data), [{:state_timeout, @heartbeat_interval, :heartbeat}]}
   end
 
   def leader({:timeout, :check_quorum}, :check_quorum, data) do
@@ -704,9 +770,6 @@ defmodule Craft.Consensus do
 
   def leader(:cast, %AppendEntries.Results{} = results, data) do
     old_commit_index = data.commit_index
-    data = LeaderState.bump_last_heartbeat_reply_at(data, results)
-
-    Machine.quorum_reached(data)
 
     case LeaderState.handle_append_entries_results(data, results) do
       {:needs_snapshot, data} ->
@@ -744,15 +807,13 @@ defmodule Craft.Consensus do
           data = put_in(data.leader_state.membership_change, nil)
           actions = [{:reply, membership_change.from, :ok}]
 
-          # leadership is being transferred
+          # if we're being removed, transfer leadership away first
           if membership_change.action == :remove && membership_change.node == node() do
             data = LeaderState.transfer_leadership(data)
 
             actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :self_removal} | actions]
 
-            heartbeat(data)
-
-            {:keep_state, data, actions}
+            {:keep_state, heartbeat(data), actions}
           else
             {:keep_state, data, actions}
           end
@@ -786,9 +847,7 @@ defmodule Craft.Consensus do
 
       actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :user_requested}]
 
-      heartbeat(data)
-
-      {:keep_state, data, actions}
+      {:keep_state, heartbeat(data), actions}
     else
       send(caller_pid, {id, {:error, :not_voting_member}})
 
@@ -884,6 +943,29 @@ defmodule Craft.Consensus do
 
   #TODO: parallelize?
   defp heartbeat(%State{} = state) do
+    # the monotonic clock is not strictly increasing monotonic clock, so it can freeze for an unbounded number of rounds.
+    # if that happens, we add a millisecond to the last round's value to continue generating unique consensus round ids
+    now = :erlang.monotonic_time(:millisecond)
+    last_heartbeat_sent_at =
+      if state.leader_state.last_heartbeat_sent_at < now do
+        now
+      else
+        state.leader_state.last_heartbeat_sent_at + 1
+      end
+    state = put_in(state.leader_state.last_heartbeat_sent_at, last_heartbeat_sent_at)
+    state = put_in(state.leader_state.current_quorum_successful, false)
+
+    state =
+      case GlobalTimestamp.now(state) do
+        {:ok, now} ->
+          %State{state | leader_leased_at: now}
+
+        error ->
+          Logger.error("error determining global time, got '#{inspect error}', halting")
+
+          throw({:stop, {:bad_clock, error}})
+      end
+
     Enum.reduce(Members.other_nodes(state.members), state, fn to_node, state ->
       if LeaderState.needs_snapshot?(state, to_node) do
         if LeaderState.sending_snapshot?(state, to_node) do
