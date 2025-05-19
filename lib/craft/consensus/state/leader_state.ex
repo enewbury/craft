@@ -130,7 +130,20 @@ defmodule Craft.Consensus.State.LeaderState do
     state
   end
 
-  def handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: true} = results) do
+  def handle_append_entries_results(state, results) do
+    heartbeat_sent_at = results.heartbeat_sent_at
+
+    case state.leader_state.last_heartbeat_replies_at do
+      {^heartbeat_sent_at, _} ->
+        Logger.warning("duplicate heartbeat reply received: #{inspect results}, ignoring.")
+        state
+
+      _ ->
+        do_handle_append_entries_results(state, results)
+    end
+  end
+
+  defp do_handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: true} = results) do
     state = bump_last_heartbeat_reply_at(state, results)
     # accounts for the possibility of stale AppendEntries results (due to pathological network reordering)
     # and also avoids work when no follower log appends took place (i.e. a heartbeat that doesnt append anything)
@@ -154,16 +167,10 @@ defmodule Craft.Consensus.State.LeaderState do
           state.leader_state.match_indices
         end
 
-      # only directly commit entries from the current term (section 5.4.2)
-      highest_uncommitted_match_index_from_this_term =
+      highest_uncommitted_match_index =
         match_indices_for_commitment
         |> Map.values()
         |> Enum.filter(fn index -> index >= state.commit_index end)
-        |> Enum.filter(fn index ->
-          {:ok, %{term: term}} = Persistence.fetch(state.persistence, index)
-
-          term == state.current_term
-        end)
         |> Enum.uniq()
         |> Enum.sort()
         |> Enum.reverse()
@@ -174,10 +181,10 @@ defmodule Craft.Consensus.State.LeaderState do
         end)
 
       # only bump commit index when the quorum entry is from the current term (section 5.4.2)
-      with false <- is_nil(highest_uncommitted_match_index_from_this_term),
-           {:ok, entry} <- Persistence.fetch(state.persistence, highest_uncommitted_match_index_from_this_term),
+      with false <- is_nil(highest_uncommitted_match_index),
+           {:ok, entry} <- Persistence.fetch(state.persistence, highest_uncommitted_match_index),
            true <- entry.term == state.current_term do
-        %State{state | commit_index: highest_uncommitted_match_index_from_this_term}
+        %State{state | commit_index: highest_uncommitted_match_index}
       else
         _ ->
           state
@@ -187,7 +194,7 @@ defmodule Craft.Consensus.State.LeaderState do
     end
   end
 
-  def handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: false} = results) do
+  defp do_handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: false} = results) do
     state = bump_last_heartbeat_reply_at(state, results)
     # we don't know where we match the followers log
     match_indices = Map.put(state.leader_state.match_indices, results.from, 0)
@@ -267,7 +274,12 @@ defmodule Craft.Consensus.State.LeaderState do
         state = put_in(state.leader_state.last_quorum_at, state.leader_state.last_heartbeat_sent_at)
 
         if not state.leader_state.current_quorum_successful do
-          Machine.quorum_reached(state)
+          #TODO: these rules will need more thought, just roughed out to start
+          no_snapshot_transfers = Enum.empty?(state.leader_state.snapshot_transfers)
+          all_followers_caught_up = Enum.empty?(state.members.catching_up_nodes)
+          # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
+
+          Machine.quorum_reached(state, no_snapshot_transfers && all_followers_caught_up)
 
           put_in(state.leader_state.current_quorum_successful, true)
         else

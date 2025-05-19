@@ -15,7 +15,7 @@ defmodule Craft.RPC.AppendEntries do
     :leader_commit,
     :leadership_transfer,
     :sent_at,
-    :leader_leased_at
+    :leader_leased_until
   ]
 
   defmodule LeadershipTransfer do
@@ -54,7 +54,7 @@ defmodule Craft.RPC.AppendEntries do
       leader_commit: state.commit_index,
       leadership_transfer: leadership_transfer,
       sent_at: state.leader_state.last_heartbeat_sent_at,
-      leader_leased_at: state.leader_leased_at
+      leader_leased_until: state.leader_leased_until
     }
   end
 

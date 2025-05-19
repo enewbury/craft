@@ -16,4 +16,11 @@ defmodule Craft.GlobalTimestamp do
 
   def now(%State{global_clock: global_clock}) when is_atom(global_clock), do: global_clock.now()
   def now(_), do: {:ok, nil}
+
+  def add(%__MODULE__{} = ts, amount, unit) do
+    %__MODULE__{
+      earliest: DateTime.add(ts.earliest, amount, unit),
+      latest: DateTime.add(ts.latest, amount, unit)
+    }
+  end
 end

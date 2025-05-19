@@ -52,13 +52,12 @@ defmodule Craft.Consensus do
   # in split-brain scenarios (this is what TiKV does).
   #
   # you don't have to do this, you're free to set the value however you like, the new leader will just wait out the old lease.
-  @leader_lease_timeout @lonely_timeout - 200
+  @leader_lease_period @lonely_timeout - 200
 
   # amount of time to wait for votes before concluding that the election has failed
   @election_timeout 1500
-
   # max jitter for lonely election initiation
-  @election_jitter 1500
+  @election_timeout_jitter 1500
 
   # amount of time to wait for new leader to take over before concluding that leadership transfer has failed
   @leadership_transfer_timeout 3000
@@ -166,7 +165,7 @@ defmodule Craft.Consensus do
 
     Logger.info("became lonely", logger_metadata(data))
 
-    {:keep_state, data, [{:state_timeout, :rand.uniform(@election_jitter), :begin_pre_vote}]}
+    {:keep_state, data, [{:state_timeout, :rand.uniform(@election_timeout_jitter), :begin_pre_vote}]}
   end
 
   def lonely(:state_timeout, :begin_pre_vote, data) do
@@ -419,7 +418,7 @@ defmodule Craft.Consensus do
     old_commit_index = data.commit_index
     data =
       %State{data | leader_id: append_entries.leader_id}
-      |> State.set_leader_leased_at(append_entries.leader_leased_at)
+      |> State.set_leader_leased_until(append_entries.leader_leased_until)
 
     {success, data} =
       if Enum.empty?(append_entries.entries) do
@@ -476,7 +475,7 @@ defmodule Craft.Consensus do
     RPC.respond_append_entries(append_entries, success, data)
 
     if success && data.commit_index > old_commit_index do
-      Machine.commit_index_bumped(data, true)
+      Machine.quorum_reached(data, true)
     end
 
     MemberCache.update(data)
@@ -593,7 +592,7 @@ defmodule Craft.Consensus do
 
     # keep the future-most lease timestamp
     latest_leader_lease =
-      case {data.leader_leased_at, results.leader_leased_at} do
+      case {data.leader_leased_until, results.leader_leased_until} do
         {nil, nil} ->
           nil
 
@@ -613,12 +612,12 @@ defmodule Craft.Consensus do
 
     data =
       data
-      |> State.set_leader_leased_at(latest_leader_lease)
+      |> State.set_leader_leased_until(latest_leader_lease)
       |> State.record_vote(results)
 
     case State.election_result(data) do
       :won ->
-        Logger.info inspect(data.leader_leased_at), logger_metadata(data)
+        Logger.info inspect(data.leader_leased_until), logger_metadata(data)
 
         {:next_state, :leader, data}
 
@@ -695,15 +694,16 @@ defmodule Craft.Consensus do
     #
 
     lease_wait_out_period =
-      case data.leader_leased_at do
+      case data.leader_leased_until do
         %GlobalTimestamp{latest: lease_latest} ->
           {:ok, %GlobalTimestamp{earliest: now_earliest}} = GlobalTimestamp.now(data)
 
-          DateTime.diff(now_earliest, lease_latest, :millisecond)
+          # if the lease has already expired, don't wait negative time
+          max(0, DateTime.diff(lease_latest, now_earliest, :millisecond))
           |> IO.inspect(label: :waiting)
 
         _ ->
-          []
+          0
       end
 
     #
@@ -769,8 +769,6 @@ defmodule Craft.Consensus do
   def leader(:cast, %RequestVote.Results{}, _data), do: :keep_state_and_data
 
   def leader(:cast, %AppendEntries.Results{} = results, data) do
-    old_commit_index = data.commit_index
-
     case LeaderState.handle_append_entries_results(data, results) do
       {:needs_snapshot, data} ->
         RPC.install_snapshot(data, results.from)
@@ -778,16 +776,6 @@ defmodule Craft.Consensus do
         {:keep_state, data}
 
       data ->
-        if data.commit_index > old_commit_index do
-          #TODO: these rules will need more thought, just roughed out to start
-          no_snapshot_transfers = Enum.empty?(data.leader_state.snapshot_transfers)
-          all_followers_caught_up = Enum.empty?(data.members.catching_up_nodes)
-          # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
-
-          # Machine.commit_index_bumped(data, false)
-          Machine.commit_index_bumped(data, no_snapshot_transfers && all_followers_caught_up)
-        end
-
         data =
           Enum.reduce(data.members.catching_up_nodes, data, fn node, data ->
             if Persistence.latest_index(data.persistence) <= Map.get(data.leader_state.match_indices, node) do
@@ -943,7 +931,7 @@ defmodule Craft.Consensus do
 
   #TODO: parallelize?
   defp heartbeat(%State{} = state) do
-    # the monotonic clock is not strictly increasing monotonic clock, so it can freeze for an unbounded number of rounds.
+    # the monotonic clock is not strictly increasing, so it can freeze unboundedly.
     # if that happens, we add a millisecond to the last round's value to continue generating unique consensus round ids
     now = :erlang.monotonic_time(:millisecond)
     last_heartbeat_sent_at =
@@ -958,7 +946,7 @@ defmodule Craft.Consensus do
     state =
       case GlobalTimestamp.now(state) do
         {:ok, now} ->
-          %State{state | leader_leased_at: now}
+          %State{state | leader_leased_until: GlobalTimestamp.add(now, @leader_lease_period, :millisecond)}
 
         error ->
           Logger.error("error determining global time, got '#{inspect error}', halting")

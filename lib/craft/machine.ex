@@ -5,7 +5,6 @@ defmodule Craft.Machine do
   alias Craft.Configuration
   alias Craft.Consensus
   alias Craft.Consensus.State, as: ConsensusState
-  alias Craft.Consensus.State.LeaderState
   alias Craft.SnapshotServer.RemoteFile
   alias Craft.Log.CommandEntry
   alias Craft.Log.EmptyEntry
@@ -49,33 +48,9 @@ defmodule Craft.Machine do
       :private,
       :role,
       last_applied: 0,
-      client_queries: :gb_trees.empty(),
+      client_query_results: [],
       client_commands: %{}
     ]
-
-    def pop_query_results_earlier_than(%__MODULE__{} = state, time) do
-      all_results =
-        time
-        |> :gb_trees.iterator_from(state.client_queries, :reversed)
-        |> do_pop_earlier_than()
-
-      {client_queries, results} =
-        Enum.reduce(all_results, {state.client_queries, MapSet.new()}, fn {key, results}, {tree, all_results} ->
-          {:gb_trees.delete(key, tree), MapSet.union(results, all_results)}
-        end)
-
-      {results, %State{state | client_queries: client_queries}}
-    end
-
-    defp do_pop_earlier_than(iterator, all_results \\ MapSet.new()) do
-      case :gb_trees.next(iterator) do
-        :none ->
-          all_results
-
-        {key, results, iterator} ->
-          do_pop_earlier_than(iterator, MapSet.put(all_results, {key, results}))
-      end
-    end
   end
 
   def start_link(args) do
@@ -128,18 +103,11 @@ defmodule Craft.Machine do
   # to continue without being blocked by the machine process while it's applying
   # entries
   #
-  def commit_index_bumped(%ConsensusState{} = state, should_snapshot?) do
+  def quorum_reached(%ConsensusState{} = state, should_snapshot?) do
     state.name
     |> lookup(__MODULE__)
-    |> GenServer.cast({:commit_index_bumped, state.commit_index, state.persistence, state.state, should_snapshot?})
+    |> GenServer.cast({:quorum_reached, state.commit_index, state.persistence, should_snapshot?})
   end
-
-  def quorum_reached(%ConsensusState{leader_state: %LeaderState{last_quorum_at: last_quorum_at}} = state) when is_integer(last_quorum_at) do
-    state.name
-    |> lookup(__MODULE__)
-    |> GenServer.cast({:quorum_reached, last_quorum_at})
-  end
-  def quorum_reached(_state), do: :noop
 
   def command(name, node, command, opts \\ []) do
     request(name, node, :command, command, opts)
@@ -195,7 +163,7 @@ defmodule Craft.Machine do
         {:error, {:not_leader, leader}}
       end
 
-    for {{_ref, from} = id, _result} <- state.client_queries |> :gb_trees.to_list() |> Keyword.values() do
+    for {{_ref, from} = id, _result} <- state.client_query_results do
       send(from, {id, response})
     end
 
@@ -203,33 +171,20 @@ defmodule Craft.Machine do
       send(from, {id, response})
     end
 
-    {:noreply, %State{state | role: role, client_commands: %{}, client_queries: :gb_trees.empty()}}
-  end
-
-  # when a consensus round completes, the consensus process sends us the last time at which we were guaranteed to be the leader
-  def handle_cast({:quorum_reached, time}, state) do
-    if :gb_trees.is_empty(state.client_queries) do
-      {:noreply, state}
-    else
-      {results, state} = State.pop_query_results_earlier_than(state, time)
-
-      for {{from, _ref} = id, result} <- results do
-        send(from, {id, result})
-      end
-
-      {:noreply, state}
-    end
+    {:noreply, %State{state | role: role, client_commands: %{}, client_query_results: []}}
   end
 
   @impl true
-  def handle_cast({:commit_index_bumped, new_commit_index, log, role, should_snapshot?}, state) do
-    last_applied_log_index =
-      with true <- state.module.__craft_mutable__(),
-           last_applied when is_integer(last_applied) <- state.module.last_applied_log_index(state.private) do
-        last_applied
+  def handle_cast({:quorum_reached, new_commit_index, log, should_snapshot?}, state) do
+    state =
+      if state.role == :leader do
+        for {{from, _ref} = id, result} <- state.client_query_results do
+          send(from, {id, result})
+        end
+
+        %State{state | client_query_results: []}
       else
-        _ ->
-          state.last_applied
+        state
       end
 
     # right now, this is a synchronous process, later we should allow for async snapshots at
@@ -241,7 +196,7 @@ defmodule Craft.Machine do
     # only snapshot up to one entry before the latest, since we need the prev log entry to create AppendEntries
 
     state =
-      Enum.reduce(last_applied_log_index+1..new_commit_index//1, state, fn index, state ->
+      Enum.reduce(state.last_applied+1..new_commit_index//1, state, fn index, state ->
         case Persistence.fetch(log, index) do
           {:ok, %EmptyEntry{}} ->
             state
@@ -261,7 +216,7 @@ defmodule Craft.Machine do
 
             state = %State{state | private: private}
 
-            if role == :leader do
+            if state.role == :leader do
               Enum.each(side_effects, fn {m, f, a} ->
                 spawn(fn -> apply(m, f, a) end)
               end)
@@ -335,17 +290,7 @@ defmodule Craft.Machine do
   def handle_cast({{:query, :linearizable}, id, query}, %State{role: :leader} = state) do
     result = state.module.query(query, state.private)
 
-    now = :erlang.monotonic_time(:millisecond)
-    client_queries =
-      case :gb_trees.lookup(now, state.client_queries) do
-        {:value, queries} ->
-          :gb_trees.update(now, MapSet.put(queries, {id, result}), state.client_queries)
-
-        :none ->
-          :gb_trees.insert(now, MapSet.new([{id, result}]), state.client_queries)
-      end
-
-    {:noreply, %State{state | client_queries: client_queries}}
+    {:noreply, %State{state | client_query_results: [{id, result} | state.client_query_results]}}
   end
 
   # only the leader can process linearizable queries
