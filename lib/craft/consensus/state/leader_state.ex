@@ -139,8 +139,6 @@ defmodule Craft.Consensus.State.LeaderState do
       next_indices = Map.put(state.leader_state.next_indices, results.from, results.latest_index + 1)
       state = %State{state | leader_state: %__MODULE__{state.leader_state | next_indices: next_indices, match_indices: match_indices}}
       # find the highest uncommitted match index shared by a majority of servers
-      # this can be optimized to some degree (mapset, gb_tree, etc...)
-      # also optimized by pre-computing quorum requirement and storing in state
       #
       # when we become leader, match indexes work their way up from zero non-uniformly
       # so it's entirely possible that we don't find a quorum of followers with a match index
@@ -156,10 +154,16 @@ defmodule Craft.Consensus.State.LeaderState do
           state.leader_state.match_indices
         end
 
-      highest_uncommitted_match_index =
+      # only directly commit entries from the current term (section 5.4.2)
+      highest_uncommitted_match_index_from_this_term =
         match_indices_for_commitment
         |> Map.values()
         |> Enum.filter(fn index -> index >= state.commit_index end)
+        |> Enum.filter(fn index ->
+          {:ok, %{term: term}} = Persistence.fetch(state.persistence, index)
+
+          term == state.current_term
+        end)
         |> Enum.uniq()
         |> Enum.sort()
         |> Enum.reverse()
@@ -170,10 +174,10 @@ defmodule Craft.Consensus.State.LeaderState do
         end)
 
       # only bump commit index when the quorum entry is from the current term (section 5.4.2)
-      with false <- is_nil(highest_uncommitted_match_index),
-           {:ok, entry} <- Persistence.fetch(state.persistence, highest_uncommitted_match_index),
+      with false <- is_nil(highest_uncommitted_match_index_from_this_term),
+           {:ok, entry} <- Persistence.fetch(state.persistence, highest_uncommitted_match_index_from_this_term),
            true <- entry.term == state.current_term do
-        %State{state | commit_index: highest_uncommitted_match_index}
+        %State{state | commit_index: highest_uncommitted_match_index_from_this_term}
       else
         _ ->
           state
