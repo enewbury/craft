@@ -617,8 +617,6 @@ defmodule Craft.Consensus do
 
     case State.election_result(data) do
       :won ->
-        Logger.info inspect(data.leader_leased_until), logger_metadata(data)
-
         {:next_state, :leader, data}
 
       :lost ->
@@ -677,33 +675,13 @@ defmodule Craft.Consensus do
 
     Machine.update_role(data)
 
-    #
-    # HERE
-    # HERE
-    # HERE
-    # wait out the old lease, refuse any writes or reads until we hold the lease.
-    # don't write the Membership entry below until then, either.
-    #
-    # just do empty heartbeats to maintain leadership
-    #
-    # write leadership status to ets and provide public functions to read it
-    # HERE
-    # HERE
-    # HERE
-    #
-    #
-
-    lease_wait_out_period =
+    {lease_wait_out_period, data} =
       case data.leader_leased_until do
-        %GlobalTimestamp{latest: lease_latest} ->
-          {:ok, %GlobalTimestamp{earliest: now_earliest}} = GlobalTimestamp.now(data)
-
-          # if the lease has already expired, don't wait negative time
-          max(0, DateTime.diff(lease_latest, now_earliest, :millisecond))
-          |> IO.inspect(label: :waiting)
+        %GlobalTimestamp{} ->
+          {time_until_lease_expires(data.global_clock, data.leader_leased_until), put_in(data.leader_state.waiting_for_lease, true)}
 
         _ ->
-          0
+          {0, data}
       end
 
     #
@@ -717,13 +695,21 @@ defmodule Craft.Consensus do
     # appending an entry from the current term also allows us to commit any possibly uncommitted entries
     # from previous terms (section 5.4.2)
     #
+    # even if we don't hold the lease, we still proceed with committing this no-op entry, and hence with committing
+    # previous terms' entries and forcing followers logs to conform to ours. i believe this is safe, because (by design)
+    # the new leader has no idea who asked for what writes to occur, that information is stored emphemerally by the
+    # leader's machine and not in the log itself. so any hanging writes (section 5.4.2 operations) that were requested of the
+    # previous leader can not be answered by the new leader. since those writes will never be confirmed to the client,
+    # they're not "witnessed" state confirmations according to the outside world. and hence they're not a linearizability violation.
+    #
     data = %State{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
 
     Logger.info("became leader", logger_metadata(data))
 
     actions = [
       {:state_timeout, 0, :heartbeat},
-      {{:timeout, :check_quorum}, @checkquorum_interval, :check_quorum}
+      {{:timeout, :check_quorum}, @checkquorum_interval, :check_quorum},
+      {{:timeout, :takeover}, lease_wait_out_period, data.leader_leased_until}
     ]
 
     {:keep_state, data, actions}
@@ -742,6 +728,29 @@ defmodule Craft.Consensus do
       {:next_state, :lonely, data}
     else
       {:keep_state_and_data, [{{:timeout, :check_quorum}, @checkquorum_interval, :check_quorum}]}
+    end
+  end
+
+  def leader({:timeout, :takeover}, old_lease_expires_at, data) do
+    if data.leader_state.waiting_for_lease do
+      # don't assume that because our lease wait-out event fired that the lease has expired,
+      # our monotonic clock could be wrong, the user-provided clock source is the authority
+      wait_time = time_until_lease_expires(data.global_clock, old_lease_expires_at)
+
+      if wait_time == 0 do
+        Logger.info("taking over lease", logger_metadata(data))
+
+        data = put_in(data.leader_state.waiting_for_lease, false)
+
+        # we didn't actually reach a quorum, just using this to send the current lease to the machine
+        Machine.quorum_reached(data, false)
+
+        {:keep_state, data}
+      else
+        {:keep_state_and_data, [{{:timeout, :takeover}, wait_time, old_lease_expires_at}]}
+      end
+    else
+      :keep_state_and_data
     end
   end
 
@@ -847,12 +856,16 @@ defmodule Craft.Consensus do
     {:keep_state_and_data, [{:reply, from, {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}}]}
   end
 
-  def leader({:call, from}, {:machine_command, command}, data) do
-    entry = %CommandEntry{term: data.current_term, command: command}
-    persistence = Persistence.append(data.persistence, entry)
-    entry_index = Persistence.latest_index(persistence)
+  def leader({:call, from}, {:machine_command, command}, %State{global_clock: global_clock} = data) when is_atom(global_clock) do
+    if time_until_lease_expires(data.global_clock, data.leader_leased_until) > 0 do
+      append_command(command, from, data)
+    else
+      {:keep_state_and_data, [{:reply, from, {:error, :not_leaseholder}}]}
+    end
+  end
 
-    {:keep_state, %State{data | persistence: persistence}, [{:reply, from, {:ok, entry_index}}]}
+  def leader({:call, from}, {:machine_command, command}, data) do
+    append_command(command, from, data)
   end
 
   def leader({:call, from}, {:snapshot_ready, index, path_or_content}, data) do
@@ -944,9 +957,9 @@ defmodule Craft.Consensus do
     state = put_in(state.leader_state.current_quorum_successful, false)
 
     state =
-      case GlobalTimestamp.now(state) do
+      case GlobalTimestamp.now(state.global_clock) do
         {:ok, now} ->
-          %State{state | leader_leased_until: GlobalTimestamp.add(now, @leader_lease_period, :millisecond)}
+          State.set_leader_leased_until(state, GlobalTimestamp.add(now, @leader_lease_period, :millisecond))
 
         error ->
           Logger.error("error determining global time, got '#{inspect error}', halting")
@@ -976,5 +989,20 @@ defmodule Craft.Consensus do
         state
       end
     end)
+  end
+
+  defp time_until_lease_expires(global_clock, lease_expires_at) do
+    {:ok, %GlobalTimestamp{earliest: now_earliest}} = GlobalTimestamp.now(global_clock)
+
+    # if the lease has already expired, report 0
+    max(0, DateTime.diff(lease_expires_at.latest, now_earliest, :millisecond))
+  end
+
+  defp append_command(command, from, data) do
+    entry = %CommandEntry{term: data.current_term, command: command}
+    persistence = Persistence.append(data.persistence, entry)
+    entry_index = Persistence.latest_index(persistence)
+
+    {:keep_state, %State{data | persistence: persistence}, [{:reply, from, {:ok, entry_index}}]}
   end
 end

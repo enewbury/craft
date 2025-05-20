@@ -19,6 +19,7 @@ defmodule Craft.Consensus.State.LeaderState do
     :last_quorum_at, # the last time we knew we were leader
     # indicates if the current quorum round has been successful thus far (so we don't tell the machine multiple times)
     :current_quorum_successful,
+    :waiting_for_lease,
     last_heartbeat_replies_at: %{}, # for CheckQuorum, voting members only
     snapshot_transfers: %{}
   ]
@@ -130,12 +131,13 @@ defmodule Craft.Consensus.State.LeaderState do
     state
   end
 
-  def handle_append_entries_results(state, results) do
+  def handle_append_entries_results(%State{} = state, %AppendEntries.Results{} = results) do
     heartbeat_sent_at = results.heartbeat_sent_at
 
-    case state.leader_state.last_heartbeat_replies_at do
-      {^heartbeat_sent_at, _} ->
+    case Map.fetch(state.leader_state.last_heartbeat_replies_at, results.from) do
+      {:ok, {^heartbeat_sent_at, _}} ->
         Logger.warning("duplicate heartbeat reply received: #{inspect results}, ignoring.")
+
         state
 
       _ ->

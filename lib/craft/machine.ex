@@ -5,12 +5,13 @@ defmodule Craft.Machine do
   alias Craft.Configuration
   alias Craft.Consensus
   alias Craft.Consensus.State, as: ConsensusState
-  alias Craft.SnapshotServer.RemoteFile
+  alias Craft.GlobalTimestamp
   alias Craft.Log.CommandEntry
   alias Craft.Log.EmptyEntry
   alias Craft.Log.MembershipEntry
   alias Craft.Log.SnapshotEntry
   alias Craft.Persistence
+  alias Craft.SnapshotServer.RemoteFile
 
   import Craft.Application, only: [via: 2, lookup: 2]
 
@@ -47,6 +48,8 @@ defmodule Craft.Machine do
       :module,
       :private,
       :role,
+      :global_clock,
+      :lease_expires_at,
       last_applied: 0,
       client_query_results: [],
       client_commands: %{}
@@ -104,9 +107,14 @@ defmodule Craft.Machine do
   # entries
   #
   def quorum_reached(%ConsensusState{} = state, should_snapshot?) do
+    lease_expires_at =
+      if state.global_clock && state.state == :leader && !state.leader_state.waiting_for_lease do
+        state.leader_leased_until
+      end
+
     state.name
     |> lookup(__MODULE__)
-    |> GenServer.cast({:quorum_reached, state.commit_index, state.persistence, should_snapshot?})
+    |> GenServer.cast({:quorum_reached, state.commit_index, state.persistence, should_snapshot?, lease_expires_at})
   end
 
   def command(name, node, command, opts \\ []) do
@@ -147,7 +155,7 @@ defmodule Craft.Machine do
       :logger.update_process_metadata(%{gl: remote_group_leader})
     end
 
-    {:ok, %State{name: args.name, module: args.machine}}
+    {:ok, %State{name: args.name, module: args.machine, global_clock: args.global_clock}}
   end
 
   @impl true
@@ -175,14 +183,15 @@ defmodule Craft.Machine do
   end
 
   @impl true
-  def handle_cast({:quorum_reached, new_commit_index, log, should_snapshot?}, state) do
+  def handle_cast({:quorum_reached, new_commit_index, log, should_snapshot?, lease_expires_at}, state) do
     state =
       if state.role == :leader do
+        # read-index based queries
         for {{from, _ref} = id, result} <- state.client_query_results do
           send(from, {id, result})
         end
 
-        %State{state | client_query_results: []}
+        %State{state | client_query_results: [], lease_expires_at: lease_expires_at}
       else
         state
       end
@@ -278,7 +287,7 @@ defmodule Craft.Machine do
   # the leader handles linearizable queries slightly differently, depending on if leases are enabled:
   #   - if leases are enabled,
   #       - and we're within the lease period, the leader knows that it is the current leader, so it immediately processes a query
-  #       - and we're outside the lease period, we fall back to quorum-seeking
+  #       - and we're outside the lease period, it's likely we've been deposed or failed quorum, return an error.
   #   - if leases are disabled, we need to see a quorum round succeed to know that we were still the leader when the query was executed. so,
   #       we execute the query speculatively and store the result along with the current monotonic time, all the while, the consensus process
   #       is streaming monotonic timestamps of when the most recent quorum was achieved.
@@ -287,6 +296,16 @@ defmodule Craft.Machine do
   #     - otherwise, the query will time out
   #
   @impl true
+  def handle_cast({{:query, :linearizable}, {from, _ref} = id, query}, %State{role: :leader, global_clock: global_clock} = state) when is_atom(global_clock) do
+    if state.lease_expires_at && time_until_lease_expires(state) > 0 do
+      send(from, {id, state.module.query(query, state.private)})
+    else
+      send(from, {id, {:error, :not_leaseholder}})
+    end
+
+    {:noreply, state}
+  end
+
   def handle_cast({{:query, :linearizable}, id, query}, %State{role: :leader} = state) do
     result = state.module.query(query, state.private)
 
@@ -328,7 +347,7 @@ defmodule Craft.Machine do
       {:ok, index} ->
         {:noreply, %State{state | client_commands: Map.put(state.client_commands, index, id)}}
 
-      # not leader etc
+      # not leader, not leaseholder, etc...
       error ->
         send(from, {id, error})
 
@@ -411,6 +430,13 @@ defmodule Craft.Machine do
     |> File.stream!(100_000)
     |> Enum.reduce(:erlang.md5_init(), &:erlang.md5_update(&2, &1))
     |> :erlang.md5_final()
+  end
+
+  defp time_until_lease_expires(state) do
+    {:ok, %GlobalTimestamp{earliest: now_earliest}} = GlobalTimestamp.now(state.global_clock)
+
+    # if the lease has already expired, report 0
+    max(0, DateTime.diff(state.lease_expires_at.latest, now_earliest, :millisecond))
   end
 
   defmacro __using__(opts) do

@@ -3,8 +3,6 @@ defmodule Craft.GlobalTimestamp do
   Behaviour specifying a global clock with bounded error.
   """
 
-  alias Craft.Consensus.State
-
   defstruct [:earliest, :latest]
 
   @type t :: %__MODULE__{
@@ -14,7 +12,7 @@ defmodule Craft.GlobalTimestamp do
 
   @callback now() :: {:ok, t()} | {:error, :try_again} | :error
 
-  def now(%State{global_clock: global_clock}) when is_atom(global_clock), do: global_clock.now()
+  def now(global_clock) when is_atom(global_clock), do: global_clock.now()
   def now(_), do: {:ok, nil}
 
   def add(%__MODULE__{} = ts, amount, unit) do
