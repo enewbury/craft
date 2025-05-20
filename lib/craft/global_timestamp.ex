@@ -12,8 +12,8 @@ defmodule Craft.GlobalTimestamp do
 
   @callback now() :: {:ok, t()} | {:error, :try_again} | :error
 
-  def now(global_clock) when is_atom(global_clock), do: global_clock.now()
-  def now(_), do: {:ok, nil}
+  def now(nil), do: {:ok, nil}
+  def now(global_clock), do: global_clock.now()
 
   def add(%__MODULE__{} = ts, amount, unit) do
     %__MODULE__{

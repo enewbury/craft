@@ -11,7 +11,7 @@ defmodule Craft.ElectionTest do
 
   @tag :unmanaged
   nexus_test "pre-chosen candidate becomes leader", %{nodes: nodes} do
-    state = State.new("abc", nodes, MapPersistence, SimpleMachine)
+    state = State.new("abc", nodes, MapPersistence, SimpleMachine, nil)
 
     states =
       Enum.zip(
@@ -37,7 +37,7 @@ defmodule Craft.ElectionTest do
   describe "5.4.1 election restriction" do
     @tag :unmanaged
     nexus_test "deny votes to out-of-date candidate, and correct its log", %{nodes: nodes} do
-      state = State.new("abc", nodes, MapPersistence, SimpleMachine)
+      state = State.new("abc", nodes, MapPersistence, SimpleMachine, nil)
 
       shared_log =
         state.persistence
@@ -86,7 +86,7 @@ defmodule Craft.ElectionTest do
 
     @tag :unmanaged
     nexus_test "most up-to-date member in a split-brain is elected and corrects out-of-date logs", %{nodes: nodes} do
-      state = State.new("abc", nodes, MapPersistence, SimpleMachine)
+      state = State.new("abc", nodes, MapPersistence, SimpleMachine, nil)
 
       shared_log =
         state.persistence

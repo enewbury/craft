@@ -95,6 +95,11 @@ defmodule Craft.Persistence.MapPersistence do
   end
 
   @impl true
+  def length({log, _metadata}) do
+    map_size(log)
+  end
+
+  @impl true
   def put_metadata({log, _old_metadata}, metadata) do
     {log, metadata}
   end

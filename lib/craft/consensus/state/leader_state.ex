@@ -279,9 +279,10 @@ defmodule Craft.Consensus.State.LeaderState do
           #TODO: these rules will need more thought, just roughed out to start
           no_snapshot_transfers = Enum.empty?(state.leader_state.snapshot_transfers)
           all_followers_caught_up = Enum.empty?(state.members.catching_up_nodes)
+          log_too_long = Persistence.length(state.persistence) > 20
           # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
 
-          Machine.quorum_reached(state, no_snapshot_transfers && all_followers_caught_up)
+          Machine.quorum_reached(state, no_snapshot_transfers && all_followers_caught_up && log_too_long)
 
           put_in(state.leader_state.current_quorum_successful, true)
         else

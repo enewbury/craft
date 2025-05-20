@@ -155,7 +155,7 @@ defmodule Craft.Machine do
       :logger.update_process_metadata(%{gl: remote_group_leader})
     end
 
-    {:ok, %State{name: args.name, module: args.machine, global_clock: args.global_clock}}
+    {:ok, %State{name: args.name, module: args.machine, global_clock: args[:global_clock]}}
   end
 
   @impl true
@@ -296,7 +296,7 @@ defmodule Craft.Machine do
   #     - otherwise, the query will time out
   #
   @impl true
-  def handle_cast({{:query, :linearizable}, {from, _ref} = id, query}, %State{role: :leader, global_clock: global_clock} = state) when is_atom(global_clock) do
+  def handle_cast({{:query, :linearizable}, {from, _ref} = id, query}, %State{role: :leader, global_clock: global_clock} = state) when not is_nil(global_clock) do
     if state.lease_expires_at && time_until_lease_expires(state) > 0 do
       send(from, {id, state.module.query(query, state.private)})
     else

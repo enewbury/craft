@@ -48,7 +48,7 @@ defmodule Craft.MemberSupervisor do
         machine: opts.machine,
         persistence: opts.persistence,
         nodes: opts.nodes,
-        global_clock: opts.global_clock
+        global_clock: opts[:global_clock]
       }
 
       Configuration.write_new!(name, config)

@@ -245,6 +245,15 @@ defmodule Craft.Persistence.RocksDBPersistence do
     end
   end
 
+  @impl true
+  def length(%__MODULE__{} = state) do
+    {:ok, iterator} = :rocksdb.iterator(state.db, state.log_cf, [])
+    {:ok, first_index, _} = :rocksdb.iterator_move(iterator, :first)
+    {:ok, last_index, _} = :rocksdb.iterator_move(iterator, :last)
+    :ok = :rocksdb.iterator_close(iterator)
+
+    decode(last_index) - decode(first_index)
+  end
 
   @impl true
   def put_metadata(%__MODULE__{} = state, metadata) do

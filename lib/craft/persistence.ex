@@ -33,6 +33,7 @@ defmodule Craft.Persistence do
   @callback put_metadata(any(), binary()) :: any()
   @callback fetch_metadata(any()) :: {:ok, binary()} | :error
   @callback dump(any()) :: any()
+  @callback length(any()) :: pos_integer()
   @callback close(any()) :: :ok
 
   @optional_callbacks [close: 1]
@@ -116,7 +117,7 @@ defmodule Craft.Persistence do
     end
   end
 
-  def new(group_name, module) when is_atom(module) do
+  def new(group_name, module) when not is_nil(module) do
     new(group_name, {module, []})
   end
 
@@ -161,8 +162,13 @@ defmodule Craft.Persistence do
     module.reduce_while(private, initial_value, fun)
   end
 
+  # probably should just defer this to the module rather than getting cute with an iterator
   def first(%__MODULE__{} = persistence) do
     reduce_while(persistence, nil, fn {index, entry}, nil -> {:halt, {index, entry}} end)
+  end
+
+  def length(%__MODULE__{module: module, private: private}) do
+    module.length(private)
   end
 
   def close(%__MODULE__{module: module, private: private} = persistence) do

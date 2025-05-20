@@ -479,7 +479,10 @@ defmodule Craft.Consensus do
     RPC.respond_append_entries(append_entries, success, data)
 
     if success && data.commit_index > old_commit_index do
-      Machine.quorum_reached(data, true)
+      # TODO: figure out some better hueristics for taking snapshots
+      should_snapshot? = Persistence.length(data.persistence) > 20
+
+      Machine.quorum_reached(data, should_snapshot?)
     end
 
     MemberCache.update(data)
@@ -679,15 +682,6 @@ defmodule Craft.Consensus do
 
     Machine.update_role(data)
 
-    {lease_wait_out_period, data} =
-      case data.leader_leased_at do
-        %GlobalTimestamp{} ->
-          {time_until_lease_expires(data.global_clock, data.leader_leased_at), put_in(data.leader_state.waiting_for_lease, true)}
-
-        _ ->
-          {0, data}
-      end
-
     #
     # when the cluster starts up, each node is explicitly given the same configuration to
     # hold in-memory to bootstrap the cluster.
@@ -708,19 +702,35 @@ defmodule Craft.Consensus do
     #
     data = %State{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
 
-    if lease_wait_out_period > 0 do
-      Logger.info("became leader, waiting #{lease_wait_out_period}ms for old lease to expire", logger_metadata(data))
-    else
-      Logger.info("became leader", logger_metadata(data))
-    end
-
     actions = [
       {:state_timeout, 0, :heartbeat},
-      {{:timeout, :check_quorum}, @checkquorum_interval, :check_quorum},
-      {{:timeout, :takeover}, lease_wait_out_period, data.leader_leased_at}
+      {{:timeout, :check_quorum}, @checkquorum_interval, :check_quorum}
     ]
 
-    {:keep_state, data, actions}
+    if data.global_clock do
+      {lease_wait_out_period, data} =
+        case data.leader_leased_at do
+          %GlobalTimestamp{} ->
+            lease_wait_out_period = time_until_lease_expires(data.global_clock, data.leader_leased_at)
+
+            Logger.info("became leader, waiting #{lease_wait_out_period}ms for old lease to expire", logger_metadata(data))
+
+            {lease_wait_out_period, put_in(data.leader_state.waiting_for_lease, true)}
+
+          _ ->
+            Logger.info("became leader, immediately taking lease", logger_metadata(data))
+
+            {0, data}
+        end
+
+      actions = [{{:timeout, :takeover}, lease_wait_out_period, data.leader_leased_at} | actions]
+
+      {:keep_state, data, actions}
+    else
+      Logger.info("became leader", logger_metadata(data))
+
+      {:keep_state, data, actions}
+    end
   end
 
   def leader(:state_timeout, :heartbeat, data) do
@@ -877,7 +887,7 @@ defmodule Craft.Consensus do
     {:keep_state_and_data, [{:reply, from, {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}}]}
   end
 
-  def leader({:call, from}, {:machine_command, command}, %State{global_clock: global_clock} = data) when is_atom(global_clock) do
+  def leader({:call, from}, {:machine_command, command}, %State{global_clock: global_clock} = data) when not is_nil(global_clock) do
     if time_until_lease_expires(data.global_clock, data.leader_leased_at) > 0 do
       append_command(command, from, data)
     else
@@ -978,14 +988,18 @@ defmodule Craft.Consensus do
     state = put_in(state.leader_state.current_quorum_successful, false)
 
     state =
-      case GlobalTimestamp.now(state.global_clock) do
-        {:ok, now} ->
-          State.set_leader_leased_at(state, GlobalTimestamp.add(now, @leader_lease_period, :millisecond))
+      if state.global_clock do
+        case GlobalTimestamp.now(state.global_clock) do
+          {:ok, now} ->
+            State.set_leader_leased_at(state, GlobalTimestamp.add(now, @leader_lease_period, :millisecond))
 
-        error ->
-          Logger.error("error determining global time, got '#{inspect error}', halting")
+          error ->
+            Logger.error("error determining global time, got '#{inspect error}', halting")
 
-          throw({:stop, {:bad_clock, error}})
+            throw({:stop, {:bad_clock, error}})
+        end
+      else
+        state
       end
 
     Enum.reduce(Members.other_nodes(state.members), state, fn to_node, state ->
