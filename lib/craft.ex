@@ -126,6 +126,11 @@ defmodule Craft do
     with_leader_redirect(name, &Consensus.transfer_leadership(name, &1, to_node))
   end
 
+  @doc "Transfers leadership to a random follower."
+  def transfer_leadership(name) do
+    with_leader_redirect(name, &Consensus.transfer_leadership(name, &1))
+  end
+
   @doc "Starts the local member with the given name"
   defdelegate start_member(name), to: Craft.MemberSupervisor
   @doc "Stops the local member with the given name"

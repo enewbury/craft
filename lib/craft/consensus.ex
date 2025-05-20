@@ -106,6 +106,10 @@ defmodule Craft.Consensus do
     cast_user_command(name, node, {:transfer_leadership, to_node})
   end
 
+  def transfer_leadership(name, node) do
+    cast_user_command(name, node, :transfer_leadership)
+  end
+
   def snapshot_ready(name, index, path) do
     :gen_statem.call({name(name), node()}, {:snapshot_ready, index, path})
   end
@@ -418,7 +422,7 @@ defmodule Craft.Consensus do
     old_commit_index = data.commit_index
     data =
       %State{data | leader_id: append_entries.leader_id}
-      |> State.set_leader_leased_until(append_entries.leader_leased_until)
+      |> State.set_leader_leased_at(append_entries.leader_leased_at)
 
     {success, data} =
       if Enum.empty?(append_entries.entries) do
@@ -592,7 +596,7 @@ defmodule Craft.Consensus do
 
     # keep the future-most lease timestamp
     latest_leader_lease =
-      case {data.leader_leased_until, results.leader_leased_until} do
+      case {data.leader_leased_at, results.leader_leased_at} do
         {nil, nil} ->
           nil
 
@@ -612,7 +616,7 @@ defmodule Craft.Consensus do
 
     data =
       data
-      |> State.set_leader_leased_until(latest_leader_lease)
+      |> State.set_leader_leased_at(latest_leader_lease)
       |> State.record_vote(results)
 
     case State.election_result(data) do
@@ -676,9 +680,9 @@ defmodule Craft.Consensus do
     Machine.update_role(data)
 
     {lease_wait_out_period, data} =
-      case data.leader_leased_until do
+      case data.leader_leased_at do
         %GlobalTimestamp{} ->
-          {time_until_lease_expires(data.global_clock, data.leader_leased_until), put_in(data.leader_state.waiting_for_lease, true)}
+          {time_until_lease_expires(data.global_clock, data.leader_leased_at), put_in(data.leader_state.waiting_for_lease, true)}
 
         _ ->
           {0, data}
@@ -704,12 +708,16 @@ defmodule Craft.Consensus do
     #
     data = %State{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
 
-    Logger.info("became leader", logger_metadata(data))
+    if lease_wait_out_period > 0 do
+      Logger.info("became leader, waiting #{lease_wait_out_period}ms for old lease to expire", logger_metadata(data))
+    else
+      Logger.info("became leader", logger_metadata(data))
+    end
 
     actions = [
       {:state_timeout, 0, :heartbeat},
       {{:timeout, :check_quorum}, @checkquorum_interval, :check_quorum},
-      {{:timeout, :takeover}, lease_wait_out_period, data.leader_leased_until}
+      {{:timeout, :takeover}, lease_wait_out_period, data.leader_leased_at}
     ]
 
     {:keep_state, data, actions}
@@ -831,6 +839,19 @@ defmodule Craft.Consensus do
     {:next_state, :lonely, data, []}
   end
 
+  def leader(:cast, {:user_command, id, :transfer_leadership}, data) do
+    to_node =
+      data.members
+      |> Members.other_voting_nodes()
+      |> Enum.random()
+
+    data = LeaderState.transfer_leadership(data, to_node, id)
+
+    actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :user_requested}]
+
+    {:keep_state, heartbeat(data), actions}
+  end
+
   # user asked to transfer leadership to existing leader, noop
   def leader(:cast, {:user_command, {caller_pid, _ref} = id, {:transfer_leadership, to_node}}, _data) when to_node == node() do
     send(caller_pid, {id, :ok})
@@ -857,7 +878,7 @@ defmodule Craft.Consensus do
   end
 
   def leader({:call, from}, {:machine_command, command}, %State{global_clock: global_clock} = data) when is_atom(global_clock) do
-    if time_until_lease_expires(data.global_clock, data.leader_leased_until) > 0 do
+    if time_until_lease_expires(data.global_clock, data.leader_leased_at) > 0 do
       append_command(command, from, data)
     else
       {:keep_state_and_data, [{:reply, from, {:error, :not_leaseholder}}]}
@@ -959,7 +980,7 @@ defmodule Craft.Consensus do
     state =
       case GlobalTimestamp.now(state.global_clock) do
         {:ok, now} ->
-          State.set_leader_leased_until(state, GlobalTimestamp.add(now, @leader_lease_period, :millisecond))
+          State.set_leader_leased_at(state, GlobalTimestamp.add(now, @leader_lease_period, :millisecond))
 
         error ->
           Logger.error("error determining global time, got '#{inspect error}', halting")

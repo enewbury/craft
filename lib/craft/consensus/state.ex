@@ -29,7 +29,7 @@ defmodule Craft.Consensus.State do
     :election, # lonely and candidate
     :leadership_transfer_request_id, # candidate only
     :incoming_snapshot_transfer, # receiving_snapshot only
-    :leader_leased_until
+    :leader_leased_at
   ]
 
   def new(name, nodes, persistence, machine, global_clock) do
@@ -72,7 +72,7 @@ defmodule Craft.Consensus.State do
           state |
           current_term: metadata.current_term,
           voted_for: metadata.voted_for,
-          leader_leased_until: metadata.leader_leased_until
+          leader_leased_at: metadata.leader_leased_at
         }
 
       :error ->
@@ -93,8 +93,8 @@ defmodule Craft.Consensus.State do
     state
   end
 
-  def set_leader_leased_until(%__MODULE__{} = state, leader_leased_until) do
-    state = %__MODULE__{state | leader_leased_until: leader_leased_until}
+  def set_leader_leased_at(%__MODULE__{} = state, leader_leased_at) do
+    state = %__MODULE__{state | leader_leased_at: leader_leased_at}
 
     Metadata.update(state)
 

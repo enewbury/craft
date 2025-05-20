@@ -49,7 +49,7 @@ defmodule Craft.Persistence do
     defstruct [
       :current_term,
       :voted_for,
-      :leader_leased_until
+      :leader_leased_at
     ]
 
     def init(%State{} = state) do
@@ -68,7 +68,7 @@ defmodule Craft.Persistence do
           metadata |
           current_term: state.current_term,
           voted_for: state.voted_for,
-          leader_leased_until: state.leader_leased_until
+          leader_leased_at: state.leader_leased_at
         }
       end)
     end
