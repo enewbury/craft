@@ -994,7 +994,7 @@ defmodule Craft.Consensus do
             State.set_leader_leased_at(state, GlobalTimestamp.add(now, @leader_lease_period, :millisecond))
 
           error ->
-            Logger.error("error determining global time, got '#{inspect error}', halting")
+            Logger.error("error determining global time, got '#{inspect error}', halting", logger_metadata(state))
 
             throw({:stop, {:bad_clock, error}})
         end

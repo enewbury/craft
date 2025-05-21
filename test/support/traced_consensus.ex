@@ -42,6 +42,7 @@ defmodule Craft.TracedConsensus do
     :ok = Machine.init_or_restore(data)
 
     state = if args[:manual_start], do: :ready_to_test, else: :lonely
+    data = %State{data | global_clock: args[:global_clock]}
 
     {:ok, state, data}
   end

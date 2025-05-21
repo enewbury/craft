@@ -1,5 +1,6 @@
 defmodule CraftTest do
-  use Craft.NexusCase
+  use Craft.NexusCase,
+      parameterize: (for leases <- [true, false], do: %{leader_leases: leases})
 
   alias Craft.Nexus.Stability
   alias Craft.SimpleMachine
@@ -11,12 +12,14 @@ defmodule CraftTest do
     assert {:ok, 123} = SimpleMachine.get(name, :a)
   end
 
-  nexus_test "query/3", %{name: name, nodes: nodes, nexus: nexus} do
+  nexus_test "query/3", %{name: name, nodes: nodes, nexus: nexus, leader_leases: leases} do
     %{leader: leader} = wait_until(nexus, {Stability, :all})
 
-    # assert timeout on when no network
     nemesis(nexus, fn _ -> :drop end)
-    assert {:error, :timeout} = Craft.query({:get, :a}, name, timeout: 1)
+    if not leases do
+      # assert timeout when no network (leader can't get quorum for read)
+      assert {:error, :timeout} = Craft.query({:get, :a}, name, timeout: 1)
+    end
 
     # assert leader doesn't need to contact other nodes in eventual mode
     assert {:ok, nil} = Craft.query({:get, :a}, name, consistency: {:eventual, :leader})

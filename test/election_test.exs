@@ -1,5 +1,6 @@
 defmodule Craft.ElectionTest do
-  use Craft.NexusCase
+  use Craft.NexusCase,
+      parameterize: (for leases <- [true, false], do: %{leader_leases: leases})
 
   alias Craft.Consensus.State
   alias Craft.SimpleMachine

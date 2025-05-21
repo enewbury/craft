@@ -2,10 +2,11 @@ defmodule Craft.NexusCase do
   @moduledoc """
   Detects test failures and writes the nexus event log to disk for replay
   """
-  # async: false, so that log capture doesn't capture logs from other concurrent tests may be able to remove this
+  # async: false, so that log capture doesn't capture logs from other concurrent tests, may be able to remove this
   use ExUnit.CaseTemplate, async: false
 
   alias Craft.TestCluster
+  alias Craft.GlobalTimestamp.FixedError
 
   using do
     quote do
@@ -32,7 +33,14 @@ defmodule Craft.NexusCase do
     if ctx[:unmanaged] do
       :ok
     else
-      {:ok, name, nexus} = Craft.TestGroup.start_group(nodes)
+      opts =
+        if ctx[:leader_leases] do
+          %{global_clock: FixedError}
+        else
+          %{}
+        end
+
+      {:ok, name, nexus} = Craft.TestGroup.start_group(nodes, opts)
       Craft.MemberCache.discover(name, nodes)
 
       on_exit(fn ->

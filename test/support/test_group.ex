@@ -1,13 +1,12 @@
 defmodule Craft.TestGroup do
   alias Craft.Consensus
   alias Craft.Persistence
-  # alias Craft.Persistence.MapPersistence
   alias Craft.SimpleMachine
   alias Craft.NexusCase.Formatter
 
-  def start_group(states_or_nodes, machine \\ SimpleMachine)
+  def start_group(states_or_nodes, opts \\ %{})
 
-  def start_group([{_node, _state} | _] = states, machine) do
+  def start_group([{_node, _state} | _] = states, opts) do
     name = group_name()
 
     nodes = Keyword.keys(states)
@@ -26,10 +25,11 @@ defmodule Craft.TestGroup do
 
     Task.async_stream(states, fn {node, state} ->
       opts = %{
-        machine: machine,
+        machine: opts[:machine] || SimpleMachine,
         consensus_state: state,
         nodes: nodes,
         nexus_pid: nexus,
+        global_clock: opts[:global_clock],
         manual_start: true
       }
 
@@ -46,7 +46,7 @@ defmodule Craft.TestGroup do
     {:ok, name, nexus}
   end
 
-  def start_group(nodes, machine) do
+  def start_group(nodes, opts) do
     name = group_name()
 
     {:ok, nexus} = Craft.Nexus.start(nodes)
@@ -55,9 +55,10 @@ defmodule Craft.TestGroup do
 
     Task.async_stream(nodes, fn node ->
       opts = %{
-        machine: machine,
+        machine: opts[:machine] || SimpleMachine,
         nodes: nodes,
         nexus_pid: nexus,
+        global_clock: opts[:global_clock],
         manual_start: true
       }
 
