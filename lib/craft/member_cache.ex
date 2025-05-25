@@ -1,43 +1,90 @@
 defmodule Craft.MemberCache do
   use GenServer
 
-  alias Craft.Consensus.State
+  require Record
+
+  alias Craft.Consensus.State, as: ConsensusState
   alias Craft.Consensus.State.Members
+  alias Craft.Machine.State, as: MachineState
+  alias Craft.GlobalTimestamp
 
-  def discover(group_name, initial_nodes) do
-    :ets.insert(__MODULE__, {group_name, nil, MapSet.new(initial_nodes)})
+  defmodule GroupStatus do
+    defstruct [:group_name, :lease_holder, :leader, :members]
+  end
+  Record.defrecord(:group_status, [:lease_holder, :leader, :members])
+  defmacrop index(field), do: (quote do group_status(unquote(field)) + 1 end)
 
-    send(__MODULE__, :start_polling)
+  def discover(group_name, members) do
+    tuple =
+      group_status(members: MapSet.new(members))
+      |> put_elem(0, group_name)
+
+    :ets.insert(__MODULE__, tuple)
 
     :ok
   end
 
   def all do
     :ets.foldr(& [&1 | &2], [], __MODULE__)
-    |> Map.new(fn {group_name, leader, members} ->
-      {group_name, {leader, members}}
-    end)
+    |> Map.new(fn record -> {elem(record, 0), new(record)} end)
+  end
+
+  def holding_lease?(group_name) do
+    node = node()
+
+    with [record] <- :ets.lookup(__MODULE__, group_name),
+         {^node, global_clock, lease_expires_at} <- group_status(record, :lease_holder) do
+        GlobalTimestamp.time_until_lease_expires(global_clock, lease_expires_at) > 0
+      else
+        _ ->
+          false
+    end
   end
 
   @doc false
-  def update(%State{} = state) do
-    update(state.name, state.leader_id, Members.all_nodes(state.members))
+  def update(%ConsensusState{} = state) do
+    elements = [
+      {index(:leader), state.leader_id},
+      {index(:members), Members.all_nodes(state.members)}
+    ]
+
+    if :ets.update_element(__MODULE__, state.name, elements) do
+      :ok
+    else
+      discover(state.name, [])
+      update(state)
+    end
   end
 
-  defp update(group_name, leader, members) do
-    :ets.insert(__MODULE__, {group_name, leader, members})
+  def update(%GroupStatus{} = group_status) do
+    elements = [
+      {index(:leader), group_status.leader},
+      {index(:members), group_status.members}
+    ]
+
+    true = :ets.update_element(__MODULE__, group_status.group_name, elements)
+  end
+
+  @doc false
+  def update_lease_holder(%MachineState{} = state) do
+    :ets.update_element(__MODULE__, state.name, {index(:lease_holder), {node(), state.global_clock, state.lease_expires_at}})
   end
 
   @doc false
   def update_leader(group_name, new_leader) do
-    :ets.update_element(__MODULE__, group_name, {2, new_leader})
+    :ets.update_element(__MODULE__, group_name, {index(:leader), new_leader})
+  end
+
+  @doc false
+  def update_members(group_name, new_members) do
+    :ets.update_element(__MODULE__, group_name, {index(:members), new_members})
   end
 
   @doc false
   def get(group_name) do
     case :ets.lookup(__MODULE__, group_name) do
-      [{^group_name, leader, members}] ->
-        {:ok, leader, members}
+      [tuple] ->
+        {:ok, new(tuple)}
 
       [] ->
         :not_found
@@ -53,7 +100,9 @@ defmodule Craft.MemberCache do
   def init(_args) do
     :ets.new(__MODULE__, [:set, :named_table, :public, read_concurrency: true])
 
-    {:ok, false}
+    send(self(), :poll)
+
+    {:ok, nil}
   end
 
   @impl GenServer
@@ -62,37 +111,48 @@ defmodule Craft.MemberCache do
   end
 
   @impl GenServer
-  def handle_info(:start_polling, false) do
-    send(self(), :poll)
+  def handle_info(:poll, state) do
+    for {group_name, group_status} <- all() do
+      # group members should not poll their own group
+      if not MapSet.member?(group_status.members, node()) do
+        followers =
+          group_status.members
+          |> MapSet.delete(group_status.leader)
+          |> MapSet.to_list()
 
-    {:noreply, true}
-  end
-  def handle_info(:start_polling, state), do: {:noreply, state}
+        nodes = [group_status.leader | followers]
 
-  @impl GenServer
-  def handle_info(:poll, true) do
-    for {group_name, {leader, members}} <- all() do
-      do_poll(group_name, [leader | Enum.to_list(members)])
+        do_poll(group_name, nodes)
+      end
     end
 
     Process.send_after(self(), :poll, 5_000)
 
-    {:noreply, true}
+    {:noreply, state}
   end
 
   defp do_poll(_group_name, []), do: :not_found
-  defp do_poll(group_name, [node | nodes]) do
+  defp do_poll(group_name, [nil | rest]), do: do_poll(group_name, rest)
+  defp do_poll(group_name, [node | rest]) do
     try do
       case GenServer.call({__MODULE__, node}, {:get, group_name}) do
-        {:ok, leader, members} ->
-          update(group_name, leader, members)
-          :ok
+        {:ok, group_status} ->
+          update(group_status)
 
         :not_found ->
-          do_poll(group_name, nodes)
+          do_poll(group_name, rest)
       end
     catch :exit, _e ->
-      do_poll(group_name, nodes)
+      do_poll(group_name, rest)
     end
+  end
+
+  defp new(record) do
+    %GroupStatus{
+      group_name: elem(record, 0),
+      members: group_status(record, :members),
+      leader: group_status(record, :leader),
+      lease_holder: group_status(record, :lease_holder)
+    }
   end
 end

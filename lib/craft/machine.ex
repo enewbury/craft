@@ -10,6 +10,7 @@ defmodule Craft.Machine do
   alias Craft.Log.EmptyEntry
   alias Craft.Log.MembershipEntry
   alias Craft.Log.SnapshotEntry
+  alias Craft.MemberCache
   alias Craft.Persistence
   alias Craft.SnapshotServer.RemoteFile
 
@@ -25,12 +26,12 @@ defmodule Craft.Machine do
   defmodule MutableMachine do
     @type private() :: Craft.Machine.private()
     @type snapshot() :: Craft.Machine.snapshot()
-    @type data_dir :: Path.t()
+    @type data_dir() :: Path.t()
 
     @callback last_applied_log_index(private()) :: Craft.log_index() | nil
     @callback snapshot(private()) :: {index :: pos_integer(), snapshot(), private()} | nil
-    @callback prepare_to_receive_snapshot(private()) :: {:ok, data_dir, private()}
-    @callback receive_snapshot(private()) :: private()
+    @callback prepare_to_receive_snapshot(private()) :: {:ok, data_dir(), private()}
+    @callback receive_snapshot(private()) :: {:ok, private()}
   end
 
   defmodule LogStoredMachine do
@@ -158,16 +159,16 @@ defmodule Craft.Machine do
   end
 
   @impl true
-  def handle_cast({:update_role, role}, state) do
+  def handle_cast({:update_role, new_role}, state) do
     # if we were just the leader and are holding in-flight requests, but we've been deposed, we need to let the awaiting clients know
-    {:ok, leader, _members} = Craft.MemberCache.get(state.name)
+    {:ok, group_status} = MemberCache.get(state.name)
 
     # if we're the just-deposed leader, we probably don't know who the new leader is
     response =
-      if state.role == :leader && role != :leader && node() == leader do
+      if state.role == :leader && node() == group_status.leader && new_role != :leader do
         {:error, :unknown_leader}
       else
-        {:error, {:not_leader, leader}}
+        {:error, {:not_leader, group_status.leader}}
       end
 
     for {{_ref, from} = id, _result} <- state.client_query_results do
@@ -178,7 +179,7 @@ defmodule Craft.Machine do
       send(from, {id, response})
     end
 
-    {:noreply, %State{state | role: role, client_commands: %{}, client_query_results: []}}
+    {:noreply, %State{state | role: new_role, client_commands: %{}, client_query_results: []}}
   end
 
   @impl true
@@ -188,6 +189,10 @@ defmodule Craft.Machine do
         # read-index based queries
         for {{from, _ref} = id, result} <- state.client_query_results do
           send(from, {id, result})
+        end
+
+        if lease_expires_at do
+          MemberCache.update_lease_holder(state)
         end
 
         %State{state | client_query_results: [], lease_expires_at: lease_expires_at}
@@ -296,7 +301,7 @@ defmodule Craft.Machine do
   #
   @impl true
   def handle_cast({{:query, :linearizable}, {from, _ref} = id, query}, %State{role: :leader, global_clock: global_clock} = state) when not is_nil(global_clock) do
-    if state.lease_expires_at && time_until_lease_expires(state) > 0 do
+    if state.lease_expires_at && GlobalTimestamp.time_until_lease_expires(state.global_clock, state.lease_expires_at) > 0 do
       send(from, {id, state.module.handle_query(query, state.private)})
     else
       send(from, {id, {:error, :not_leaseholder}})
@@ -313,9 +318,9 @@ defmodule Craft.Machine do
 
   # only the leader can process linearizable queries
   def handle_cast({{:query, :linearizable}, {from, _ref} = id, _query}, state) do
-    {:ok, leader, _members} = Craft.MemberCache.get(state.name)
+    {:ok, group_status} = MemberCache.get(state.name)
 
-    send(from, {id, {:error, {:not_leader, leader}}})
+    send(from, {id, {:error, {:not_leader, group_status.leader}}})
 
     {:noreply, state}
   end
@@ -324,8 +329,8 @@ defmodule Craft.Machine do
     if state.role == :leader do
       send(from, {id, state.module.handle_query(query, state.private)})
     else
-      case Craft.MemberCache.get(state.name) do
-        {:ok, leader, _members} -> send(from, {id, {:error, {:not_leader, leader}}})
+      case MemberCache.get(state.name) do
+        {:ok, group_status} -> send(from, {id, {:error, {:not_leader, group_status.leader}}})
         :not_found -> send(from, {id, {:error, :unknown_leader}})
       end
     end
@@ -429,13 +434,6 @@ defmodule Craft.Machine do
     |> File.stream!(100_000)
     |> Enum.reduce(:erlang.md5_init(), &:erlang.md5_update(&2, &1))
     |> :erlang.md5_final()
-  end
-
-  defp time_until_lease_expires(state) do
-    {:ok, %GlobalTimestamp{earliest: now_earliest}} = GlobalTimestamp.now(state.global_clock)
-
-    # if the lease has already expired, report 0
-    max(0, DateTime.diff(state.lease_expires_at.latest, now_earliest, :millisecond))
   end
 
   defmacro __using__(opts) do

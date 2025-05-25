@@ -19,6 +19,7 @@ defmodule Craft do
   alias Craft.Consensus
   alias Craft.Machine
   alias Craft.MemberCache
+  alias Craft.MemberCache.GroupStatus
   alias Craft.Consensus.State.Members
 
   require Logger
@@ -136,7 +137,7 @@ defmodule Craft do
   @doc "Stops the local member with the given name"
   defdelegate stop_member(name), to: Craft.MemberSupervisor
   @doc "Initializes the MemberCache for a raft group with the given nodes"
-  defdelegate discover(name, nodes), to: Craft.MemberCache
+  defdelegate discover(name, nodes), to: MemberCache
 
   @doc """
   Commits a command onto the log and executes the `c:command/3` callback on the configured
@@ -190,8 +191,8 @@ defmodule Craft do
 
       :eventual ->
         case MemberCache.get(name) do
-          {:ok, _leader, members} ->
-            node = Enum.random(members)
+          {:ok, %GroupStatus{} = group_status} ->
+            node = Enum.random(group_status.members)
 
             Machine.query(name, node, query, consistency, opts)
 
@@ -210,11 +211,11 @@ defmodule Craft do
 
   defp with_leader_redirect(name, func) do
     case MemberCache.get(name) do
-      {:ok, nil, members} ->
-        do_leader_redirect(name, Enum.random(members), members, func)
+      {:ok, %GroupStatus{leader: nil} = group_status} ->
+        do_leader_redirect(name, Enum.random(group_status.members), group_status.members, func)
 
-      {:ok, leader, members} ->
-        do_leader_redirect(name, leader, members, func)
+      {:ok, %GroupStatus{} = group_status} ->
+        do_leader_redirect(name, group_status.leader, group_status.members, func)
 
       :not_found ->
         Logger.error("No known nodes for group '#{inspect(name)}', have you called Craft.discover/2?")

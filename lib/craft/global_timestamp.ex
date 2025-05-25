@@ -21,4 +21,11 @@ defmodule Craft.GlobalTimestamp do
       latest: DateTime.add(ts.latest, amount, unit)
     }
   end
+
+  def time_until_lease_expires(global_clock, lease_expires_at) do
+    {:ok, %__MODULE__{earliest: now_earliest}} = now(global_clock)
+
+    # if the lease has already expired, report 0
+    max(0, DateTime.diff(lease_expires_at.latest, now_earliest, :millisecond))
+  end
 end
