@@ -138,6 +138,8 @@ defmodule Craft do
   defdelegate stop_member(name), to: Craft.MemberSupervisor
   @doc "Initializes the MemberCache for a raft group with the given nodes"
   defdelegate discover(name, nodes), to: MemberCache
+  @doc "Indicates if this node is holding the lease for the specified group name."
+  defdelegate holding_lease?(name), to: MemberCache
 
   @doc """
   Commits a command onto the log and executes the `c:command/3` callback on the configured
