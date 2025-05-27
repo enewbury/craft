@@ -16,11 +16,14 @@ defmodule Craft.LivenessTest do
 
     assert %{leader: ^leader} = wait_until(nexus, {Stability, :majority})
 
+    # wait out lease, TODO: `wait_until(nexus, :leader_holds_lease)`
+    Process.sleep(2_000)
+
     nemesis(nexus, fn {:cast, to, from, _msg} ->
-      if from in minority or to in minority do
-        :drop
-      else
+      if from in majority and to in majority or from in minority and to in minority do
         :forward
+      else
+        :drop
       end
     end)
 
