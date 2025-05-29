@@ -79,7 +79,4 @@ defmodule Craft.RPC.AppendEntries do
       }
     end
   end
-
-  # defmodule SuccessResult
-  # defmodule FailureResult
 end

@@ -9,12 +9,14 @@ defmodule Craft.Nexus do
   use GenServer
 
   alias Craft.Consensus.State, as: ConsensusState
+  alias Craft.GlobalTimestamp
 
   defmodule State do
     defstruct [
       members: [],
       term: -1,
       leader: nil,
+      lease: nil,
       log: [],
       # {watcher_from, fun event, private -> :halt | {:cont, private} end, private}
       wait_until: nil,
@@ -42,8 +44,12 @@ defmodule Craft.Nexus do
 
   defdelegate stop(pid), to: GenServer
 
+  def send_event(nexus, event) do
+    GenServer.cast(nexus, {DateTime.utc_now(), event})
+  end
+
   def cast(nexus, to, message) do
-    GenServer.cast(nexus, {:cast, to, node(), message})
+    send_event(nexus, {:cast, to, node(), message})
   end
 
   def wait_until(nexus, condition) do
@@ -89,7 +95,7 @@ defmodule Craft.Nexus do
     {:stop, :normal, {:ok, state}, state}
   end
 
-  def handle_cast({:cast, to, from, message}, state) do
+  def handle_cast({_time, {:cast, to, from, message}}, state) do
     {_, to_node} = to
     event = {:cast, to_node, from, message}
 
@@ -135,7 +141,7 @@ defmodule Craft.Nexus do
     {:noreply, evaluate_waiter(state, event)}
   end
 
-  def handle_info({_time, {:trace, from, :leader, :enter, :candidate, %ConsensusState{current_term: current_term}}} = event, state) do
+  def handle_cast({_time, {:trace, from, :leader, :enter, :candidate, %ConsensusState{current_term: current_term}}} = event, state) do
     state =
       state
       |> State.record_event(event)
@@ -145,7 +151,45 @@ defmodule Craft.Nexus do
     {:noreply, state}
   end
 
-  def handle_info(_msg, state) do
+  #
+  # check for lease invariant, leases must never overlap
+  #
+  def handle_cast({_time, {:machine, {:lease_taken, node, lease_expires_at}}} = event, %State{lease: nil} = state) do
+    state =
+      %State{state | lease: {node, lease_expires_at}}
+      |> State.record_event({DateTime.utc_now(), event})
+
+    {:noreply, state}
+  end
+
+  # current leaseholder extending lease
+  def handle_cast({_time, {:machine, {:lease_taken, node, lease_expires_at}}} = event, %State{lease: {node, _old_lease}} = state) do
+    state =
+      %State{state | lease: {node, lease_expires_at}}
+      |> State.record_event({DateTime.utc_now(), event})
+
+    {:noreply, state}
+  end
+
+  # lease takeover, check for lease overlap
+  def handle_cast({_time, {:machine, {:lease_taken, new_node, new_lease_expires_at}}} = event, state) do
+    {_old_leaseholder, %GlobalTimestamp{latest: old_lease_latest}} = state.lease
+
+    if DateTime.compare(new_lease_expires_at.earliest, old_lease_latest) != :gt do
+      IO.inspect(new_lease_expires_at.earliest, label: :new_lease_earliest)
+      IO.inspect(old_lease_latest, label: :old_lease_latest)
+      IO.inspect DateTime.diff(new_lease_expires_at.earliest, old_lease_latest, :millisecond)
+      raise "lease overlap!"
+    else
+      state =
+        %State{state | lease: {new_node, new_lease_expires_at}}
+        |> State.record_event({DateTime.utc_now(), event})
+
+      {:noreply, state}
+    end
+  end
+
+  def handle_cast(_event, state) do
     {:noreply, state}
   end
 

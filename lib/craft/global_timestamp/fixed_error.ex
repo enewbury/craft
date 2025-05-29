@@ -9,7 +9,7 @@ defmodule Craft.GlobalTimestamp.FixedError do
   @error 100 # ms
 
   def now do
-    now = DateTime.utc_now()
+    now = :erlang.system_time(:nanosecond) |> DateTime.from_unix!(:nanosecond)
 
     earliest = DateTime.add(now, -1 * @error, :millisecond)
     latest = DateTime.add(now, @error, :millisecond)

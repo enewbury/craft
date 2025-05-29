@@ -50,10 +50,23 @@ defmodule Craft.Machine do
       :role,
       :global_clock,
       :lease_expires_at,
+      :nexus_pid,
       last_applied: 0,
       client_query_results: [],
       client_commands: %{}
     ]
+  end
+
+  if Mix.env() == :test do
+    defmacrop notify_nexus(state, message, conditional) do
+      quote do
+        if unquote(conditional) do
+          Craft.Nexus.send_event(unquote(state).nexus_pid, {:machine, unquote(message)})
+        end
+      end
+    end
+  else
+    defmacrop notify_nexus(_state, _message, _conditional), do: (quote do :noop end)
   end
 
   def start_link(args) do
@@ -155,7 +168,7 @@ defmodule Craft.Machine do
       :logger.update_process_metadata(%{gl: remote_group_leader})
     end
 
-    {:ok, %State{name: args.name, module: args.machine, global_clock: args[:global_clock]}}
+    {:ok, %State{name: args.name, module: args.machine, global_clock: args[:global_clock], nexus_pid: args[:nexus_pid]}}
   end
 
   @impl true
@@ -184,6 +197,8 @@ defmodule Craft.Machine do
 
   @impl true
   def handle_cast({:quorum_reached, new_commit_index, log, should_snapshot?, lease_expires_at}, state) do
+    notify_nexus(state, {:lease_taken, node(), lease_expires_at}, !!lease_expires_at)
+
     state =
       if state.role == :leader do
         # read-index based queries

@@ -66,10 +66,7 @@ defmodule Craft.TracedConsensus do
 
   for state <- [:lonely, :receiving_snapshot, :follower, :candidate, :leader] do
     def unquote(state)(event, msg, data) do
-      send(
-        data.nexus_pid,
-        {DateTime.utc_now(), {:trace, node(), unquote(state), event, msg, data}}
-      )
+      Craft.Nexus.send_event(data.nexus_pid, {:trace, node(), unquote(state), event, msg, data})
 
       apply(Craft.Consensus, unquote(state), [event, msg, data])
     end
