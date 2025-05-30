@@ -13,17 +13,18 @@ defmodule Craft.Nexus do
 
   defmodule State do
     defstruct [
-      members: [],
-      term: -1,
-      leader: nil,
-      lease: nil,
-      log: [],
+      :leader,
+      :lease,
       # {watcher_from, fun event, private -> :halt | {:cont, private} end, private}
-      wait_until: nil,
+      :wait_until,
       # action = :drop | {:delay, msecs} | :forward | {:forward, modified_message}
       # {fn message, private -> {action, private} end, private}
       # {fn message -> action} end, private}
-      nemesis: nil
+      :nemesis,
+      :test_process,
+      members: [],
+      term: -1,
+      log: [],
     ]
 
     def leader_elected(%__MODULE__{term: term} = state, leader, new_term) when new_term > term do
@@ -38,8 +39,8 @@ defmodule Craft.Nexus do
     end
   end
 
-  def start(members) do
-    GenServer.start(__MODULE__, members)
+  def start(members, test_process) do
+    GenServer.start(__MODULE__, [members, test_process])
   end
 
   defdelegate stop(pid), to: GenServer
@@ -69,8 +70,8 @@ defmodule Craft.Nexus do
     GenServer.call(nexus, :return_state_and_stop)
   end
 
-  def init(members) do
-    {:ok, %State{members: members}}
+  def init([members, test_process]) do
+    {:ok, %State{members: members, test_process: test_process}}
   end
 
   def handle_call({:wait_until, {module, opts}}, from, state) do
@@ -176,10 +177,9 @@ defmodule Craft.Nexus do
     {_old_leaseholder, %GlobalTimestamp{latest: old_lease_latest}} = state.lease
 
     if DateTime.compare(new_lease_expires_at.earliest, old_lease_latest) != :gt do
-      IO.inspect(new_lease_expires_at.earliest, label: :new_lease_earliest)
-      IO.inspect(old_lease_latest, label: :old_lease_latest)
-      IO.inspect DateTime.diff(new_lease_expires_at.earliest, old_lease_latest, :millisecond)
-      raise "lease overlap!"
+      Process.exit(state.test_process, :lease_overlap)
+
+      {:noreply, state}
     else
       state =
         %State{state | lease: {new_node, new_lease_expires_at}}

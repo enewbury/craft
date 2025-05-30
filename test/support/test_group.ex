@@ -11,7 +11,7 @@ defmodule Craft.TestGroup do
 
     nodes = Keyword.keys(states)
 
-    {:ok, nexus} = Craft.Nexus.start(nodes)
+    {:ok, nexus} = Craft.Nexus.start(nodes, self())
 
     states =
       Enum.map(states, fn {node, state} ->
@@ -49,7 +49,7 @@ defmodule Craft.TestGroup do
   def start_group(nodes, opts) do
     name = group_name()
 
-    {:ok, nexus} = Craft.Nexus.start(nodes)
+    {:ok, nexus} = Craft.Nexus.start(nodes, self())
 
     prepare_nodes(nodes)
 
