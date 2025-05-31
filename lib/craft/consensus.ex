@@ -758,12 +758,7 @@ defmodule Craft.Consensus do
       if wait_time == 0 do
         Logger.info("taking over lease", logger_metadata(data))
 
-        data = put_in(data.leader_state.waiting_for_lease, false)
-
-        # we didn't actually reach a quorum, just using this to send the current lease to the machine
-        Machine.quorum_reached(data, false)
-
-        {:keep_state, data}
+        {:keep_state, put_in(data.leader_state.waiting_for_lease, false)}
       else
         {:keep_state_and_data, [{{:timeout, :takeover}, wait_time, old_lease_expires_at}]}
       end

@@ -176,21 +176,23 @@ defmodule Craft.Nexus do
   def handle_cast({_time, {:machine, {:lease_taken, new_node, new_lease_expires_at}}} = event, state) do
     {_old_leaseholder, %GlobalTimestamp{latest: old_lease_latest}} = state.lease
 
-    if DateTime.compare(new_lease_expires_at.earliest, old_lease_latest) != :gt do
-      Process.exit(state.test_process, :lease_overlap)
+    state =
+      if DateTime.compare(new_lease_expires_at.earliest, old_lease_latest) != :gt do
+        Process.exit(state.test_process, :lease_overlap)
 
-      {:noreply, state}
-    else
-      state =
         %State{state | lease: {new_node, new_lease_expires_at}}
         |> State.record_event({DateTime.utc_now(), event})
 
-      {:noreply, state}
-    end
+      else
+        %State{state | lease: {new_node, new_lease_expires_at}}
+        |> State.record_event({DateTime.utc_now(), event})
+      end
+
+    {:noreply, state}
   end
 
-  def handle_cast(_event, state) do
-    {:noreply, state}
+  def handle_cast(event, state) do
+    {:noreply, State.record_event(state, {DateTime.utc_now(), event})}
   end
 
   defp evaluate_waiter(%State{wait_until: nil} = state, _event), do: state
