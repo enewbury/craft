@@ -1,17 +1,17 @@
 # Craft
 
 todo:
+- multi-raft
 - cluster splitting
 - smart appendentries intervals for commands (immediate, interval-based batching...)
-- leader leases for linearizable reads
 - broadcast replication lag to clients, to allow them to target non-linearizable reads to specific followers
-- fix Craft top-level API, designate group by {name, nodes} rather than separate args
 - be consistent with "members" vs "nodes" nomenclature
 - snapshot deletion when no longer needed
 
 4.2.1 server catch up "rounds" hueristic
 
 done:
+- leader leases for linearizable reads
 - nemesis development
 - linearizability checker
 - 3.10 leadership transfer extension
