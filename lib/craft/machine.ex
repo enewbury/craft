@@ -122,7 +122,7 @@ defmodule Craft.Machine do
   def quorum_reached(%ConsensusState{} = state, should_snapshot?) do
     lease_expires_at =
       if state.global_clock && state.state == :leader && !state.leader_state.waiting_for_lease do
-        state.leader_leased_at
+        state.lease_expires_at
       end
 
     state.name

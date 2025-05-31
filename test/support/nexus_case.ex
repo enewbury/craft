@@ -88,7 +88,7 @@ defmodule Craft.NexusCase do
         |> Map.fetch!(test.tags.registered.test_id)
         |> Craft.Nexus.return_state_and_stop()
 
-      log = Enum.sort_by(nexus_state.log, fn {time, _} -> time end)
+      log = Enum.sort_by(nexus_state.log, fn {time, _} -> time end, &(DateTime.compare(&1, &2) == :lt))
 
       lines =
         log
