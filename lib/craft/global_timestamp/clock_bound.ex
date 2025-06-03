@@ -3,23 +3,12 @@ defmodule Craft.GlobalTimestamp.ClockBound do
     Client for AWS' ClockBound daemon, which provides global clock error bounds via `chronyd`.
 
     https://github.com/aws/clock-bound
+    https://github.com/aws/clock-bound/blob/main/docs/PROTOCOL.md
   """
 
   alias Craft.GlobalTimestamp
 
-  defmodule Native do
-    @moduledoc false
-    @on_load :load_nif
-
-    def load_nif do
-      Mix.Project.build_path()
-      |> Path.join("clock_monotonic")
-      |> :erlang.load_nif(0)
-    end
-
-    def clock_monotonic, do: :erlang.nif_error(:nif_not_loaded)
-    def clock_monotonic_coarse, do: :erlang.nif_error(:nif_not_loaded)
-  end
+  @on_load :load_nif
 
   def now(path \\ Application.get_env(:craft, :clock_bound_shm_path), retries \\ 1_000)
 
@@ -44,6 +33,8 @@ defmodule Craft.GlobalTimestamp.ClockBound do
       as_of = timespec_to_nanosecond({as_of_sec, as_of_nsec})
       void_after = timespec_to_nanosecond({void_after_sec, void_after_nsec})
 
+      # sandwich the wall-clock call between two montotonic clock calls, then later verify
+      # that the they're within the segment's validity window (as_of and void_after)
       monotonic_before = monotonic_time()
       real = :os.system_time(:nanosecond)
       monotonic_after = monotonic_time()
@@ -72,7 +63,7 @@ defmodule Craft.GlobalTimestamp.ClockBound do
         max_drift > 1_000_000_000 ->
           {:error, :max_drift_too_large}
 
-        decode_clock_status(clock_status) != :synchronized ->
+        clock_status != 1 ->
           {:error, :clock_not_synchronized}
 
         # the segment is expired (or not yet valid), let's try one more time before bailing out
@@ -102,11 +93,17 @@ defmodule Craft.GlobalTimestamp.ClockBound do
     end
   end
 
+  def load_nif do
+    Mix.Project.build_path() |> Path.join("clock_monotonic") |> :erlang.load_nif(0)
+  end
+  def clock_monotonic, do: :erlang.nif_error(:nif_not_loaded)
+  def clock_monotonic_coarse, do: :erlang.nif_error(:nif_not_loaded)
+
   defp monotonic_time do
     timespec =
-      case Native.clock_monotonic_coarse() do
+      case clock_monotonic_coarse() do
         :error ->
-          Native.clock_monotonic()
+          clock_monotonic()
 
         timespec ->
           timespec
@@ -118,10 +115,4 @@ defmodule Craft.GlobalTimestamp.ClockBound do
   defp timespec_to_nanosecond({sec, nsec}) do
     :erlang.convert_time_unit(sec, :second, :nanosecond) + nsec
   end
-
-  defp decode_clock_status(0), do: :unknown
-  defp decode_clock_status(1), do: :synchronized
-  defp decode_clock_status(2), do: :free_running
-  defp decode_clock_status(3), do: :disrupted
-  defp decode_clock_status(_), do: :invalid
 end

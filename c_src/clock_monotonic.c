@@ -35,4 +35,4 @@ static ErlNifFunc nif_funcs[] = {
   {"clock_monotonic_coarse", 0, clock_monotonic_coarse},
 };
 
-ERL_NIF_INIT(Elixir.Craft.GlobalTimestamp.ClockBound.Native, nif_funcs, NULL, NULL, NULL, NULL)
+ERL_NIF_INIT(Elixir.Craft.GlobalTimestamp.ClockBound, nif_funcs, NULL, NULL, NULL, NULL)
