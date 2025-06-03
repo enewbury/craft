@@ -87,4 +87,19 @@ defmodule CraftTest do
     members = name |> Craft.state() |> Map.keys() |> MapSet.new()
     assert members == MapSet.new([new_node | nodes])
   end
+
+  nexus_test "handle_role_change/2", %{name: name, nodes: nodes, nexus: nexus} do
+    wait_until(nexus, {Stability, :all})
+
+    ref = make_ref()
+    :ok = SimpleMachine.put(name, :test_process_from, {self(), ref})
+
+    %{leader: leader} = wait_until(nexus, {Stability, :all})
+
+    new_leader = Enum.random(nodes -- [leader])
+    Craft.transfer_leadership(name, new_leader)
+
+    assert_receive {^ref, {:role_change, ^new_leader, :candidate}}
+    assert_receive {^ref, {:role_change, ^new_leader, :leader}}
+  end
 end

@@ -37,6 +37,19 @@ defmodule Craft.SimpleMachine do
   end
 
   @impl true
+  def handle_role_change(new_role, state) do
+    case Map.fetch(state, :test_process_from) do
+      {:ok, {pid, ref}} ->
+        send(pid, {ref, {:role_change, node(), new_role}})
+
+      _ ->
+        :noop
+    end
+
+    state
+  end
+
+  @impl true
   def receive_snapshot(snapshot, _state) do
     snapshot
   end

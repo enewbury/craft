@@ -18,10 +18,13 @@ defmodule Craft.Machine do
 
   @type private :: any()
   @type snapshot :: any()
+  @type role :: :receiving_snapshot | :lonely | :follower | :candidate | :leader
 
   @callback init(Craft.group_name()) :: {:ok, private()}
   @callback handle_command(Craft.command(), Craft.log_index(), private()) :: {Craft.reply(), private()} | {Craft.reply(), Craft.side_effects(), private()}
   @callback handle_query(Craft.query(), private()) :: Craft.reply()
+  @callback handle_role_change(role(), private()) :: private()
+  @optional_callbacks handle_role_change: 2
 
   defmodule MutableMachine do
     @type private() :: Craft.Machine.private()
@@ -192,7 +195,14 @@ defmodule Craft.Machine do
       send(from, {id, response})
     end
 
-    {:noreply, %State{state | role: new_role, client_commands: %{}, client_query_results: []}}
+    private =
+      if function_exported?(state.module, :handle_role_change, 2) do
+        state.module.handle_role_change(new_role, state.private)
+      else
+        state.private
+      end
+
+    {:noreply, %State{state | role: new_role, private: private, client_commands: %{}, client_query_results: []}}
   end
 
   @impl true

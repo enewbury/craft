@@ -98,6 +98,11 @@ defmodule Craft.RocksDBMachine do
   end
 
   @impl true
+  def handle_role_change(_new_role, state) do
+    state
+  end
+
+  @impl true
   def snapshot(state) do
     index =
       state
