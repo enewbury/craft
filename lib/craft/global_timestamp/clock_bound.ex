@@ -94,7 +94,7 @@ defmodule Craft.GlobalTimestamp.ClockBound do
   end
 
   def load_nif do
-    Mix.Project.build_path() |> Path.join("clock_monotonic") |> :erlang.load_nif(0)
+    Application.app_dir(:craft, ["priv", "clock_monotonic"]) |> :erlang.load_nif(0)
   end
   def clock_monotonic, do: :erlang.nif_error(:nif_not_loaded)
   def clock_monotonic_coarse, do: :erlang.nif_error(:nif_not_loaded)

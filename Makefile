@@ -5,12 +5,12 @@ ifeq ($(strip $(ERL_INCLUDE_PATH)),)
 endif
 
 NIF_SRC := c_src/clock_monotonic.c
-NIF_SO := _build/$(MIX_ENV)/clock_monotonic.so
+NIF_SO := _build/$(MIX_ENV)/lib/craft/priv/clock_monotonic.so
 CFLAGS := -fPIC -shared -dynamiclib -undefined dynamic_lookup -I $(ERL_INCLUDE_PATH)
 
 all:
-	@mkdir -p _build
+	@mkdir -p `dirname $(NIF_SO)`
 	clang $(CFLAGS) -o $(NIF_SO) $(NIF_SRC)
 
 clean:
-	rm -rf $NIF_SO
+	rm -rf $(NIF_SO)
