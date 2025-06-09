@@ -55,6 +55,8 @@ defmodule Craft do
     for node <- nodes do
       {:ok, _pid} = :rpc.call(node, Craft.MemberSupervisor, :start_member, [name, opts])
     end
+
+    Craft.MemberCache.discover(name, nodes)
   end
 
   @doc "Stops all members of the raft group"

@@ -24,7 +24,8 @@ defmodule Craft.Machine do
   @callback handle_command(Craft.command(), Craft.log_index(), private()) :: {Craft.reply(), private()} | {Craft.reply(), Craft.side_effects(), private()}
   @callback handle_query(Craft.query(), private()) :: Craft.reply()
   @callback handle_role_change(role(), private()) :: private()
-  @optional_callbacks handle_role_change: 2
+  @callback handle_info({:user_message, term()}, private()) :: private()
+  @optional_callbacks handle_role_change: 2, handle_info: 2
 
   defmodule MutableMachine do
     @type private() :: Craft.Machine.private()
@@ -438,6 +439,18 @@ defmodule Craft.Machine do
     machine_state = state.module.dump(state.private)
 
     {:reply, %{state: state, machine_state: machine_state}, state}
+  end
+
+  @impl true
+  def handle_info({:user_message, msg}, state) do
+    private =
+      if function_exported?(state.module, :handle_info, 2) do
+        state.module.handle_info(msg, state.private)
+      else
+        state.private
+      end
+
+    {:noreply, %State{state | private: private}}
   end
 
   def ls_flat(path) do
