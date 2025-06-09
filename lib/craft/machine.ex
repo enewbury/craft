@@ -447,7 +447,7 @@ defmodule Craft.Machine do
       if function_exported?(state.module, :handle_info, 2) do
         state.module.handle_info(msg, state.private)
       else
-         raise "Received message but #{state.module} has no `handle_info/2` defined"
+        state.private
       end
 
     {:noreply, %State{state | private: private}}
