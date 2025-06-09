@@ -82,10 +82,10 @@ defmodule Craft.NexusCase do
     end
 
     @impl true
-    def handle_cast({:test_finished, %ExUnit.Test{state: {:failed, _}} = test}, state) do
+    def handle_cast({:test_finished, %ExUnit.Test{state: {:failed, _}, tags: %{registered: %{test_id: test_id}}} = test}, state) do
       {:ok, nexus_state} =
         state
-        |> Map.fetch!(test.tags.registered.test_id)
+        |> Map.fetch!(test_id)
         |> Craft.Nexus.return_state_and_stop()
 
       log = Enum.sort_by(nexus_state.log, fn {time, _} -> time end, &(DateTime.compare(&1, &2) == :lt))
@@ -115,8 +115,8 @@ defmodule Craft.NexusCase do
     end
 
     @impl true
-    def handle_cast({:test_finished, %ExUnit.Test{} = test}, state) do
-      if nexus = state[test.tags.registered.test_id] do
+    def handle_cast({:test_finished, %ExUnit.Test{tags: %{registered: %{test_id: test_id}}}}, state) do
+      if nexus = state[test_id] do
         Craft.Nexus.stop(nexus)
       end
 

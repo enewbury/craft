@@ -10,10 +10,22 @@ defmodule Craft.GlobalTimestamp.ClockBound do
 
   @on_load :load_nif
 
-  def now(path \\ Application.get_env(:craft, :clock_bound_shm_path), retries \\ 1_000)
+  # all this silly indirection is just to make testing easier
+  def now(read_fun \\ fn -> Application.get_env(:craft, :clock_bound_shm_path) |> File.read() end, retries \\ 1_000) do
+    with {:ok, binary} <- read_fun.(),
+         {:retry, reason} <- do_now(binary) do
+      if retries > 0 do
+        now(read_fun, retries - 1)
+      else
+        {:error, reason}
+      end
+    else
+      ok_or_error ->
+        ok_or_error
+    end
+  end
 
-  def now(path, retries) do
-    with {:ok, binary} <- File.read(path),
+  def do_now(
         <<0x414D5A4E :: unsigned-native-32,
           0x43420200 :: unsigned-native-32,
           segment_size :: unsigned-native-32,
@@ -28,68 +40,51 @@ defmodule Craft.GlobalTimestamp.ClockBound do
           max_drift :: unsigned-native-32,
           clock_status :: signed-native-32,
           _clock_disruption_support :: unsigned-native-8,
-          _padding :: binary >> <- binary do
+          _padding :: binary>> = binary) do
+    as_of = timespec_to_nanosecond({as_of_sec, as_of_nsec})
+    void_after = timespec_to_nanosecond({void_after_sec, void_after_nsec})
 
-      as_of = timespec_to_nanosecond({as_of_sec, as_of_nsec})
-      void_after = timespec_to_nanosecond({void_after_sec, void_after_nsec})
+    # sandwich the wall-clock call between two montotonic clock calls, then later verify
+    # that the they're within the segment's validity window (as_of and void_after)
+    monotonic_before = monotonic_time()
+    real = :os.system_time(:nanosecond)
+    monotonic_after = monotonic_time()
 
-      # sandwich the wall-clock call between two montotonic clock calls, then later verify
-      # that the they're within the segment's validity window (as_of and void_after)
-      monotonic_before = monotonic_time()
-      real = :os.system_time(:nanosecond)
-      monotonic_after = monotonic_time()
+    cond do
+      segment_size != byte_size(binary) ->
+        {:retry, :incorrect_segment_size}
 
-      cond do
-        segment_size != byte_size(binary) ->
-          {:error, :incorrect_segment_size}
+      generation == 0 ->
+        {:retry, :segment_not_initialized}
 
-        generation == 0 ->
-          if retries == 0 do
-            {:error, :segment_not_initialized}
-          else
-            now(path, retries - 1)
-          end
+      rem(generation, 2) != 0 ->
+        {:retry, :segment_undergoing_write}
 
-        rem(generation, 2) != 0 ->
-          if retries == 0 do
-            {:error, :segment_undergoing_write}
-          else
-            now(path, retries - 1)
-          end
+      version != 2 ->
+        {:error, :incorrect_segment_version}
 
-        version != 2 ->
-          {:error, :incorrect_segment_version}
+      max_drift > 1_000_000_000 ->
+        {:error, :max_drift_too_large}
 
-        max_drift > 1_000_000_000 ->
-          {:error, :max_drift_too_large}
+      clock_status != 1 ->
+        {:retry, :clock_not_synchronized}
 
-        clock_status != 1 ->
-          {:error, :clock_not_synchronized}
+      # the segment is expired (or not yet valid), let's try one more time before bailing out
+      monotonic_before < as_of or monotonic_after > void_after ->
+        {:retry, :segment_expired_or_not_yet_valid}
 
-        # the segment is expired (or not yet valid), let's try one more time before bailing out
-        monotonic_before < as_of or monotonic_after > void_after ->
-          if retries == 0 do
-            {:error, :segment_expired_or_not_yet_valid}
-          else
-            now(path, retries - 1)
-          end
+      true ->
+        # Increase the error bound with the maximum drift the clock may have experienced between
+        # the time the clockbound data was written and now.
+        #
+        # max_drift is the number of nanoseconds the clock has drifted per second elapsed
+        duration_sec = :erlang.convert_time_unit(monotonic_before - as_of, :nanosecond, :second)
+        bound = bound + duration_sec * max_drift
 
-        true ->
-          # Increase the error bound with the maximum drift the clock may have experienced between
-          # the time the clockbound data was written and now.
-          #
-          # max_drift is the number of nanoseconds the clock has drifted per second elapsed
-          duration_sec = :erlang.convert_time_unit(monotonic_before - as_of, :nanosecond, :second)
-          bound = bound + duration_sec * max_drift
+        earliest = DateTime.from_unix!(real - bound, :nanosecond)
+        latest = DateTime.from_unix!(real + bound, :nanosecond)
 
-          earliest = DateTime.from_unix!(real - bound, :nanosecond)
-          latest = DateTime.from_unix!(real + bound, :nanosecond)
-
-          {:ok, %GlobalTimestamp{earliest: earliest, latest: latest}}
-      end
-    else
-      _error ->
-        :error
+        {:ok, %GlobalTimestamp{earliest: earliest, latest: latest}}
     end
   end
 
@@ -99,7 +94,7 @@ defmodule Craft.GlobalTimestamp.ClockBound do
   def clock_monotonic, do: :erlang.nif_error(:nif_not_loaded)
   def clock_monotonic_coarse, do: :erlang.nif_error(:nif_not_loaded)
 
-  defp monotonic_time do
+  def monotonic_time do
     timespec =
       case clock_monotonic_coarse() do
         :error ->
