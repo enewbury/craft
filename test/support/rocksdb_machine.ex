@@ -44,7 +44,7 @@ defmodule Craft.RocksDBMachine do
 
     File.mkdir_p!(state.snapshots_dir)
 
-    {:ok, %State{state | db: db, log_index_column_family: log_index_column_family}}
+    {:ok, %{state | db: db, log_index_column_family: log_index_column_family}}
   end
 
   @impl true

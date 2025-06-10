@@ -18,11 +18,11 @@ defmodule Craft.ElectionTest do
       Enum.zip(
         nodes,
         [
-          %State{state | state: :candidate},
-          %State{state | state: :lonely},
-          %State{state | state: :lonely},
-          %State{state | state: :lonely},
-          %State{state | state: :lonely}
+          %{state | state: :candidate},
+          %{state | state: :lonely},
+          %{state | state: :lonely},
+          %{state | state: :lonely},
+          %{state | state: :lonely}
         ]
       )
 
@@ -61,11 +61,11 @@ defmodule Craft.ElectionTest do
         Enum.zip(
           nodes,
           [
-            %State{state | state: :candidate, persistence: out_of_date_log},
-            %State{state | state: :lonely, persistence: majority_log},
-            %State{state | state: :lonely, persistence: majority_log},
-            %State{state | state: :lonely, persistence: majority_log},
-            %State{state | state: :lonely, persistence: majority_log},
+            %{state | state: :candidate, persistence: out_of_date_log},
+            %{state | state: :lonely, persistence: majority_log},
+            %{state | state: :lonely, persistence: majority_log},
+            %{state | state: :lonely, persistence: majority_log},
+            %{state | state: :lonely, persistence: majority_log},
           ]
         )
 
@@ -111,9 +111,9 @@ defmodule Craft.ElectionTest do
         Enum.zip(
           nodes,
           [
-            %State{state | state: :candidate, persistence: up_to_date_log},
-            %State{state | state: :lonely, persistence: out_of_date_log},
-            %State{state | state: :lonely, persistence: out_of_date_log},
+            %{state | state: :candidate, persistence: up_to_date_log},
+            %{state | state: :lonely, persistence: out_of_date_log},
+            %{state | state: :lonely, persistence: out_of_date_log},
           ]
         )
 

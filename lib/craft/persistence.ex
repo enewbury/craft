@@ -65,7 +65,7 @@ defmodule Craft.Persistence do
     # like `update(state, key, value)``
     def update(%State{} = state) do
       get_and_update(state, fn metadata ->
-        %__MODULE__{
+        %{
           metadata |
           current_term: state.current_term,
           voted_for: state.voted_for,
@@ -90,9 +90,7 @@ defmodule Craft.Persistence do
     end
 
     defp write(metadata, %State{persistence: %Persistence{module: module, private: private}} = state) do
-      persistence = %Persistence{state.persistence | private: module.put_metadata(private, metadata)}
-
-      %State{state | persistence: persistence}
+      put_in(state.persistence.private, module.put_metadata(private, metadata))
     end
   end
 
@@ -142,16 +140,16 @@ defmodule Craft.Persistence do
   # FIXME: rename to append!
   def append(persistence, entries, at_index \\ nil)
   def append(%__MODULE__{module: module, private: private} = persistence, entries, at_index) when is_list(entries) do
-    %__MODULE__{persistence | private: module.append(private, entries, at_index)}
+    %{persistence | private: module.append(private, entries, at_index)}
   end
   def append(persistence, entry, at_index), do: append(persistence, [entry], at_index)
 
   def rewind(%__MODULE__{module: module, private: private} = persistence, index) do
-    %__MODULE__{persistence | private: module.rewind(private, index)}
+    %{persistence | private: module.rewind(private, index)}
   end
 
   def truncate(%__MODULE__{module: module, private: private} = persistence, index, %SnapshotEntry{} = snapshot_entry) do
-    %__MODULE__{persistence | private: module.truncate(private, index, snapshot_entry)}
+    %{persistence | private: module.truncate(private, index, snapshot_entry)}
   end
 
   def reverse_find(%__MODULE__{module: module, private: private}, fun) do
@@ -172,7 +170,7 @@ defmodule Craft.Persistence do
   end
 
   def close(%__MODULE__{module: module, private: private} = persistence) do
-    %__MODULE__{persistence | private: module.close(private)}
+    %{persistence | private: module.close(private)}
   end
 
   def dump(%__MODULE__{module: module, private: private}) do

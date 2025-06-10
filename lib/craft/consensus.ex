@@ -301,7 +301,7 @@ defmodule Craft.Consensus do
     Logger.info("ignoring identical snapshot transfer request")
 
     data =
-      %State{data | leader_id: install_snapshot.leader_id}
+      %{data | leader_id: install_snapshot.leader_id}
       |> State.set_current_term(install_snapshot.term)
 
     MemberCache.update(data)
@@ -311,7 +311,7 @@ defmodule Craft.Consensus do
 
   def receiving_snapshot(:cast, %InstallSnapshot{} = install_snapshot, %State{} = data) do
     data =
-      %State{data | leader_id: install_snapshot.leader_id}
+      %{data | leader_id: install_snapshot.leader_id}
       |> State.set_current_term(install_snapshot.term)
 
     MemberCache.update(data)
@@ -338,7 +338,7 @@ defmodule Craft.Consensus do
           end
         )
 
-      {:keep_state, %State{data | incoming_snapshot_transfer: {pid, install_snapshot.snapshot_transfer}}}
+      {:keep_state, %{data | incoming_snapshot_transfer: {pid, install_snapshot.snapshot_transfer}}}
     else
       receiving_snapshot(:cast, {:download_succeeded, install_snapshot}, data)
     end
@@ -351,13 +351,13 @@ defmodule Craft.Consensus do
 
     RPC.respond_install_snapshot(install_snapshot, true, data)
 
-    {:next_state, :follower, %State{data | persistence: persistence}}
+    {:next_state, :follower, %{data | persistence: persistence}}
   end
 
   def receiving_snapshot(:cast, {:download_failed, reason}, %State{} = data) do
     Logger.warning("snapshot download failed because #{inspect reason}")
 
-    {:repeat_state, %State{data | incoming_snapshot_transfer: nil}}
+    {:repeat_state, %{data | incoming_snapshot_transfer: nil}}
   end
 
   #
@@ -421,7 +421,7 @@ defmodule Craft.Consensus do
     prev_log_term = append_entries.prev_log_term
     old_commit_index = data.commit_index
     data =
-      %State{data | leader_id: append_entries.leader_id}
+      %{data | leader_id: append_entries.leader_id}
       |> State.set_lease_expires_at(append_entries.lease_expires_at)
 
     {success, data} =
@@ -437,7 +437,7 @@ defmodule Craft.Consensus do
               |> Persistence.rewind(append_entries.prev_log_index)
               |> Persistence.append(append_entries.entries)
 
-            data = %State{data | persistence: persistence}
+            data = %{data | persistence: persistence}
 
             new_membership_entry =
               append_entries.entries
@@ -452,7 +452,7 @@ defmodule Craft.Consensus do
 
             case new_membership_entry do
               %MembershipEntry{members: members} ->
-                {true, %State{data | members: members}}
+                {true, %{data | members: members}}
 
               # if the entries that we've rewound contained a membership entry, and the incoming entries from the
               # leader don't include a new membership entry, we need to look back through the log until we find one
@@ -460,7 +460,7 @@ defmodule Craft.Consensus do
               nil ->
                 Enum.find_value(rewound_entries, {true, data}, fn
                   %MembershipEntry{members: members} ->
-                    {true, %State{data | members: members}}
+                    {true, %{data | members: members}}
 
                   _ ->
                     false
@@ -468,11 +468,11 @@ defmodule Craft.Consensus do
             end
 
           _ ->
-            {false, %State{data | persistence: Persistence.rewind(data.persistence, append_entries.prev_log_index - 1)}}
+            {false, %{data | persistence: Persistence.rewind(data.persistence, append_entries.prev_log_index - 1)}}
         end
       end
 
-    data = %State{data | commit_index: min(append_entries.leader_commit, Persistence.latest_index(data.persistence))}
+    data = %{data | commit_index: min(append_entries.leader_commit, Persistence.latest_index(data.persistence))}
 
     Logger.debug("leader heartbeat from #{append_entries.leader_id}, restarting timer", logger_metadata(data))
 
@@ -491,7 +491,7 @@ defmodule Craft.Consensus do
     if append_entries.leadership_transfer &&
        append_entries.leadership_transfer.latest_index == Persistence.latest_index(data.persistence) &&
        append_entries.leadership_transfer.latest_term == Persistence.latest_term(data.persistence) do
-      {:next_state, :candidate, %State{data | leadership_transfer_request_id: append_entries.leadership_transfer.from}}
+      {:next_state, :candidate, %{data | leadership_transfer_request_id: append_entries.leadership_transfer.from}}
     else
       {:keep_state, data, [become_lonely_timeout()]}
     end
@@ -672,7 +672,7 @@ defmodule Craft.Consensus do
   def leader(:enter, previous_state, %State{leadership_transfer_request_id: {caller_pid, _ref} = id} = data) do
     send(caller_pid, {id, :ok})
 
-    leader(:enter, previous_state, %State{data | leadership_transfer_request_id: nil})
+    leader(:enter, previous_state, %{data | leadership_transfer_request_id: nil})
   end
 
   def leader(:enter, _previous_state, data) do
@@ -700,7 +700,7 @@ defmodule Craft.Consensus do
     # previous leader can not be answered by the new leader. since those writes will never be confirmed to the client,
     # they're not "witnessed" state confirmations according to the outside world. and hence they're not a linearizability violation.
     #
-    data = %State{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
+    data = %{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
 
     actions = [
       {:state_timeout, 0, :heartbeat},
@@ -803,9 +803,9 @@ defmodule Craft.Consensus do
             if Persistence.latest_index(data.persistence) <= Map.get(data.leader_state.match_indices, node) do
               Logger.info("node #{inspect node} is caught up", logger_metadata(data))
 
-              data = %State{data | members: Members.allow_node_to_vote(data.members, node)}
+              data = %{data | members: Members.allow_node_to_vote(data.members, node)}
 
-              %State{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
+              %{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
             else
               data
             end
@@ -919,7 +919,7 @@ defmodule Craft.Consensus do
     else
       data = LeaderState.add_node(data, node, from, Persistence.latest_index(data.persistence) + 1)
       entry = %MembershipEntry{term: data.current_term, members: data.members}
-      data = %State{data | persistence: Persistence.append(data.persistence, entry)}
+      data = %{data | persistence: Persistence.append(data.persistence, entry)}
 
       MemberCache.update(data)
 
@@ -933,7 +933,7 @@ defmodule Craft.Consensus do
     else
       data = LeaderState.remove_node(data, node, from, Persistence.latest_index(data.persistence) + 1)
       entry = %MembershipEntry{term: data.current_term, members: data.members}
-      data = %State{data | persistence: Persistence.append(data.persistence, entry)}
+      data = %{data | persistence: Persistence.append(data.persistence, entry)}
 
       MemberCache.update(data)
 
@@ -1032,6 +1032,6 @@ defmodule Craft.Consensus do
     persistence = Persistence.append(data.persistence, entry)
     entry_index = Persistence.latest_index(persistence)
 
-    {:keep_state, %State{data | persistence: persistence}, [{:reply, from, {:ok, entry_index}}]}
+    {:keep_state, %{data | persistence: persistence}, [{:reply, from, {:ok, entry_index}}]}
   end
 end

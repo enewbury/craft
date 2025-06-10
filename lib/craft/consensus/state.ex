@@ -68,7 +68,7 @@ defmodule Craft.Consensus.State do
 
     case Metadata.fetch(persistence) do
       {:ok, %Metadata{} = metadata} ->
-        %__MODULE__{
+        %{
           state |
           current_term: metadata.current_term,
           voted_for: metadata.voted_for,
@@ -82,7 +82,7 @@ defmodule Craft.Consensus.State do
 
   def set_current_term(%__MODULE__{} = state, new_current_term, voted_for \\ nil) do
     state =
-      %__MODULE__{
+      %{
         state |
         current_term: new_current_term,
         voted_for: voted_for
@@ -94,7 +94,7 @@ defmodule Craft.Consensus.State do
   end
 
   def set_lease_expires_at(%__MODULE__{} = state, lease_expires_at) do
-    state = %__MODULE__{state | lease_expires_at: lease_expires_at}
+    state = %{state | lease_expires_at: lease_expires_at}
 
     Metadata.update(state)
 
@@ -108,7 +108,7 @@ defmodule Craft.Consensus.State do
   end
 
   def become_lonely(%__MODULE__{} = state) do
-    %__MODULE__{
+    %{
       state |
       state: :lonely,
       leader_state: nil,
@@ -119,7 +119,7 @@ defmodule Craft.Consensus.State do
   end
 
   def become_follower(%__MODULE__{} = state) do
-    %__MODULE__{
+    %{
       state |
       state: :follower,
       leader_state: nil,
@@ -129,7 +129,7 @@ defmodule Craft.Consensus.State do
   end
 
   def become_receiving_snapshot(%__MODULE__{} = state) do
-    %__MODULE__{
+    %{
       state |
       state: :receiving_snapshot,
       leader_state: nil,
@@ -141,7 +141,7 @@ defmodule Craft.Consensus.State do
   # leadership_transfer_request_id set directly in Consensus
   # this makes test tracing easier as we don't need to special-case a tuple as `data` in Consensus.Tracer
   def become_candidate(%__MODULE__{} = state) do
-    %__MODULE__{
+    %{
       state |
       state: :candidate,
       leader_state: nil,
@@ -151,7 +151,7 @@ defmodule Craft.Consensus.State do
   end
 
   def become_leader(%__MODULE__{} = state) do
-    %__MODULE__{
+    %{
       state |
       state: :leader,
       leader_id: node(),
@@ -174,7 +174,7 @@ defmodule Craft.Consensus.State do
   # holding pre-vote and leadership elections
 
   def record_vote(%__MODULE__{} = state, %RequestVote.Results{} = results) do
-    %__MODULE__{state | election: Election.record_vote(state.election, results)}
+    %{state | election: Election.record_vote(state.election, results)}
   end
 
   def election_result(%__MODULE__{} = state) do
@@ -191,7 +191,7 @@ defmodule Craft.Consensus.State do
     {:ok, %{term: term}} = Persistence.fetch(state.persistence, index)
     persistence = Persistence.truncate(state.persistence, index, SnapshotEntry.new(state, term, path_or_content))
 
-    %__MODULE__{state | snapshots: Map.put(state.snapshots, index, path_or_content), persistence: persistence}
+    %{state | snapshots: Map.put(state.snapshots, index, path_or_content), persistence: persistence}
   end
 
   def latest_snapshot_index(%__MODULE__{} = state) do

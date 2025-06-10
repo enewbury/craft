@@ -17,7 +17,7 @@ defmodule Craft.Log.SnapshotEntry do
     if state.machine.__craft_mutable__() do
       entry
     else
-      %__MODULE__{entry | machine_private: path_or_content}
+      %{entry | machine_private: path_or_content}
     end
   end
 end

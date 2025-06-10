@@ -59,7 +59,7 @@ defmodule Craft.SnapshotServer do
 
     send(self(), :accept)
 
-    {:noreply, %State{state | socket: socket, port: port}}
+    {:noreply, %{state | socket: socket, port: port}}
   end
 
   @impl true

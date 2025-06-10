@@ -18,14 +18,11 @@ defmodule Craft.Consensus.State.Members do
       raise "member already added"
     end
 
-    %__MODULE__{
-      members |
-      catching_up_nodes: MapSet.put(members.catching_up_nodes, node)
-    }
+    %{members | catching_up_nodes: MapSet.put(members.catching_up_nodes, node)}
   end
 
   def remove_member(%__MODULE__{} = members, node) do
-    %__MODULE__{
+    %{
       members |
       catching_up_nodes: MapSet.delete(members.catching_up_nodes, node),
       voting_nodes: MapSet.delete(members.voting_nodes, node),
@@ -34,7 +31,7 @@ defmodule Craft.Consensus.State.Members do
   end
 
   def allow_node_to_vote(%__MODULE__{} = members, node) do
-    %__MODULE__{
+    %{
       members |
       voting_nodes: MapSet.put(members.voting_nodes, node),
       catching_up_nodes: MapSet.delete(members.catching_up_nodes, node),

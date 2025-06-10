@@ -203,7 +203,7 @@ defmodule Craft.Machine do
         state.private
       end
 
-    {:noreply, %State{state | role: new_role, private: private, client_commands: %{}, client_query_results: []}}
+    {:noreply, %{state | role: new_role, private: private, client_commands: %{}, client_query_results: []}}
   end
 
   @impl true
@@ -221,7 +221,7 @@ defmodule Craft.Machine do
           MemberCache.update_lease_holder(state)
         end
 
-        %State{state | client_query_results: [], lease_expires_at: lease_expires_at}
+        %{state | client_query_results: [], lease_expires_at: lease_expires_at}
       else
         state
       end
@@ -253,7 +253,7 @@ defmodule Craft.Machine do
                   {reply, side_effects, private}
               end
 
-            state = %State{state | private: private}
+            state = %{state | private: private}
 
             if state.role == :leader do
               Enum.each(side_effects, fn {m, f, a} ->
@@ -264,7 +264,7 @@ defmodule Craft.Machine do
                 {{pid, _ref} = id, client_commands} ->
                   send(pid, {id, reply})
 
-                  %State{state | client_commands: client_commands}
+                  %{state | client_commands: client_commands}
 
                 _ ->
                   state
@@ -310,7 +310,7 @@ defmodule Craft.Machine do
         state.private
       end
 
-    {:noreply, %State{state | last_applied: new_commit_index, private: private}}
+    {:noreply, %{state | last_applied: new_commit_index, private: private}}
   end
 
   #
@@ -339,7 +339,7 @@ defmodule Craft.Machine do
   def handle_cast({{:query, :linearizable}, id, query}, %State{role: :leader} = state) do
     result = state.module.handle_query(query, state.private)
 
-    {:noreply, %State{state | client_query_results: [{id, result} | state.client_query_results]}}
+    {:noreply, %{state | client_query_results: [{id, result} | state.client_query_results]}}
   end
 
   # only the leader can process linearizable queries
@@ -375,7 +375,7 @@ defmodule Craft.Machine do
   def handle_cast({:command, {from, _ref} = id, command}, state) do
     case Consensus.command(state.name, command) do
       {:ok, index} ->
-        {:noreply, %State{state | client_commands: Map.put(state.client_commands, index, id)}}
+        {:noreply, %{state | client_commands: Map.put(state.client_commands, index, id)}}
 
       # not leader, not leaseholder, etc...
       error ->
@@ -405,7 +405,7 @@ defmodule Craft.Machine do
         end
       end
 
-    {:reply, :ok, %State{state | last_applied: last_applied, private: private}}
+    {:reply, :ok, %{state | last_applied: last_applied, private: private}}
   end
 
   # delete on-disk machine files etc...
@@ -413,7 +413,7 @@ defmodule Craft.Machine do
   def handle_call(:prepare_to_receive_snapshot, _from, state) do
     {:ok, data_dir, private} = state.module.prepare_to_receive_snapshot(state.private)
 
-    {:reply, {:ok, data_dir}, %State{state | private: private}}
+    {:reply, {:ok, data_dir}, %{state | private: private}}
   end
 
   @impl true
@@ -431,7 +431,7 @@ defmodule Craft.Machine do
         {private, last_applied}
       end
 
-    {:reply, :ok, %State{state | private: private, last_applied: last_applied}}
+    {:reply, :ok, %{state | private: private, last_applied: last_applied}}
   end
 
   @impl true
@@ -450,7 +450,7 @@ defmodule Craft.Machine do
         state.private
       end
 
-    {:noreply, %State{state | private: private}}
+    {:noreply, %{state | private: private}}
   end
 
   def ls_flat(path) do

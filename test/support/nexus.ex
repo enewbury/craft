@@ -28,14 +28,14 @@ defmodule Craft.Nexus do
     ]
 
     def leader_elected(%__MODULE__{term: term} = state, leader, new_term) when new_term > term do
-      %__MODULE__{state | leader: leader, term: new_term}
+      %{state | leader: leader, term: new_term}
     end
 
     # trace messages arrived out of order, ignore
     def leader_elected(state, _leader, _new_term), do: state
 
     def record_event(%__MODULE__{log: log} = state, event) do
-      %__MODULE__{state | log: [event | log]}
+      %{state | log: [event | log]}
     end
   end
 
@@ -75,15 +75,15 @@ defmodule Craft.Nexus do
   end
 
   def handle_call({:wait_until, {module, opts}}, from, state) do
-    {:noreply, %State{state | wait_until: {from, &module.handle_event/2, module.init(state, opts)}}}
+    {:noreply, %{state | wait_until: {from, &module.handle_event/2, module.init(state, opts)}}}
   end
 
   def handle_call({:wait_until, fun}, from, state) do
-    {:noreply, %State{state | wait_until: {from, fun, nil}}}
+    {:noreply, %{state | wait_until: {from, fun, nil}}}
   end
 
   def handle_call({:nemesis, fun}, _from, state) do
-    {:reply, :ok, %State{state | nemesis: {fun, nil}}}
+    {:reply, :ok, %{state | nemesis: {fun, nil}}}
   end
 
   def handle_call({:nemesis_and_wait_until, fun, condition}, from, state) do
@@ -131,7 +131,7 @@ defmodule Craft.Nexus do
                 State.record_event(state, {DateTime.utc_now(), event})
             end
 
-          %State{state | nemesis: {nemesis, private}}
+          %{state | nemesis: {nemesis, private}}
 
         _ ->
           :gen_statem.cast(to, message)
@@ -157,7 +157,7 @@ defmodule Craft.Nexus do
   #
   def handle_cast({_time, {:machine, {:lease_taken, node, lease_expires_at}}} = event, %State{lease: nil} = state) do
     state =
-      %State{state | lease: {node, lease_expires_at}}
+      %{state | lease: {node, lease_expires_at}}
       |> State.record_event({DateTime.utc_now(), event})
 
     {:noreply, state}
@@ -166,7 +166,7 @@ defmodule Craft.Nexus do
   # current leaseholder extending lease
   def handle_cast({_time, {:machine, {:lease_taken, node, lease_expires_at}}} = event, %State{lease: {node, _old_lease}} = state) do
     state =
-      %State{state | lease: {node, lease_expires_at}}
+      %{state | lease: {node, lease_expires_at}}
       |> State.record_event({DateTime.utc_now(), event})
 
     {:noreply, state}
@@ -180,11 +180,11 @@ defmodule Craft.Nexus do
       if DateTime.compare(new_lease_expires_at.earliest, old_lease_latest) != :gt do
         Process.exit(state.test_process, :lease_overlap)
 
-        %State{state | lease: {new_node, new_lease_expires_at}}
+        %{state | lease: {new_node, new_lease_expires_at}}
         |> State.record_event({DateTime.utc_now(), event})
 
       else
-        %State{state | lease: {new_node, new_lease_expires_at}}
+        %{state | lease: {new_node, new_lease_expires_at}}
         |> State.record_event({DateTime.utc_now(), event})
       end
 
@@ -200,12 +200,12 @@ defmodule Craft.Nexus do
   defp evaluate_waiter(%State{wait_until: {wait_from, fun, private}} = state, event) when is_function(fun, 2) do
     case fun.(event, private) do
       {:cont, private} ->
-        %State{state | wait_until: {wait_from, fun, private}}
+        %{state | wait_until: {wait_from, fun, private}}
 
       :halt ->
         GenServer.reply(wait_from, state)
 
-        %State{state | wait_until: nil}
+        %{state | wait_until: nil}
     end
   end
 end

@@ -46,7 +46,7 @@ defmodule Craft.SnapshotServerClient do
 
     GenServer.cast(self(), :download_next)
 
-    {:noreply, %State{state | socket: socket}}
+    {:noreply, %{state | socket: socket}}
   end
 
   def handle_cast(:download_next, %State{remaining_files: []} = state) do
@@ -60,7 +60,7 @@ defmodule Craft.SnapshotServerClient do
 
     {:ok, pid} = Task.start_link(__MODULE__, :download, [file, self(), state])
 
-    {:noreply, %State{state | current_download: {pid, file}, remaining_files: rest}}
+    {:noreply, %{state | current_download: {pid, file}, remaining_files: rest}}
   end
 
   def handle_cast({:error, _} = error, state) do

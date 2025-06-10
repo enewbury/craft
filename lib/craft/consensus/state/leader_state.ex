@@ -55,7 +55,7 @@ defmodule Craft.Consensus.State.LeaderState do
         candidate = Enum.random(leadership_transfer.candidates)
         candidates = MapSet.delete(leadership_transfer.candidates, candidate)
 
-        %__MODULE__{leadership_transfer | current_candidate: candidate, candidates: candidates}
+        %{leadership_transfer | current_candidate: candidate, candidates: candidates}
       end
     end
   end
@@ -93,14 +93,14 @@ defmodule Craft.Consensus.State.LeaderState do
     membership_change = %MembershipChange{action: :add, node: node, from: from, log_index: log_index}
 
     leader_state =
-      %__MODULE__{
+      %{
         state.leader_state |
         next_indices: next_indices,
         match_indices: match_indices,
         membership_change: membership_change
       }
 
-    %State{state | members: Members.add_member(state.members, node), leader_state: leader_state}
+    %{state | members: Members.add_member(state.members, node), leader_state: leader_state}
   end
 
   def remove_node(%State{} = state, node, from, log_index) do
@@ -111,7 +111,7 @@ defmodule Craft.Consensus.State.LeaderState do
     membership_change = %MembershipChange{action: :remove, node: node, from: from, log_index: log_index}
 
     leader_state =
-      %__MODULE__{
+      %{
         state.leader_state |
         next_indices: next_indices,
         match_indices: match_indices,
@@ -119,7 +119,7 @@ defmodule Craft.Consensus.State.LeaderState do
         last_heartbeat_replies_at: last_heartbeat_replies_at
       }
 
-    %State{state | members: Members.remove_member(state.members, node), leader_state: leader_state}
+    %{state | members: Members.remove_member(state.members, node), leader_state: leader_state}
   end
 
   # this approach of generating a new id for each consensus round and only accepting replies from that one round
@@ -152,7 +152,7 @@ defmodule Craft.Consensus.State.LeaderState do
     if results.latest_index > state.leader_state.match_indices[results.from] do
       match_indices = Map.put(state.leader_state.match_indices, results.from, results.latest_index)
       next_indices = Map.put(state.leader_state.next_indices, results.from, results.latest_index + 1)
-      state = %State{state | leader_state: %__MODULE__{state.leader_state | next_indices: next_indices, match_indices: match_indices}}
+      state = %{state | leader_state: %{state.leader_state | next_indices: next_indices, match_indices: match_indices}}
       # find the highest uncommitted match index shared by a majority of servers
       #
       # when we become leader, match indexes work their way up from zero non-uniformly
@@ -186,7 +186,7 @@ defmodule Craft.Consensus.State.LeaderState do
       with false <- is_nil(highest_uncommitted_match_index),
            {:ok, entry} <- Persistence.fetch(state.persistence, highest_uncommitted_match_index),
            true <- entry.term == state.current_term do
-        %State{state | commit_index: highest_uncommitted_match_index}
+        %{state | commit_index: highest_uncommitted_match_index}
       else
         _ ->
           state
@@ -200,7 +200,7 @@ defmodule Craft.Consensus.State.LeaderState do
     state = bump_last_heartbeat_reply_at(state, results)
     # we don't know where we match the followers log
     match_indices = Map.put(state.leader_state.match_indices, results.from, 0)
-    state = %State{state | leader_state: %__MODULE__{state.leader_state | match_indices: match_indices}}
+    state = put_in(state.leader_state.match_indices, match_indices)
 
     # is the follower going to need a snapshot?
     if needs_snapshot?(state, results.from) do
@@ -212,7 +212,7 @@ defmodule Craft.Consensus.State.LeaderState do
     else
       next_indices = Map.update!(state.leader_state.next_indices, results.from, fn next_index -> next_index - 1 end)
 
-      %State{state | leader_state: %__MODULE__{state.leader_state | next_indices: next_indices}}
+      put_in(state.leader_state.next_indices, next_indices)
     end
   end
 
@@ -225,21 +225,21 @@ defmodule Craft.Consensus.State.LeaderState do
 
     snapshot_transfers = Map.put(state.leader_state.snapshot_transfers, for_node, {index, snapshot_transfer})
 
-    %State{state | leader_state: %__MODULE__{state.leader_state | snapshot_transfers: snapshot_transfers}}
+    put_in(state.leader_state.snapshot_transfers, snapshot_transfers)
   end
 
   def handle_install_snapshot_results(%State{} = state, %InstallSnapshot.Results{success: true} = results) do
     snapshot_transfers = Map.delete(state.leader_state.snapshot_transfers, results.from)
 
     leader_state =
-      %__MODULE__{
+      %{
         state.leader_state |
         snapshot_transfers: snapshot_transfers,
         match_indices: Map.put(state.leader_state.match_indices, results.from, results.latest_index),
         next_indices: Map.put(state.leader_state.next_indices, results.from, results.latest_index + 1)
       }
 
-    %State{state | leader_state: leader_state}
+    %{state | leader_state: leader_state}
   end
 
   def needs_snapshot?(%State{} = state, node) do

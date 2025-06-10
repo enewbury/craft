@@ -18,12 +18,12 @@ defmodule Craft.Nexus.Stability do
   def handle_event({:cast, follower, leader, %AppendEntries{} = append_entries}, %State{leader: leader} = state) do
     counts = Map.update(state.counts, follower, {0, append_entries}, fn {num, _} -> {num, append_entries} end)
 
-    wait_action(%State{state | counts: counts})
+    wait_action(%{state | counts: counts})
   end
 
   # seeing a different leader causes counts to reset
   def handle_event({:cast, _follower, leader, %AppendEntries{}}, state) do
-    state = %State{state | leader: leader} |> reset_counts()
+    state = %{state | leader: leader} |> reset_counts()
 
     {:cont, state}
   end
@@ -39,7 +39,7 @@ defmodule Craft.Nexus.Stability do
           Map.put(state.counts, follower, {0, nil})
       end
 
-    wait_action(%State{state | counts: counts})
+    wait_action(%{state | counts: counts})
   end
 
   def handle_event(_event, state), do: {:cont, state}
@@ -50,7 +50,7 @@ defmodule Craft.Nexus.Stability do
       |> List.delete(state.leader)
       |> Enum.into(%{}, & {&1, {0, nil}})
 
-    %State{state | counts: counts}
+    %{state | counts: counts}
   end
 
   defp wait_action(%State{proportion: :all} = state) do

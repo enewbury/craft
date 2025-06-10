@@ -42,13 +42,13 @@ defmodule Craft.TracedConsensus do
     :ok = Machine.init_or_restore(data)
 
     state = if args[:manual_start], do: :ready_to_test, else: :lonely
-    data = %State{data | global_clock: args[:global_clock]}
+    data = %{data | global_clock: args[:global_clock]}
 
     {:ok, state, data}
   end
 
   def init(args) do
-    data = %State{
+    data = %{
       State.new(args.name, args[:nodes], args.persistence, args.machine, args[:global_clock])
       | nexus_pid: args.nexus_pid,
         state: :lonely

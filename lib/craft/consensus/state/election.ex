@@ -21,7 +21,7 @@ defmodule Craft.Consensus.State.Election do
 
   def record_vote(%__MODULE__{} = election, %RequestVote.Results{} = results) do
     if not MapSet.member?(election.received_votes_from, results.from) do
-      %__MODULE__{
+      %{
         election |
         num_votes: election.num_votes + if(results.vote_granted, do: 1, else: 0),
         received_votes_from: MapSet.put(election.received_votes_from, results.from)

@@ -107,7 +107,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
     state =
       if at_index do
-        %__MODULE__{state | latest_index: at_index - 1}
+        %{state | latest_index: at_index - 1}
       else
         state
       end
@@ -117,13 +117,13 @@ defmodule Craft.Persistence.RocksDBPersistence do
         index = state.latest_index + 1
         :ok = :rocksdb.batch_put(batch, state.log_cf, encode(index), encode(entry))
 
-        %__MODULE__{state | latest_index: index}
+        %{state | latest_index: index}
       end)
 
     :ok = :rocksdb.write_batch(state.db, batch, state.write_opts)
     :ok = :rocksdb.release_batch(batch)
 
-    %__MODULE__{state | latest_term: List.last(entries).term}
+    %{state | latest_term: List.last(entries).term}
   end
 
   @impl true
@@ -131,7 +131,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
   # def rewind(%__MODULE__{latest_index: latest_index} = state, index) when index < latest_index do
     # :ok = :rocksdb.delete_range(state.db, state.log_cf, encode(index + 1), encode(state.latest_index + 1), state.write_opts)
 
-  #   %__MODULE__{state | latest_index: index}
+  #   %{state | latest_index: index}
   # end
   # def rewind(state, _index), do: state
 
@@ -143,7 +143,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
     :ok = :rocksdb.transaction_commit(transaction)
 
-    %__MODULE__{state | latest_index: index}
+    %{state | latest_index: index}
   end
   def rewind(%__MODULE__{} = state, _index), do: state
 
