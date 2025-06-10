@@ -74,8 +74,7 @@ defmodule Craft.GlobalTimestamp.ClockBound do
         {:retry, :segment_expired_or_not_yet_valid}
 
       true ->
-        # Increase the error bound with the maximum drift the clock may have experienced between
-        # the time the clockbound data was written and now.
+        # increase the error bound by the maximum drift the clock may have experienced since the clockbound shm was updated
         #
         # max_drift is the number of nanoseconds the clock has drifted per second elapsed
         duration_sec = :erlang.convert_time_unit(monotonic_before - as_of, :nanosecond, :second)

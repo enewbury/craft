@@ -24,6 +24,7 @@ done:
   if snapshotting, machine snapshots and sends message to consensus with snapshot index and path on disk
   consensus writes snapshot metadata to persistence
   break out to own SnapshotsManager process?
+  sendfile support
   
 - log truncation
   runs periodically
