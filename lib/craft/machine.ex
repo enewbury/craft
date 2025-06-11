@@ -217,11 +217,13 @@ defmodule Craft.Machine do
           send(from, {id, result})
         end
 
+        state = %{state | client_query_results: [], lease_expires_at: lease_expires_at}
+
         if lease_expires_at do
           MemberCache.update_lease_holder(state)
         end
 
-        %{state | client_query_results: [], lease_expires_at: lease_expires_at}
+        state
       else
         state
       end
