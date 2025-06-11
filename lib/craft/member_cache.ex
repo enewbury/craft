@@ -1,4 +1,5 @@
 defmodule Craft.MemberCache do
+  @moduledoc false
   use GenServer
 
   require Record
@@ -9,11 +10,13 @@ defmodule Craft.MemberCache do
   alias Craft.GlobalTimestamp
 
   defmodule GroupStatus do
+    @moduledoc false
     defstruct [:group_name, :lease_holder, :leader, :members]
   end
   Record.defrecord(:group_status, [:lease_holder, :leader, :members])
   defmacrop index(field), do: (quote do group_status(unquote(field)) + 1 end)
 
+  @doc false
   def discover(group_name, members) do
     tuple =
       group_status(members: MapSet.new(members))
@@ -24,11 +27,13 @@ defmodule Craft.MemberCache do
     :ok
   end
 
+  @doc false
   def all do
     :ets.foldr(& [&1 | &2], [], __MODULE__)
     |> Map.new(fn record -> {elem(record, 0), new(record)} end)
   end
 
+  @doc false
   def holding_lease?(group_name) do
     case :ets.lookup_element(__MODULE__, group_name, index(:lease_holder)) do
       {lease_holder, global_clock, lease_expires_at} when lease_holder == node() ->

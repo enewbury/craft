@@ -142,6 +142,10 @@ defmodule Craft do
   defdelegate discover(name, nodes), to: MemberCache
   @doc "Indicates if this node is holding the lease for the specified group name."
   defdelegate holding_lease?(name), to: MemberCache
+  @doc "Lists the groups known to this node, with cached information (members, lease holder, etc..)"
+  defdelegate known_groups, to: MemberCache, as: :all
+  @doc "Lists cached information about the given group."
+  defdelegate cached_info(group_name), to: MemberCache, as: :get
 
   @doc """
   Commits a command onto the log and executes the `c:command/3` callback on the configured
