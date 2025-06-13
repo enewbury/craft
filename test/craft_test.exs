@@ -102,4 +102,13 @@ defmodule CraftTest do
     assert_receive {^ref, {:role_change, ^new_leader, :candidate}}
     assert_receive {^ref, {:role_change, ^new_leader, :leader}}
   end
+
+  nexus_test "Craft.send/2 + handle_info/2", %{name: name, nodes: nodes, nexus: nexus} do
+    wait_until(nexus, {Stability, :all})
+
+    message = make_ref()
+    :ok = :rpc.call(Enum.random(nodes), Craft, :send, [name, {self(), message}])
+
+    assert_receive ^message
+  end
 end

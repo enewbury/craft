@@ -33,9 +33,13 @@ defmodule Craft.Application do
   end
 
   def lookup(name, component) do
-    [{pid, _meta}] = Registry.lookup(Craft.Registry, {name, component})
+    case Registry.lookup(Craft.Registry, {name, component}) do
+      [{pid, _meta}] ->
+        pid
 
-    pid
+      _ ->
+        nil
+    end
   end
 
   defp create_data_dir! do

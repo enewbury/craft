@@ -50,6 +50,13 @@ defmodule Craft.SimpleMachine do
   end
 
   @impl true
+  def handle_info({from, message}, state) do
+    send(from, message)
+
+    state
+  end
+
+  @impl true
   def receive_snapshot(snapshot, _state) do
     snapshot
   end

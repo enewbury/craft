@@ -134,6 +134,21 @@ defmodule Craft do
     with_leader_redirect(name, &Consensus.transfer_leadership(name, &1))
   end
 
+  @doc """
+  Sends a message to the local instance of the user's state machine.
+
+  Receivable by the `handle_info/1` callback.
+  """
+  def send(name, message) do
+    if pid = Craft.Application.lookup(name, Craft.Machine) do
+      Kernel.send(pid, {:user_message, message})
+
+      :ok
+    else
+      {:error, :unknown_group}
+    end
+  end
+
   @doc "Starts the local member with the given name"
   defdelegate start_member(name), to: Craft.MemberSupervisor
   @doc "Stops the local member with the given name"
