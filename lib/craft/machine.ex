@@ -31,9 +31,11 @@ defmodule Craft.Machine do
     @type private() :: Craft.Machine.private()
     @type snapshot() :: Craft.Machine.snapshot()
     @type data_dir() :: Path.t()
+    @type index() :: pos_integer()
 
     @callback last_applied_log_index(private()) :: Craft.log_index() | nil
-    @callback snapshot(private()) :: {index :: pos_integer(), snapshot(), private()} | nil
+    @callback snapshot(private()) :: {index(), snapshot(), private()} | nil
+    @callback snapshots(private()) :: [{index(), snapshot()}]
     @callback prepare_to_receive_snapshot(private()) :: {:ok, data_dir(), private()}
     @callback receive_snapshot(private()) :: {:ok, private()}
   end
@@ -282,20 +284,7 @@ defmodule Craft.Machine do
         if state.module.__craft_mutable__() do
           case state.module.snapshot(state.private) do
             {index, path, private} ->
-              files =
-                path
-                |> ls_flat()
-                |> Enum.map(fn file ->
-                  %RemoteFile{
-                    name: Path.relative_to(file, path),
-                    md5: md5(file),
-                    byte_size: File.stat!(file).size
-                  }
-                end)
-
-              relative_path = Path.relative_to(path, Configuration.data_dir())
-
-              :ok = Consensus.snapshot_ready(state.name, index, {relative_path, files})
+              :ok = Consensus.snapshot_ready(state.name, index, snapshot_info(path))
 
               private
 
@@ -409,7 +398,16 @@ defmodule Craft.Machine do
         end
       end
 
-    {:reply, :ok, %{state | last_applied: last_applied, private: private}}
+    snapshots =
+      if state.module.__craft_mutable__() do
+        Map.new(state.module.snapshots(private), fn {index, path} ->
+          {index, snapshot_info(path)}
+        end)
+      else
+        %{}
+      end
+
+    {:reply, {:ok, snapshots}, %{state | last_applied: last_applied, private: private}}
   end
 
   # delete on-disk machine files etc...
@@ -457,7 +455,24 @@ defmodule Craft.Machine do
     {:noreply, %{state | private: private}}
   end
 
-  def ls_flat(path) do
+  defp snapshot_info(path) do
+    files =
+      path
+      |> ls_flat()
+      |> Enum.map(fn file ->
+        %RemoteFile{
+          name: Path.relative_to(file, path),
+          md5: md5(file),
+          byte_size: File.stat!(file).size
+        }
+      end)
+
+    relative_path = Path.relative_to(path, Configuration.data_dir())
+
+    {relative_path, files}
+  end
+
+  defp ls_flat(path) do
     path
     |> File.ls!()
     |> Enum.flat_map(fn entry ->
@@ -471,7 +486,7 @@ defmodule Craft.Machine do
     end)
   end
 
-  def md5(file) do
+  defp md5(file) do
     file
     |> File.stream!(100_000)
     |> Enum.reduce(:erlang.md5_init(), &:erlang.md5_update(&2, &1))

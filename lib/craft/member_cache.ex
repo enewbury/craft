@@ -85,6 +85,11 @@ defmodule Craft.MemberCache do
   end
 
   @doc false
+  def delete(group_name) do
+    :ets.delete(__MODULE__, group_name)
+  end
+
+  @doc false
   def get(group_name) do
     case :ets.lookup(__MODULE__, group_name) do
       [tuple] ->

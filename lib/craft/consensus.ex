@@ -133,7 +133,7 @@ defmodule Craft.Consensus do
 
     MemberCache.update(data)
 
-    :ok = Machine.init_or_restore(data)
+    {:ok, snapshots} = Machine.init_or_restore(data)
 
     if data.global_clock do
       Logger.info("consensus process started, global clock present, leader leases enabled")
@@ -141,7 +141,7 @@ defmodule Craft.Consensus do
       Logger.info("consensus process started, no global clock present, leader leases disabled")
     end
 
-    {:ok, :lonely, data}
+    {:ok, :lonely, %{data | snapshots: snapshots}}
   end
 
   def child_spec(args) do
@@ -234,7 +234,7 @@ defmodule Craft.Consensus do
         {:next_state, :candidate, data}
 
       :lost ->
-        :repeat_state_and_data
+        {:repeat_state, data}
 
       :pending ->
         {:keep_state, data}
@@ -481,6 +481,7 @@ defmodule Craft.Consensus do
     if success && data.commit_index > old_commit_index do
       # TODO: figure out some better hueristics for taking snapshots
       should_snapshot? = Persistence.length(data.persistence) > 20
+      # should_snapshot? = true
 
       Machine.quorum_reached(data, should_snapshot?)
     end
@@ -998,20 +999,20 @@ defmodule Craft.Consensus do
 
     Enum.reduce(Members.other_nodes(state.members), state, fn to_node, state ->
       if LeaderState.needs_snapshot?(state, to_node) do
-        if LeaderState.sending_snapshot?(state, to_node) do
-          state
-        else
-          state =
+        state =
+          if LeaderState.sending_snapshot?(state, to_node) do
+            state
+          else
             if state.machine.__craft_mutable__() do
               LeaderState.create_snapshot_transfer(state, to_node)
             else
               state
             end
+          end
 
-          RPC.install_snapshot(state, to_node)
+        RPC.install_snapshot(state, to_node)
 
-          state
-        end
+        state
       else
         RPC.append_entries(state, to_node)
 

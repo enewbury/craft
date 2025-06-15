@@ -122,8 +122,15 @@ defmodule Craft.RocksDBMachine do
     end
   end
 
+  @impl true
   def snapshots(state) do
-    File.ls!(state.snapshots_dir)
+    state.snapshots_dir
+    |> File.ls!()
+    |> Enum.map(fn index_str ->
+      {index, ""} = Integer.parse(index_str)
+
+      {index, Path.join(state.snapshots_dir, index_str)}
+    end)
   end
 
   @impl true
@@ -173,7 +180,9 @@ defmodule Craft.RocksDBMachine do
           %{}
       end
 
-    %{kv: kv, last_applied_log_index: last_applied_log_index(state), snapshots: snapshots(state)}
+    snapshots = File.ls!(state.snapshots_dir)
+
+    %{kv: kv, last_applied_log_index: last_applied_log_index(state), snapshots: snapshots}
   end
 
   defp encode(term), do: :erlang.term_to_binary(term)

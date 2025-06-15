@@ -192,12 +192,32 @@ defmodule Craft.Consensus.State do
     persistence = Persistence.truncate(state.persistence, index, SnapshotEntry.new(state, term, path_or_content))
 
     %{state | snapshots: Map.put(state.snapshots, index, path_or_content), persistence: persistence}
+    |> clean_up_snapshots()
   end
 
   def latest_snapshot_index(%__MODULE__{} = state) do
     state.snapshots
     |> Map.keys()
     |> Enum.max()
+  end
+
+  def clean_up_snapshots(%__MODULE__{} = state) do
+    snapshot_indexes_in_use =
+      (get_in(state.leader_state.snapshot_transfers) || %{})
+      |> Map.values()
+      |> Enum.map(fn {index, _snapshot_transfer} -> index end)
+
+    [_current_snapshot_index | deleteable_indexes] =
+      state.snapshots
+      |> Map.keys()
+      |> Enum.sort(:desc)
+
+    deletable_indexes = deleteable_indexes -- snapshot_indexes_in_use
+
+    # deleteable_indexes
+    # |> IO.inspect(label: node())
+
+    state
   end
 
   def logger_metadata(%__MODULE__{} = state, extras \\ []) do

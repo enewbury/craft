@@ -65,6 +65,7 @@ defmodule Craft.MemberSupervisor do
   end
 
   def stop_member(name) do
+    Craft.MemberCache.delete(name)
     DynamicSupervisor.terminate_child(Craft.Supervisor, lookup(name, __MODULE__))
   end
 end
