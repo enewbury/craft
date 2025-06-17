@@ -191,6 +191,13 @@ defmodule Craft.Consensus.State do
     {:ok, %{term: term}} = Persistence.fetch(state.persistence, index)
     persistence = Persistence.truncate(state.persistence, index, SnapshotEntry.new(state, term, path_or_content))
 
+    state =
+      if state.leader_state do
+        put_in(state.leader_state.snapshot_transfers, %{})
+      else
+        state
+      end
+
     %{state | snapshots: Map.put(state.snapshots, index, path_or_content), persistence: persistence}
     |> clean_up_snapshots()
   end
@@ -201,23 +208,27 @@ defmodule Craft.Consensus.State do
     |> Enum.max()
   end
 
-  def clean_up_snapshots(%__MODULE__{} = state) do
-    snapshot_indexes_in_use =
-      (get_in(state.leader_state.snapshot_transfers) || %{})
-      |> Map.values()
-      |> Enum.map(fn {index, _snapshot_transfer} -> index end)
+  # this is a separate function to prepare for async snapshot support
+  defp clean_up_snapshots(%__MODULE__{} = state) do
+    if state.machine.__craft_mutable__() do
+      # a follower should never be downloading one of these, since we only snapshot when all followers are caught up
+      [current_snapshot_index | deleteable_indexes] =
+        state.snapshots
+        |> Map.keys()
+        |> Enum.sort(:desc)
 
-    [_current_snapshot_index | deleteable_indexes] =
-      state.snapshots
-      |> Map.keys()
-      |> Enum.sort(:desc)
+      for index <- deleteable_indexes do
+        {path, _} = Map.fetch!(state.snapshots, index)
 
-    deletable_indexes = deleteable_indexes -- snapshot_indexes_in_use
+        Application.get_env(:craft, :data_dir)
+        |> Path.join(path)
+        |> File.rm_rf()
+      end
 
-    # deleteable_indexes
-    # |> IO.inspect(label: node())
-
-    state
+      %{state | snapshots: Map.take(state.snapshots, [current_snapshot_index])}
+    else
+      state
+    end
   end
 
   def logger_metadata(%__MODULE__{} = state, extras \\ []) do

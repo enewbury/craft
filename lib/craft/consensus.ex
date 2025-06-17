@@ -360,6 +360,16 @@ defmodule Craft.Consensus do
     {:repeat_state, %{data | incoming_snapshot_transfer: nil}}
   end
 
+  def receiving_snapshot(:cast, {:user_command, {caller_pid, _ref} = id, _command}, data) do
+    send(caller_pid, {id, not_leader_response(data)})
+
+    :keep_state_and_data
+  end
+
+  def receiving_snapshot({:call, from}, _request, data) do
+    {:keep_state_and_data, [{:reply, from, not_leader_response(data)}]}
+  end
+
   #
   # Follower
   #
@@ -479,11 +489,10 @@ defmodule Craft.Consensus do
     RPC.respond_append_entries(append_entries, success, data)
 
     if success && data.commit_index > old_commit_index do
-      # TODO: figure out some better hueristics for taking snapshots
-      should_snapshot? = Persistence.length(data.persistence) > 20
-      # should_snapshot? = true
+      # TODO: make log length configurable
+      log_too_long = Persistence.length(data.persistence) > 20
 
-      Machine.quorum_reached(data, should_snapshot?)
+      Machine.quorum_reached(data, log_too_long)
     end
 
     MemberCache.update(data)
@@ -727,8 +736,6 @@ defmodule Craft.Consensus do
   end
 
   def leader(:state_timeout, :heartbeat, data) do
-    Logger.debug("heartbeat", logger_metadata(data))
-
     {:keep_state, heartbeat(data), [{:state_timeout, @heartbeat_interval, :heartbeat}]}
   end
 
@@ -757,7 +764,7 @@ defmodule Craft.Consensus do
         error ->
           Logger.warning("unable to acquire lease, global clock error: #{inspect error}, becoming follower", logger_metadata(data))
 
-          {:next_state, :follower, data}
+          {:next_state, :lonely, data}
       end
   end
 
@@ -887,7 +894,7 @@ defmodule Craft.Consensus do
       error ->
         Logger.error("unable to determine global time for command, got #{inspect error}, becoming follower", logger_metadata(data))
 
-        {:next_state, :follower, data, [{:reply, from, {:error, :not_leaseholder}}]}
+        {:next_state, :lonely, data, [{:reply, from, {:error, :not_leaseholder}}]}
     end
   end
 
@@ -991,7 +998,7 @@ defmodule Craft.Consensus do
           error ->
             Logger.error("unable to determine global time, got #{inspect error}, becoming follower", logger_metadata(state))
 
-            throw({:next_state, :follower, state})
+            throw({:next_state, :lonely, state})
         end
       else
         state

@@ -110,13 +110,16 @@ defmodule Craft.Consensus.State.LeaderState do
 
     membership_change = %MembershipChange{action: :remove, node: node, from: from, log_index: log_index}
 
+    snapshot_transfers = Map.delete(state.leader_state.snapshot_transfers, node)
+
     leader_state =
       %{
         state.leader_state |
         next_indices: next_indices,
         match_indices: match_indices,
         membership_change: membership_change,
-        last_heartbeat_replies_at: last_heartbeat_replies_at
+        last_heartbeat_replies_at: last_heartbeat_replies_at,
+        snapshot_transfers: snapshot_transfers
       }
 
     %{state | members: Members.remove_member(state.members, node), leader_state: leader_state}
@@ -276,14 +279,15 @@ defmodule Craft.Consensus.State.LeaderState do
         state = put_in(state.leader_state.last_quorum_at, state.leader_state.last_heartbeat_sent_at)
 
         if not state.leader_state.current_quorum_successful do
-          #TODO: these rules will need more thought, just roughed out to start
-          no_snapshot_transfers = Enum.empty?(state.leader_state.snapshot_transfers)
+          # snapshotting truncates the log, so we want to make sure that all followers are caught up first
+          # we don't want to delete a snapshot that's being downloaded, nor truncate the log before a follower
+          # that's just pulled a snapshot can catch up
+          # TODO: make log length configurable
           all_followers_caught_up = Enum.empty?(state.members.catching_up_nodes)
           log_too_long = Persistence.length(state.persistence) > 20
           # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
 
-          Machine.quorum_reached(state, no_snapshot_transfers && all_followers_caught_up && log_too_long)
-          # Machine.quorum_reached(state, no_snapshot_transfers && all_followers_caught_up)
+          Machine.quorum_reached(state, all_followers_caught_up && log_too_long)
 
           put_in(state.leader_state.current_quorum_successful, true)
         else

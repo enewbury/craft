@@ -3,8 +3,6 @@ defmodule Craft.Persistence.RocksDBPersistence do
   Notes:
   - rocksdb's default comparator is lexicographic. when given positive integer terms, :erlang.term_to_binary/1
     outputs lexicographically ascending keys, so we can use rocks' default iterator to walk log indexes
-
-  - remove `latest_index` and `latest_term` from struct and replace with non-cached iterator version
   """
   @behaviour Craft.Persistence
 
@@ -42,24 +40,13 @@ defmodule Craft.Persistence.RocksDBPersistence do
       |> :erlang.binary_to_list()
       |> :rocksdb.open_optimistic_transaction_db(db_opts, [{~c"default", []}, @log_column_family, @metadata_column_family])
 
-    {latest_index, latest_term} =
-      with {:ok, iterator} <- :rocksdb.iterator(db, log_column_family_handle, []),
-           {:ok, index, entry} <- :rocksdb.iterator_move(iterator, :last) do
-        :ok = :rocksdb.iterator_close(iterator)
-        {decode(index), decode(entry).term}
-      else
-        {:error, :invalid_iterator} ->
-          {-1, -1}
-      end
-
     %__MODULE__{
       db: db,
-      latest_index: latest_index,
-      latest_term: latest_term,
       log_cf: log_column_family_handle,
       metadata_cf: metadata_column_family_handle,
       write_opts: write_opts
     }
+    |> set_latest_index_and_term()
   end
 
   @impl true
@@ -81,21 +68,17 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
   @impl true
   def fetch_from(%__MODULE__{} = state, index) do
-    {:ok, iterator} = :rocksdb.iterator(state.db, state.log_cf, [])
-
-    iterator
+    state
     |> do_fetch_from(index, [])
-    |> Enum.map(&decode/1)
     |> Enum.reverse()
   end
 
-  defp do_fetch_from(iterator, index, acc) do
-    case :rocksdb.iterator_move(iterator, encode(index)) do
-      {:ok, _index, value} ->
-        do_fetch_from(iterator, index + 1, [value | acc])
+  defp do_fetch_from(state, index, acc) do
+    case fetch(state, index) do
+      {:ok, entry} ->
+        do_fetch_from(state, index + 1, [entry | acc])
 
-      _ ->
-        :ok = :rocksdb.iterator_close(iterator)
+      :error ->
         acc
     end
   end
@@ -143,7 +126,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
     :ok = :rocksdb.transaction_commit(transaction)
 
-    %{state | latest_index: index}
+    set_latest_index_and_term(state)
   end
   def rewind(%__MODULE__{} = state, _index), do: state
 
@@ -172,7 +155,7 @@ defmodule Craft.Persistence.RocksDBPersistence do
     :ok = :rocksdb.transaction_put(transaction, state.log_cf, encode(index), encode(snapshot_entry))
     :ok = :rocksdb.transaction_commit(transaction)
 
-    state
+    set_latest_index_and_term(state)
   end
 
   defp do_truncate(transaction, iterator, log_cf, max_index) do
@@ -321,4 +304,18 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
   defp encode(term), do: :erlang.term_to_binary(term)
   defp decode(binary), do: :erlang.binary_to_term(binary)
+
+  defp set_latest_index_and_term(%__MODULE__{} = state) do
+    {latest_index, latest_term} =
+      with {:ok, iterator} <- :rocksdb.iterator(state.db, state.log_cf, []),
+           {:ok, index, entry} <- :rocksdb.iterator_move(iterator, :last) do
+        :ok = :rocksdb.iterator_close(iterator)
+        {decode(index), decode(entry).term}
+      else
+        {:error, :invalid_iterator} ->
+          {-1, -1}
+      end
+
+    %{state | latest_index: latest_index, latest_term: latest_term}
+  end
 end
