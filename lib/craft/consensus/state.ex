@@ -21,7 +21,7 @@ defmodule Craft.Consensus.State do
     :leader_id,
     :global_clock,
     :lease_expires_at,
-    {:snapshots, %{}},
+    :snapshot,
     {:current_term, -1},
     {:commit_index, 0},
 
@@ -198,37 +198,14 @@ defmodule Craft.Consensus.State do
         state
       end
 
-    %{state | snapshots: Map.put(state.snapshots, index, path_or_content), persistence: persistence}
-    |> clean_up_snapshots()
-  end
-
-  def latest_snapshot_index(%__MODULE__{} = state) do
-    state.snapshots
-    |> Map.keys()
-    |> Enum.max()
-  end
-
-  # this is a separate function to prepare for async snapshot support
-  defp clean_up_snapshots(%__MODULE__{} = state) do
-    if state.machine.__craft_mutable__() do
-      # a follower should never be downloading one of these, since we only snapshot when all followers are caught up
-      [current_snapshot_index | deleteable_indexes] =
-        state.snapshots
-        |> Map.keys()
-        |> Enum.sort(:desc)
-
-      for index <- deleteable_indexes do
-        {path, _} = Map.fetch!(state.snapshots, index)
-
-        Application.get_env(:craft, :data_dir)
-        |> Path.join(path)
-        |> File.rm_rf()
-      end
-
-      %{state | snapshots: Map.take(state.snapshots, [current_snapshot_index])}
-    else
-      state
+    with true <- state.machine.__craft_mutable__(),
+         {_index, {path, _}} <- state.snapshot do
+      Configuration.data_dir()
+      |> Path.join(path)
+      |> File.rm_rf()
     end
+
+    %{state | snapshot: {index, path_or_content}, persistence: persistence}
   end
 
   def logger_metadata(%__MODULE__{} = state, extras \\ []) do

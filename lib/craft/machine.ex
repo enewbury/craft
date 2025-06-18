@@ -35,7 +35,7 @@ defmodule Craft.Machine do
 
     @callback last_applied_log_index(private()) :: Craft.log_index() | nil
     @callback snapshot(private()) :: {index(), snapshot(), private()} | nil
-    @callback snapshots(private()) :: [{index(), snapshot()}]
+    @callback snapshots(private()) :: %{index() => snapshot()}
     @callback prepare_to_receive_snapshot(private()) :: {:ok, data_dir(), private()}
     @callback receive_snapshot(private()) :: {:ok, private()}
   end
@@ -380,34 +380,43 @@ defmodule Craft.Machine do
 
   @impl true
   def handle_call({:init_or_restore, log}, _from, state) do
-    {last_applied, private} =
+    {last_applied, private, snapshot} =
       if state.module.__craft_mutable__() do
         {:ok, private} = state.module.init(state.name)
         last_applied = state.module.last_applied_log_index(private)
 
-        {last_applied, private}
+        snapshot =
+          case Persistence.first(log) do
+            {keep_index, %SnapshotEntry{}} ->
+              snapshots = state.module.snapshots(private)
+
+              (Map.keys(snapshots) -- [keep_index])
+              |> Enum.each(fn index ->
+                Configuration.data_dir()
+                |> Path.join(snapshots[index])
+                |> File.rm_rf()
+              end)
+
+              {keep_index, snapshot_info(snapshots[keep_index])}
+
+            _ ->
+              nil
+          end
+
+        {last_applied, private, snapshot}
       else
         case Persistence.first(log) do
           {index, %SnapshotEntry{} = snapshot} ->
-            {index, snapshot.machine_private}
+            {index, snapshot.machine_private, nil}
 
           _ ->
             {:ok, private} = state.module.init(state.name)
 
-            {0, private}
+            {0, private, nil}
         end
       end
 
-    snapshots =
-      if state.module.__craft_mutable__() do
-        Map.new(state.module.snapshots(private), fn {index, path} ->
-          {index, snapshot_info(path)}
-        end)
-      else
-        %{}
-      end
-
-    {:reply, {:ok, snapshots}, %{state | last_applied: last_applied, private: private}}
+    {:reply, {:ok, snapshot}, %{state | last_applied: last_applied, private: private}}
   end
 
   # delete on-disk machine files etc...

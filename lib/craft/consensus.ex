@@ -133,7 +133,7 @@ defmodule Craft.Consensus do
 
     MemberCache.update(data)
 
-    {:ok, snapshots} = Machine.init_or_restore(data)
+    {:ok, snapshot} = Machine.init_or_restore(data)
 
     if data.global_clock do
       Logger.info("consensus process started, global clock present, leader leases enabled")
@@ -141,7 +141,7 @@ defmodule Craft.Consensus do
       Logger.info("consensus process started, no global clock present, leader leases disabled")
     end
 
-    {:ok, :lonely, %{data | snapshots: snapshots}}
+    {:ok, :lonely, %{data | snapshot: snapshot}}
   end
 
   def child_spec(args) do

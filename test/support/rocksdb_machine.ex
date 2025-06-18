@@ -126,7 +126,7 @@ defmodule Craft.RocksDBMachine do
   def snapshots(state) do
     state.snapshots_dir
     |> File.ls!()
-    |> Enum.map(fn index_str ->
+    |> Map.new(fn index_str ->
       {index, ""} = Integer.parse(index_str)
 
       {index, Path.join(state.snapshots_dir, index_str)}

@@ -1,5 +1,4 @@
 defmodule Craft.RPC.InstallSnapshot do
-  alias Craft.Consensus.State
   alias Craft.Persistence
 
   defstruct [
@@ -18,7 +17,9 @@ defmodule Craft.RPC.InstallSnapshot do
 
         # log-stored snapshot
         :error ->
-          {State.latest_snapshot_index(state), nil}
+          {index, _} = state.snapshot
+
+          {index, nil}
       end
 
     {:ok, log_entry} = Persistence.fetch(state.persistence, log_index)

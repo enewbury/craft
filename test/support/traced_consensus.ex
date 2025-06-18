@@ -39,12 +39,12 @@ defmodule Craft.TracedConsensus do
 
     MemberCache.update(data)
 
-    {:ok, snapshots} = Machine.init_or_restore(data)
+    {:ok, snapshot} = Machine.init_or_restore(data)
 
     state = if args[:manual_start], do: :ready_to_test, else: :lonely
     data = %{data | global_clock: args[:global_clock]}
 
-    {:ok, state, %{data | snapshots: snapshots}}
+    {:ok, state, %{data | snapshot: snapshot}}
   end
 
   def init(args) do

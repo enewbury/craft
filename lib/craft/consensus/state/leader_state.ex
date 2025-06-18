@@ -222,8 +222,7 @@ defmodule Craft.Consensus.State.LeaderState do
   def create_snapshot_transfer(%State{leader_state: %__MODULE__{snapshot_transfers: snapshot_transfers}} = state, for_node) when is_map_key(snapshot_transfers, for_node), do: state
 
   def create_snapshot_transfer(%State{} = state, for_node) do
-    index = State.latest_snapshot_index(state)
-    {remote_path, files} = Map.fetch!(state.snapshots, index)
+    {index, {remote_path, files}} = state.snapshot
     snapshot_transfer = SnapshotTransfer.new(remote_path, files)
 
     snapshot_transfers = Map.put(state.leader_state.snapshot_transfers, for_node, {index, snapshot_transfer})
