@@ -82,18 +82,9 @@ defmodule Craft.LinearizabilityTest do
     assert_linearizable(history)
   end
 
-  # TODO: stop and start servers
+  # TODO: stop and start servers, delay messages etc
   nexus_test "during utter chaos", %{nexus: nexus} = ctx do
     wait_until(nexus, {Stability, :all})
-
-    num_clients = 10
-
-    clients =
-      ctx
-      |> random_request_fun()
-      |> ParallelClients.start(num_clients)
-
-    Process.sleep(300)
 
     nemesis(nexus, fn _ ->
       if :rand.uniform(100) <= 50 do
@@ -102,6 +93,13 @@ defmodule Craft.LinearizabilityTest do
         :forward
       end
     end)
+
+    num_clients = 10
+
+    clients =
+      ctx
+      |> random_request_fun()
+      |> ParallelClients.start(num_clients)
 
     Process.sleep(3000)
 

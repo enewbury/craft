@@ -13,7 +13,8 @@ done:
 - snapshot deletion when no longer needed
 - leader leases for linearizable reads
 - nemesis development
-- linearizability checker
+- linearizability checker + visualizer
+- Logger visualizer
 - 3.10 leadership transfer extension
 - PreVote
 - CheckQuorum

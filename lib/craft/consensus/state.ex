@@ -12,12 +12,11 @@ defmodule Craft.Consensus.State do
   require Logger
 
   defstruct [
-    :state,
+    {:state, :lonely},
     :name,
     :members,
     :persistence,
     :machine,
-    :nexus_pid,
     :leader_id,
     :global_clock,
     :lease_expires_at,
@@ -206,28 +205,5 @@ defmodule Craft.Consensus.State do
     end
 
     %{state | snapshot: {index, path_or_content}, persistence: persistence}
-  end
-
-  def logger_metadata(%__MODULE__{} = state, extras \\ []) do
-    color =
-      case state.state do
-        :lonely ->
-          :light_red
-
-        :receiving_snapshot ->
-          :magenta
-
-        :follower ->
-          :cyan
-
-        :candidate ->
-          :blue
-
-        :leader ->
-          :green
-      end
-
-    # elixir uses the :time keyword, we want a higher resolution timestamp
-    Keyword.merge([name: state.name, term: state.current_term, ansi_color: color, t: Time.utc_now(), node: node()], extras)
   end
 end

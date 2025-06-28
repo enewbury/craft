@@ -1,6 +1,6 @@
 defmodule Craft.NexusCase do
   @moduledoc """
-  Detects test failures and writes the nexus event log to disk for replay
+  Detects test failures and writes the nexus event log/visualization to disk for analysis
   """
   # async: false, so that log capture doesn't capture logs from other concurrent tests, may be able to remove this
   use ExUnit.CaseTemplate, async: false
@@ -82,48 +82,47 @@ defmodule Craft.NexusCase do
     end
 
     @impl true
-    def handle_cast({:test_finished, %ExUnit.Test{state: {:failed, _}, tags: %{registered: %{test_id: test_id}}} = test}, state) do
-      {:ok, nexus_state} =
-        state
-        |> Map.fetch!(test_id)
-        |> Craft.Nexus.return_state_and_stop()
-
-      log = Enum.sort_by(nexus_state.log, fn {time, _} -> time end, &(DateTime.compare(&1, &2) == :lt))
-
-      lines =
-        log
-        |> Enum.map(&inspect/1)
-        |> Enum.intersperse("\n")
-
-      if lines != [] do
-        log_dir = "test_logs"
-
-        File.mkdir_p!(log_dir)
-
-        filename =
-          ["nexus", test.case, test.name, DateTime.to_unix(DateTime.utc_now()), "log"]
-          |> Enum.map(&to_string/1)
-          |> Enum.map(&String.replace(&1, ~r/[^\w\.]/, "_"))
-          |> Enum.join(".")
-
-        [log_dir, filename]
-        |> Path.join()
-        |> File.write!(lines)
-      end
+    def handle_cast({:test_finished, %ExUnit.Test{state: {:failed, _}} = test}, state) do
+      visualize(state, test)
 
       {:noreply, state}
     end
 
     @impl true
-    def handle_cast({:test_finished, %ExUnit.Test{tags: %{registered: %{test_id: test_id}}}}, state) do
-      if nexus = state[test_id] do
-        Craft.Nexus.stop(nexus)
-      end
+    def handle_cast({:test_finished, %ExUnit.Test{state: {:excluded, _}}}, state), do: {:noreply, state}
+
+    def handle_cast({:test_finished, %ExUnit.Test{tags: %{visualize: true}} = test}, state) do
+      visualize(state, test)
 
       {:noreply, state}
     end
 
     @impl true
     def handle_cast(_event, state), do: {:noreply, state}
+
+    defp visualize(state, test) do
+      {:ok, nexus_state} =
+        state
+        |> Map.fetch!(test.tags.registered.test_id)
+        |> Craft.Nexus.return_state_and_stop()
+
+      log = Enum.sort_by(nexus_state.log, & &1.meta.t)
+
+      if log != [] do
+        log_dir = "visualizations"
+
+        File.mkdir_p!(log_dir)
+
+        filename =
+          ["craft_visualization", inspect(test.case), test.name, DateTime.to_unix(DateTime.utc_now()), "html"]
+          |> Enum.map(&to_string/1)
+          |> Enum.map(&String.replace(&1, ~r/[^\w\.]/, "_"))
+          |> Enum.join(".")
+
+        path = Path.join([log_dir, filename])
+
+        Craft.Visualizer.to_file(log, path)
+      end
+    end
   end
 end
