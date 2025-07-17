@@ -16,6 +16,7 @@ defmodule Craft.Adapter.Sandbox do
     end
   end
 
+  # Public API
   def start_member(group) do
     instance = lookup!()
     Local.start_member(group <> proc_name(instance), instance)
@@ -47,7 +48,6 @@ defmodule Craft.Adapter.Sandbox do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  # Public API
   def checkout(checkout_pid \\ self(), opts \\ []) do
     if not is_nil(GenServer.call(__MODULE__, {:lookup, []})) do
       raise "Sandbox already checked out for this process"
