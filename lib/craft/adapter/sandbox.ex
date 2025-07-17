@@ -49,7 +49,7 @@ defmodule Craft.Adapter.Sandbox do
 
   # Public API
   def checkout(checkout_pid \\ self(), opts \\ []) do
-    if not is_nil(GenServer.call(__MODULE__, :lookup)) do
+    if not is_nil(GenServer.call(__MODULE__, {:lookup, []})) do
       raise "Sandbox already checked out for this process"
     end
 
@@ -106,8 +106,8 @@ defmodule Craft.Adapter.Sandbox do
   end
 
   @impl GenServer
-  def handle_call(:lookup, {caller_pid, _}, state) do
-    pids = [caller_pid | Process.get(:"$callers", [])]
+  def handle_call({:lookup, callers}, {caller_pid, _}, state) do
+    pids = [caller_pid | callers]
 
     response =
       Enum.reduce_while(pids, nil, fn pid, acc ->
@@ -141,7 +141,7 @@ defmodule Craft.Adapter.Sandbox do
   end
 
   defp lookup! do
-    case GenServer.call(__MODULE__, :lookup) do
+    case GenServer.call(__MODULE__, {:lookup, Process.get(:"$callers", [])}) do
       nil ->
         raise """
         No Authz.Store sandbox checked out for this process or any of it's $callers.
