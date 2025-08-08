@@ -1,12 +1,31 @@
 defmodule Craft.Adapter.Local do
-  @moduledoc false
+  @moduledoc """
+  This module is useful for local development so that apps can be run
+  on a single non-distributed node without having all the quorum and HA guarentees. 
+
+  To use, put craft behind an interface and swap to using this module instead of the
+  Craft module.
+
+  Be sure to add this to your application children i.e.
+
+  ```
+  children =
+    [
+      {Store.Local, disabled?: !Application.get_env(:myapp, use_local_store?, false)},
+      ...
+    ]
+  ```
+  """
 
   use GenServer
 
   def discover(_group, _nodes), do: :noop
   def transfer_leadership(_group, _to_node), do: :noop
   def add_member(_group, _nodes), do: :noop
+  def holding_lease?(nil), do: false
   def holding_lease?(_), do: true
+
+  def cached_info(nil), do: :not_found
   def cached_info(_group), do: {:ok, %{leader: node()}}
 
   def start_member(group, inst \\ __MODULE__) do
@@ -40,8 +59,12 @@ defmodule Craft.Adapter.Local do
   end
 
   @impl GenServer
-  def init(_args) do
-    {:ok, %{groups: %{}}}
+  def init(opts) do
+    if Keyword.get(opts, :disabled?, false) do
+      :ignore
+    else
+      {:ok, %{groups: %{}}}
+    end
   end
 
   @impl GenServer
