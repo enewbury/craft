@@ -3,6 +3,8 @@ defmodule Craft.Application do
 
   use Application
 
+  @compile_env Mix.env()
+
   @impl Application
   def start(_type, _args) do
     silence_sasl_logger()
@@ -48,7 +50,7 @@ defmodule Craft.Application do
       data_dir =
         Path.join([
           Application.get_env(:craft, :base_data_dir),
-          to_string(Mix.env()),
+          to_string(@compile_env),
           to_string(node())
         ])
 
