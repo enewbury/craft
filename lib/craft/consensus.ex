@@ -212,6 +212,8 @@ defmodule Craft.Consensus do
 
   def lonely(:state_timeout, :begin_pre_vote, data) do
     Logger.info("pre-vote started", logger_metadata(data, trace: :pre_vote_started))
+    IO.inspect({:pre_vote_started, MapSet.to_list(data.members.voting_nodes), State.quorum_needed(data)},
+               label: "PRE-VOTE START")
 
     RPC.request_vote(data, pre_vote: true)
 
@@ -269,6 +271,12 @@ defmodule Craft.Consensus do
 
     data = State.record_vote(data, results)
 
+    # Log detailed election state before checking result
+    if data.election do
+      IO.inspect({:pre_vote_state, data.election.num_votes, MapSet.to_list(data.election.received_votes_from), State.quorum_needed(data)},
+                 label: "PRE-VOTE STATE")
+    end
+
     case State.election_result(data) do
       :won ->
         Logger.info("won pre-vote election", logger_metadata(data, trace: :won_pre_vote_election))
@@ -281,6 +289,7 @@ defmodule Craft.Consensus do
         {:repeat_state, data}
 
       :pending ->
+        IO.inspect(:pre_vote_still_pending, label: "PRE-VOTE PENDING")
         {:keep_state, data}
     end
   end
@@ -612,6 +621,8 @@ defmodule Craft.Consensus do
     Machine.update_role(data)
 
     Logger.info("became candidate", logger_metadata(data, trace: {:became, :candidate}))
+    IO.inspect({:full_election_started, MapSet.to_list(data.members.voting_nodes), State.quorum_needed(data)},
+               label: "FULL ELECTION START")
 
     RPC.request_vote(data)
 
@@ -680,6 +691,12 @@ defmodule Craft.Consensus do
       |> State.set_lease_expires_at(latest_leader_lease)
       |> State.record_vote(results)
 
+    # Log detailed election state before checking result
+    if data.election do
+      IO.inspect({:final_election_state, data.election.num_votes, MapSet.to_list(data.election.received_votes_from), State.quorum_needed(data)},
+                 label: "FINAL ELECTION STATE")
+    end
+
     case State.election_result(data) do
       :won ->
         Logger.info("election won, becoming leader", logger_metadata(data, trace: :election_won))
@@ -690,6 +707,7 @@ defmodule Craft.Consensus do
         {:next_state, :lonely, data}
 
       :pending ->
+        IO.inspect(:election_still_pending, label: "ELECTION STILL PENDING")
         {:keep_state, data}
     end
   end

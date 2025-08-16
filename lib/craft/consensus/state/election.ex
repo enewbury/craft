@@ -33,16 +33,25 @@ defmodule Craft.Consensus.State.Election do
 
   def election_result(%__MODULE__{} = election, quorum_needed) do
     num_voted_no = MapSet.size(election.received_votes_from) - election.num_votes
+    total_responses = MapSet.size(election.received_votes_from)
 
-    cond do
+    IO.inspect({:election_status, election.num_votes, num_voted_no, total_responses, quorum_needed, MapSet.to_list(election.received_votes_from)},
+               label: "ELECTION DEBUG")
+
+    result = cond do
       election.num_votes >= quorum_needed ->
+        IO.inspect({:election_won, election.num_votes, quorum_needed}, label: "ELECTION WON")
         :won
 
       num_voted_no >= quorum_needed ->
+        IO.inspect({:election_lost, num_voted_no, quorum_needed}, label: "ELECTION LOST")
         :lost
 
       true ->
+        IO.inspect({:election_pending, total_responses, quorum_needed}, label: "ELECTION PENDING")
         :pending
     end
+
+    result
   end
 end

@@ -182,8 +182,12 @@ defmodule Craft.Consensus.State do
 
   def quorum_needed(%__MODULE__{} = state) do
     num_members = MapSet.size(state.members.voting_nodes)
+    quorum = div(num_members, 2) + 1
 
-    div(num_members, 2) + 1
+    IO.inspect({:quorum_calculation, num_members, quorum, MapSet.to_list(state.members.voting_nodes)},
+               label: "QUORUM DEBUG")
+
+    quorum
   end
 
   def snapshot_ready(%__MODULE__{} = state, index, path_or_content) do
