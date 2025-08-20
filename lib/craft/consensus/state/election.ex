@@ -33,33 +33,15 @@ defmodule Craft.Consensus.State.Election do
 
   def election_result(%__MODULE__{} = election, quorum_needed) do
     num_voted_no = MapSet.size(election.received_votes_from) - election.num_votes
-    total_responses = MapSet.size(election.received_votes_from)
 
-    IO.inspect({:election_status, election.num_votes, num_voted_no, total_responses, quorum_needed, MapSet.to_list(election.received_votes_from)},
-               label: "ELECTION DEBUG")
-
-    result = cond do
+    cond do
       election.num_votes >= quorum_needed ->
-        IO.inspect({:election_won, election.num_votes, quorum_needed}, label: "ELECTION WON")
         :won
 
       num_voted_no >= quorum_needed ->
-        IO.inspect({:election_lost, num_voted_no, quorum_needed}, label: "ELECTION LOST")
         :lost
 
-      # Special case: 2-node scenario with split votes
-      # Use deterministic tiebreaker: highest priority node wins
-      total_responses == 2 and election.num_votes == 1 and num_voted_no == 1 ->
-        # Node with lexicographically smaller name has priority
-        my_node = node()
-        other_node = election.received_votes_from |> MapSet.delete(my_node) |> MapSet.to_list() |> hd()
-
-        winner = if Atom.to_string(my_node) < Atom.to_string(other_node), do: :won, else: :lost
-        IO.inspect({:two_node_tiebreaker, my_node, other_node, winner}, label: "TWO NODE TIEBREAKER")
-        winner
-
       true ->
-        IO.inspect({:election_pending, total_responses, quorum_needed}, label: "ELECTION PENDING")
         :pending
     end
 

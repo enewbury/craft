@@ -50,8 +50,7 @@ defmodule Craft.Application do
       data_dir =
         Path.join([
           Application.get_env(:craft, :base_data_dir),
-          to_string(@compile_env),
-          to_string(node())
+          "craft_store"
         ])
 
       File.mkdir_p!(data_dir)
