@@ -105,54 +105,56 @@ defmodule Craft.Nexus do
   end
 
   @impl GenServer
-  def handle_cast({:log, %{meta: %{trace: {:sent_msg, to_node, message}}} = event}, state) do
-    state =
-      case state.nemesis do
-        {nemesis, private} ->
-          nemesis_event = {:cast, to_node, event.meta.node, message}
+  def handle_cast({:log, %{meta: %{trace: {:sent_msg, to_node, from_node, message}}} = event}, state) do
+    case state.nemesis do
+      {nemesis, private} ->
+        {action, private} =
+          case Function.info(nemesis, :arity) do
+            {:arity, 1} ->
+              action = nemesis.(event.meta.trace)
+              {action, nil}
 
-          {action, private} =
-            case Function.info(nemesis, :arity) do
-              {:arity, 1} ->
-                action = nemesis.(nemesis_event)
-                {action, nil}
+            {:arity, 2} ->
+              nemesis.(event.meta.trace, private)
+          end
 
-              {:arity, 2} ->
-                nemesis.(nemesis_event, private)
-            end
+        state =
+          case action do
+            :drop ->
+              Logger.debug("dropped %{inspect message.__struct__} for #{to_node} from #{from_node}", logger_metadata(trace: {:dropped_msg, to_node, from_node, message}))
 
-          state =
-            case action do
-              :drop ->
-                Logger.debug("dropped %{inspect message.__struct__} for #{to_node}", logger_metadata(trace: {:dropped_msg, to_node, message}))
+              state
 
-                state
+            :forward ->
+              Consensus.remote_operation(event.meta.name, to_node, :cast, message)
+              State.record_event(state, event)
 
-              :forward ->
-                Consensus.remote_operation(event.meta.name, to_node, :cast, message)
-                State.record_event(state, event)
+            {:forward, modified_message} ->
+              event = put_in(event.meta.event, {:sent_msg, to_node, modified_message})
 
-              {:forward, modified_message} ->
-                event = put_in(event.meta.event, {:sent_msg, to_node, modified_message})
+              Consensus.remote_operation(event.meta.name, to_node, :cast, modified_message)
+              State.record_event(state, event)
 
-                Consensus.remote_operation(event.meta.name, to_node, :cast, modified_message)
-                State.record_event(state, event)
+            {:delay, msecs} ->
+              :timer.apply_after(msecs, Consensus, :remote_operation, [event.meta.name, to_node, :cast, message])
 
-              {:delay, msecs} ->
-                :timer.apply_after(msecs, Consensus, :remote_operation, [event.meta.name, to_node, :cast, message])
+              State.record_event(state, event)
+          end
 
-                State.record_event(state, event)
-            end
+        state = %{state | nemesis: {nemesis, private}}
 
-          %{state | nemesis: {nemesis, private}}
+        {:noreply, evaluate_waiter(state, event)}
 
-        _ ->
-          Consensus.remote_operation(event.meta.name, to_node, :cast, message)
+      _ ->
+        Consensus.remote_operation(event.meta.name, to_node, :cast, message)
 
-          State.record_event(state, event)
-      end
+        state =
+          state
+          |> State.record_event(event)
+          |> evaluate_waiter(event)
 
-    {:noreply, evaluate_waiter(state, event)}
+        {:noreply, state}
+    end
   end
 
   def handle_cast({:log, %{meta: %{trace: {:became, :leader}, term: term, node: node}} = event}, state) do
@@ -216,7 +218,7 @@ defmodule Craft.Nexus do
   defp evaluate_waiter(%State{wait_until: nil} = state, _event), do: state
 
   defp evaluate_waiter(%State{wait_until: {wait_from, fun, private}} = state, event) when is_function(fun, 2) do
-    case fun.(event, private) do
+    case fun.(event.meta.trace, private) do
       {:cont, private} ->
         %{state | wait_until: {wait_from, fun, private}}
 

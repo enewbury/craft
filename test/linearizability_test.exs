@@ -65,7 +65,7 @@ defmodule Craft.LinearizabilityTest do
 
     Process.sleep(300)
 
-    nemesis(nexus, fn {:cast, to, from, _msg} ->
+    nemesis(nexus, fn {:sent_msg, to, from, _msg} ->
       if from == leader and to in majority or from in majority and to == leader do
         :drop
       else

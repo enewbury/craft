@@ -50,7 +50,7 @@ defmodule Craft.RPC do
     def send_message(message, to_node, state) do
       import Craft.Tracing, only: [logger_metadata: 2]
       # the nexus is listening to the logger, when it sees a `:sent_msg` trace, it does the actual send itself
-      Logger.debug("sent #{inspect message.__struct__}", logger_metadata(state, trace: {:sent_msg, to_node, message}))
+      Logger.debug("sent #{inspect message.__struct__}", logger_metadata(state, trace: {:sent_msg, to_node, node(), message}))
     end
   else
     def send_message(message, to_node, state) do

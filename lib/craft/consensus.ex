@@ -140,7 +140,7 @@ defmodule Craft.Consensus do
   def init(args) do
     Logger.metadata(name: args.name, node: node(), nexus: args[:nexus_pid])
 
-    data = State.new(args.name, args[:nodes], args.persistence, args.machine, args[:global_clock])
+    data = State.new(args.name, args[:nodes], args.persistence, args.machine, args[:global_clock], args[:nexus_pid])
 
     if nexus_pid = args[:nexus_pid] do
       remote_group_leader = :rpc.call(node(nexus_pid), Process, :whereis, [:init])
@@ -970,7 +970,7 @@ defmodule Craft.Consensus do
   def leader({:call, from}, :configuration, data) do
     config =
       data
-      |> Map.take([:members])
+      |> Map.take([:members, :nexus_pid])
       |> Map.merge(%{machine_module: data.machine, persistence_module: data.persistence.module})
 
     {:keep_state_and_data, [{:reply, from, {:ok, config}}]}

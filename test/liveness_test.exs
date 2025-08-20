@@ -6,7 +6,7 @@ defmodule Craft.LivenessTest do
   alias Craft.RPC.RequestVote
   alias Craft.SimpleMachine
 
-  nexus_test "processes commands with a minimal quorum operational", %{nodes: nodes, name: name, nexus: nexus} do
+  nexus_test "processes commands with a minimal quorum operational", %{nodes: nodes, name: name, nexus: nexus, leader_leases: leases} do
     wait_until(nexus, {Stability, :all})
 
     {majority, minority} = Enum.split(nodes, div(Enum.count(nodes), 2) + 1)
@@ -16,10 +16,12 @@ defmodule Craft.LivenessTest do
 
     assert %{leader: ^leader} = wait_until(nexus, {Stability, :majority})
 
-    # wait out lease, TODO: `wait_until(nexus, :leader_holds_lease)`
-    Process.sleep(2_000)
+    if leases do
+      # wait out lease, TODO: `wait_until(nexus, :leader_holds_lease)`
+      Process.sleep(2_000)
+    end
 
-    nemesis(nexus, fn {:cast, to, from, _msg} ->
+    nemesis(nexus, fn {:sent_msg, to, from, _msg} ->
       if from in majority and to in majority or from in minority and to in minority do
         :forward
       else
@@ -40,7 +42,7 @@ defmodule Craft.LivenessTest do
         div(Enum.count(nodes), 2) + 1
       )
 
-    nemesis(nexus, fn {:cast, to, from, _msg} ->
+    nemesis(nexus, fn {:sent_msg, to, from, _msg} ->
       if from == leader and to in majority or from in majority and to == leader do
         :drop
       else
@@ -61,7 +63,7 @@ defmodule Craft.LivenessTest do
     # isolate a node and then continue once it attempts and fails a pre-vote round
     nemesis_and_wait_until(
       nexus,
-      fn {:cast, to, from, _msg} ->
+      fn {:sent_msg, to, from, _msg} ->
         if from == leader and to == node_isolated_from_leader or from == node_isolated_from_leader and to == leader do
           :drop
         else
@@ -69,7 +71,7 @@ defmodule Craft.LivenessTest do
         end
       end,
       fn
-        {:cast, ^node_isolated_from_leader, from, %RequestVote.Results{pre_vote: true, vote_granted: false}}, remaining_prevote_denials ->
+        {:sent_msg, ^node_isolated_from_leader, from, %RequestVote.Results{pre_vote: true, vote_granted: false}}, remaining_prevote_denials ->
           remaining_prevote_denials = remaining_prevote_denials || MapSet.new(nodes -- [leader, node_isolated_from_leader])
           remaining_prevote_denials = MapSet.delete(remaining_prevote_denials, from)
 
@@ -79,7 +81,7 @@ defmodule Craft.LivenessTest do
             {:cont, remaining_prevote_denials}
           end
 
-        {:cast, ^node_isolated_from_leader, _to, %RequestVote{pre_vote: false}}, _state ->
+        {:sent_msg, _to, ^node_isolated_from_leader, %RequestVote{pre_vote: false}}, _state ->
           flunk "isolated node attempted leadership election"
 
           :halt
@@ -105,7 +107,7 @@ defmodule Craft.LivenessTest do
     connected_nodes = nodes -- [leader, isolated_node]
     leader_connected_node = Enum.random(connected_nodes)
 
-    nemesis(nexus, fn {:cast, to, from, _msg} ->
+    nemesis(nexus, fn {:sent_msg, to, from, _msg} ->
       if from in connected_nodes and to in connected_nodes or from in [leader, leader_connected_node] and to in [leader, leader_connected_node] do
         :forward
       else
