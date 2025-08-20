@@ -14,14 +14,17 @@ defmodule Craft.Configuration do
       path = Path.join(data_dir(), dir)
 
       if File.dir?(path) do
-        config =
-          path
-          |> configuration_file()
-          |> File.read!()
-          |> :erlang.binary_to_term()
+        config_file = configuration_file(path)
 
-        if config.name == name do
-          Map.put(config, :data_dir, dir)
+        if File.exists?(config_file) do
+          config =
+            config_file
+            |> File.read!()
+            |> :erlang.binary_to_term()
+
+          if config.name == name do
+            Map.put(config, :data_dir, dir)
+          end
         end
       end
     end)
