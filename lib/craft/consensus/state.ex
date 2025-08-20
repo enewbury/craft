@@ -182,6 +182,7 @@ defmodule Craft.Consensus.State do
 
   def quorum_needed(%__MODULE__{} = state) do
     num_members = MapSet.size(state.members.voting_nodes)
+
     div(num_members, 2) + 1
   end
 

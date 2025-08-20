@@ -44,9 +44,5 @@ defmodule Craft.Consensus.State.Election do
       true ->
         :pending
     end
-
-    result
   end
-
-
 end
