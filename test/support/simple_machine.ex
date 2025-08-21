@@ -25,7 +25,7 @@ defmodule Craft.SimpleMachine do
   def write(command, state), do: handle_command(command, nil, state)
 
   @impl TestModel
-  def read(query, state), do: handle_query(query, state)
+  def read(query, state), do: handle_query(query, nil, state)
 
   @impl true
   def handle_command({:put, k, v}, _log_index, state) do
@@ -33,8 +33,8 @@ defmodule Craft.SimpleMachine do
   end
 
   @impl true
-  def handle_query({:get, k}, state) do
-    {:ok, Map.get(state, k)}
+  def handle_query({:get, k}, _from, state) do
+    {:reply, {:ok, Map.get(state, k)}}
   end
 
   @impl true
