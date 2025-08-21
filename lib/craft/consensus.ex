@@ -377,8 +377,12 @@ defmodule Craft.Consensus do
         SnapshotServerClient.start_link(
           install_snapshot.snapshot_transfer,
           data_dir,
-          fn :ok ->
-            :gen_statem.cast(me, {:download_succeeded, install_snapshot})
+          fn
+            :ok ->
+              :gen_statem.cast(me, {:download_succeeded, install_snapshot})
+
+            error ->
+              :gen_statem.cast(me, {:download_failed, error})
           end
         )
 
@@ -401,7 +405,9 @@ defmodule Craft.Consensus do
   end
 
   def receiving_snapshot(:cast, {:download_failed, reason}, %State{} = data) do
-    Logger.warning("snapshot download failed because #{inspect reason}")
+    Logger.error("error receiving snapshot because: #{inspect reason}, retrying.", logger_metadata(data, trace: {:error_receiving_snapshot, reason}))
+
+    #TODO: delay?
 
     {:repeat_state, %{data | incoming_snapshot_transfer: nil}}
   end
