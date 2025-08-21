@@ -270,6 +270,14 @@ defmodule Craft.Machine do
             else
               state
             end
+
+          :error ->
+            Logger.error("Failed to fetch log entry at index #{index}, skipping", logger_metadata(trace: {:persistence_fetch_error, index}))
+            state
+
+          other ->
+            Logger.error("Unexpected persistence fetch result: #{inspect(other)}", logger_metadata(trace: {:persistence_fetch_unexpected, index, other}))
+            state
         end
       end)
 
@@ -485,21 +493,31 @@ defmodule Craft.Machine do
     {:noreply, %{state | private: private}}
   end
 
+  defp snapshot_info(nil) do
+    Logger.warning("snapshot_info called with nil path, returning empty snapshot", logger_metadata(trace: {:snapshot_info_nil_path}))
+    {"", []}
+  end
+
   defp snapshot_info(path) do
-    files =
-      path
-      |> ls_flat()
-      |> Enum.map(fn file ->
-        %RemoteFile{
-          name: Path.relative_to(file, path),
-          md5: md5(file),
-          byte_size: File.stat!(file).size
-        }
-      end)
+    if File.exists?(path) do
+      files =
+        path
+        |> ls_flat()
+        |> Enum.map(fn file ->
+          %RemoteFile{
+            name: Path.relative_to(file, path),
+            md5: md5(file),
+            byte_size: File.stat!(file).size
+          }
+        end)
 
-    relative_path = Path.relative_to(path, Configuration.data_dir())
+      relative_path = Path.relative_to(path, Configuration.data_dir())
 
-    {relative_path, files}
+      {relative_path, files}
+    else
+      Logger.warning("snapshot path does not exist: #{inspect(path)}", logger_metadata(trace: {:snapshot_path_missing, path}))
+      {"", []}
+    end
   end
 
   defp ls_flat(path) do
