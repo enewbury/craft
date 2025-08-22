@@ -468,7 +468,12 @@ defmodule Craft.Machine do
 
   @impl true
   def handle_call(:state, _from, state) do
-    machine_state = state.module.dump(state.private)
+    machine_state =
+    if function_exported?(state.module, :dump, 1) do
+      state.module.dump(state.private)
+    else
+      {:not_implemented, {state.module, {:dump, 1}}}
+    end
 
     {:reply, %{state: state, machine_state: machine_state}, state}
   end
