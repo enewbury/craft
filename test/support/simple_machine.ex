@@ -25,7 +25,11 @@ defmodule Craft.SimpleMachine do
   def write(command, state), do: handle_command(command, nil, state)
 
   @impl TestModel
-  def read(query, state), do: handle_query(query, nil, state)
+  def read(query, state) do
+    id = {self(), make_ref()}
+    {:reply, resp} = handle_query(query, id, state)
+    resp
+  end
 
   @impl true
   def handle_command({:put, k, v}, _log_index, state) do
