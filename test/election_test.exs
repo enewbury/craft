@@ -30,7 +30,7 @@ defmodule Craft.ElectionTest do
     nexus_test "deny votes to out-of-date candidate, and correct its log", %{nodes: nodes} do
       {:ok, name, nexus} = TestGroup.start_group(nodes, manual_start: true)
 
-      empty_persistence = State.new("abc", nodes, MapPersistence, SimpleMachine, nil, nil).persistence
+      empty_persistence = State.new("abc", nodes, MapPersistence, SimpleMachine, nil).persistence
 
       shared_log =
         empty_persistence
@@ -75,7 +75,7 @@ defmodule Craft.ElectionTest do
     nexus_test "most up-to-date member in a split-brain is elected and corrects out-of-date logs", %{nodes: nodes} do
       {:ok, name, nexus} = TestGroup.start_group(nodes, manual_start: true)
 
-      empty_persistence = State.new("abc", nodes, MapPersistence, SimpleMachine, nil, nil).persistence
+      empty_persistence = State.new("abc", nodes, MapPersistence, SimpleMachine, nil).persistence
 
       shared_log =
         empty_persistence
@@ -104,7 +104,7 @@ defmodule Craft.ElectionTest do
         TestGroup.replace_consensus_state(name, node, %{persistence: out_of_date_log})
       end
 
-      nemesis(nexus, fn {:cast, to, from, _msg} ->
+      nemesis(nexus, fn {:sent_msg, to, from, _msg} ->
         if from in majority and to in majority do
           :forward
         else

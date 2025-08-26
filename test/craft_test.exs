@@ -1,13 +1,18 @@
 defmodule CraftTest do
-  use Craft.NexusCase
-      # parameterize: (for leases <- [true, false], do: %{leader_leases: leases})
+  use Craft.NexusCase,
+      parameterize: (for leases <- [true, false], do: %{leader_leases: leases})
 
   alias Craft.Nexus.Stability
   alias Craft.SimpleMachine
 
-  nexus_test "starts a group, elects a leader, replicates logs, processes commands", ctx  do
+  nexus_test "starts a group, elects a leader, replicates logs, processes commands", %{leader_leases: leases} = ctx  do
     %{name: name, nexus: nexus} = ctx
     wait_until(nexus, {Stability, :all})
+
+    if leases do
+      # wait out lease, TODO: `wait_until(nexus, :leader_holds_lease)`
+      Process.sleep(2_000)
+    end
 
     assert :ok = SimpleMachine.put(name, :a, 123)
     assert {:ok, 123} = SimpleMachine.get(name, :a)

@@ -28,10 +28,12 @@ defmodule Craft.Consensus.State do
     :voted_for, # lonely and follower
     :election, # lonely and candidate
     :leadership_transfer_request_id, # candidate only
-    :incoming_snapshot_transfer # receiving_snapshot only
+    :incoming_snapshot_transfer, # receiving_snapshot only
+
+    :nexus_pid
   ]
 
-  def new(name, nodes, persistence, machine, global_clock) do
+  def new(name, nodes, persistence, machine, global_clock, nexus_pid \\ nil) do
     persistence = Persistence.new(name, persistence)
 
     # if we're restoring state from disk, search the log backwards for group members
@@ -62,7 +64,8 @@ defmodule Craft.Consensus.State do
         members: members,
         persistence: persistence,
         machine: machine,
-        global_clock: global_clock
+        global_clock: global_clock,
+        nexus_pid: nexus_pid
       }
 
     case Metadata.fetch(persistence) do
