@@ -405,9 +405,7 @@ defmodule Craft.Consensus do
   end
 
   def receiving_snapshot(:cast, {:download_failed, reason}, %State{} = data) do
-    Logger.error("error receiving snapshot because: #{inspect reason}, retrying.", logger_metadata(data, trace: {:error_receiving_snapshot, reason}))
-
-    #TODO: delay?
+    Logger.warning("snapshot download failed because #{inspect reason}")
 
     {:repeat_state, %{data | incoming_snapshot_transfer: nil}}
   end
