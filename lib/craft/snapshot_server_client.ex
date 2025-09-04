@@ -91,7 +91,7 @@ defmodule Craft.SnapshotServerClient do
         GenServer.cast(caller, {:error, :bad_checksum})
 
       {:ok, {:error, _} = error} ->
-        File.rm(file.name)
+        File.rm!(file.name)
 
         GenServer.cast(caller, error)
 

@@ -378,7 +378,7 @@ defmodule Craft.Consensus do
           install_snapshot.snapshot_transfer,
           data_dir,
           fn :ok ->
-              :gen_statem.cast(me, {:download_succeeded, install_snapshot})
+            :gen_statem.cast(me, {:download_succeeded, install_snapshot})
           end
         )
 
