@@ -43,12 +43,16 @@ defmodule Craft.Application do
     end
   end
 
+  defp node_identifier do
+    System.get_env("NODE_ID") || to_string(node())
+  end
+
   defp create_data_dir! do
     if Application.get_env(:craft, :base_data_dir) do
       data_dir =
         Path.join([
           Application.get_env(:craft, :base_data_dir),
-          to_string(node())
+          node_identifier()
         ])
 
       File.mkdir_p!(data_dir)
