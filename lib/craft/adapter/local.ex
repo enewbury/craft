@@ -69,13 +69,12 @@ defmodule Craft.Adapter.Local do
 
   @impl GenServer
   def handle_call({:start_member, group}, _from, state) do
-    with {:ok, data_dir} <- Application.fetch_env(:craft, :data_dir),
-         {:ok, content} <- File.read(Path.join(data_dir, "machine_for_group_#{group}")) do
-      machine = String.to_existing_atom(content)
-      {:ok, machine_state} = machine.init(group)
-      state = put_in(state, [:groups, group], %{machine: machine, machine_state: machine_state})
-      {:reply, :ok, state}
-    else
+    case Craft.Configuration.find(group) do
+      %{machine: machine} ->
+        {:ok, machine_state} = machine.init(group)
+        state = put_in(state, [:groups, group], %{machine: machine, machine_state: machine_state})
+        {:reply, :ok, state}
+
       _error ->
         {:reply, {:error, :not_found}, state}
     end
@@ -83,10 +82,9 @@ defmodule Craft.Adapter.Local do
 
   @impl GenServer
   def handle_call({:start_group, group, machine, machine_opts}, _from, state) do
-    data_dir = Application.fetch_env!(:craft, :data_dir)
-
     if :in_memory not in machine_opts do
-      File.write!(Path.join(data_dir, "machine_for_group_#{group}"), Atom.to_string(machine))
+      config = %{machine: machine}
+      Craft.Configuration.write_new!(group, config)
     end
 
     {:ok, machine_state} = machine.init(group, machine_opts)
@@ -104,18 +102,25 @@ defmodule Craft.Adapter.Local do
   end
 
   @impl GenServer
-  def handle_call({:query, group, query}, _from, state) do
+  def handle_call({:query, group, query}, from, state) do
     %{machine: machine, machine_state: machine_state} = Map.get(state.groups, group)
-    response = machine.handle_query(query, machine_state)
 
-    {:reply, response, state}
+    case machine.handle_query(query, {self(), from}, machine_state) do
+      {:reply, response} -> {:reply, response, state}
+      :noreply -> {:noreply, state}
+    end
   end
 
-  @impl GenServer
   def handle_cast({:user_message, group, message}, state) do
     %{machine: machine, machine_state: machine_state} = Map.get(state.groups, group)
     machine_state = machine.handle_info(message, machine_state)
 
     {:noreply, put_in(state, [:groups, group, :machine_state], machine_state)}
+  end
+
+  @impl GenServer
+  def handle_cast({{:query_reply, reply}, from}, state) do
+    GenServer.reply(from, reply)
+    {:noreply, state}
   end
 end
