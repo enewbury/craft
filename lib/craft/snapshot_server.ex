@@ -100,6 +100,7 @@ defmodule Craft.SnapshotServer do
           {:ok, _bytes_sent} = :file.sendfile(path, client)
         else
           Logger.warning(~s|client requested non-existent file "#{filename}" from data_dir "#{data_dir}"|)
+
           :ok = :gen_tcp.close(client)
         end
 

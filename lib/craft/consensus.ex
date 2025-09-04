@@ -44,7 +44,7 @@ defmodule Craft.Consensus do
   @heartbeat_interval 100 # ms
 
   # max time in the past within which leader must have a successful quorum, or it'll step down
-  @checkquorum_interval @heartbeat_interval * 3
+  @checkquorum_interval @heartbeat_interval * 10
 
   @lonely_timeout @heartbeat_interval + 1_000
 
@@ -542,7 +542,7 @@ defmodule Craft.Consensus do
 
     if success && data.commit_index > old_commit_index do
       # TODO: make log length configurable
-      log_too_long = Persistence.length(data.persistence) > 20
+      log_too_long = Persistence.length(data.persistence) > 1_000
 
       Logger.debug("quorum reached", logger_metadata(data, trace: :quorum_reached))
 
