@@ -380,9 +380,6 @@ defmodule Craft.Consensus do
           fn
             :ok ->
               :gen_statem.cast(me, {:download_succeeded, install_snapshot})
-
-            error ->
-              :gen_statem.cast(me, {:download_failed, error})
           end
         )
 

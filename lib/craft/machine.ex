@@ -276,14 +276,6 @@ defmodule Craft.Machine do
             else
               state
             end
-
-          :error ->
-            Logger.error("Failed to fetch log entry at index #{index}, skipping", logger_metadata(trace: {:persistence_fetch_error, index}))
-            state
-
-          other ->
-            Logger.error("Unexpected persistence fetch result: #{inspect(other)}", logger_metadata(trace: {:persistence_fetch_unexpected, index, other}))
-            state
         end
       end)
 
@@ -356,7 +348,7 @@ defmodule Craft.Machine do
   def handle_cast({{:query, :linearizable}, id, query}, %State{role: :leader} = state) do
     Logger.debug("executing query", logger_metadata(trace: {:query, :linearizable, :quorum_read, id, query}))
 
-    client_query_results = 
+    client_query_results =
       case state.module.handle_query(query, {self(), id}, state.private) do
         {:reply, reply} -> Map.put(state.client_query_results, id, {:resolved, reply})
         :noreply -> Map.put(state.client_query_results, id, :pending)
@@ -499,12 +491,7 @@ defmodule Craft.Machine do
 
   @impl true
   def handle_call(:state, _from, state) do
-    machine_state =
-    if function_exported?(state.module, :dump, 1) do
-      state.module.dump(state.private)
-    else
-      {:not_implemented, {state.module, {:dump, 1}}}
-    end
+    machine_state = state.module.dump(state.private)
 
     {:reply, %{state: state, machine_state: machine_state}, state}
   end
