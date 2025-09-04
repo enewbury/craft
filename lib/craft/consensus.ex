@@ -377,8 +377,7 @@ defmodule Craft.Consensus do
         SnapshotServerClient.start_link(
           install_snapshot.snapshot_transfer,
           data_dir,
-          fn
-            :ok ->
+          fn :ok ->
               :gen_statem.cast(me, {:download_succeeded, install_snapshot})
           end
         )
