@@ -169,8 +169,7 @@ defmodule Craft.Consensus.State do
 
   def vote_for?(%__MODULE__{} = state, %RequestVote{} = request_vote) do
     request_vote.last_log_term > Persistence.latest_term(state.persistence) ||
-    (request_vote.last_log_term == Persistence.latest_term(state.persistence) &&
-      request_vote.last_log_index >= Persistence.latest_index(state.persistence))
+    (request_vote.last_log_term == Persistence.latest_term(state.persistence) && request_vote.last_log_index >= Persistence.latest_index(state.persistence))
   end
 
   # holding pre-vote and leadership elections

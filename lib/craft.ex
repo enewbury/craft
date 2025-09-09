@@ -85,8 +85,13 @@ defmodule Craft do
 
   This function will also ensure the supervised processes for this raft group are
   running on the node to add before it tries to connect it.
+
+  ### Opts
+  - `timeout` - (default: 5_000) the time before we return a timeout error
   """
-  def add_member(name, node) do
+  def add_member(name, node, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+
     :pong = Node.ping(node)
 
     case :rpc.call(node, Craft.MemberSupervisor, :start_member, [name]) do
@@ -116,12 +121,19 @@ defmodule Craft do
         {:ok, pid}
     end
 
-    with_leader_redirect(name, &Consensus.add_member(name, &1, node))
+    with_leader_redirect(name, &call_machine(name, &1, {:command, {:add_member, node}}, timeout))
   end
 
-  @doc "Removes a node from membership in a raft group, but doesn't stop its processes."
-  def remove_member(name, node) do
-    with_leader_redirect(name, &Consensus.remove_member(name, &1, node))
+  @doc """
+  Removes a node from membership in a raft group, but doesn't stop its processes.
+
+  ### Opts
+  - `timeout` - (default: 5_000) the time before we return a timeout error
+  """
+  def remove_member(name, node, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+
+    with_leader_redirect(name, &call_machine(name, &1, {:command, {:remove_member, node}}, timeout))
   end
 
   @doc "Selects a new node to become the leader of a raft group."
@@ -163,16 +175,17 @@ defmodule Craft do
   defdelegate cached_info(group_name), to: MemberCache, as: :get
 
   @doc """
-  Commits a command onto the log and executes the `c:command/3` callback on the configured
-  state machine set for the raft group.
+  Submits a command to the given group `name`, once quorum is reached, the command is executed.
 
-  This does not return until it has been accepted by a quorum of nodes.
+  See `c:Machine.handle_command/3`.
 
   ### Opts
   - `timeout` - (default: 5_000) the time before we return a timeout error
   """
   def command(command, name, opts \\ []) do
-    with_leader_redirect(name, &Machine.command(name, &1, command, opts))
+    timeout = Keyword.get(opts, :timeout, 5_000)
+
+    with_leader_redirect(name, &call_machine(name, &1, {:command, {:machine_command, command}}, timeout))
   end
 
   #
@@ -200,24 +213,25 @@ defmodule Craft do
   - `{:eventual, {:node, node}}` - query is run on the given node without linearizable guarentees
   """
   def query(query, name, opts \\ []) do
-    {consistency, opts} = Keyword.pop(opts, :consistency, :linearizable)
+    consistency = Keyword.get(opts, :consistency, :linearizable)
+    timeout = Keyword.get(opts, :timeout, 5_000)
 
     case consistency do
       :linearizable ->
-        with_leader_redirect(name, &Machine.query(name, &1, query, consistency, opts))
+        with_leader_redirect(name, &call_machine(name, &1, {:query, :linearizable, query}, timeout))
 
       {:eventual, :leader} ->
-        with_leader_redirect(name, &Machine.query(name, &1, query, {:eventual, :leader}, opts))
+        with_leader_redirect(name, &call_machine(name, &1, {:query, {:eventual, :leader}, query}, timeout))
 
       {:eventual, {:node, node}} ->
-        Machine.query(name, node, query, :eventual, opts)
+        call_machine(name, node, {:query, :eventual, query}, timeout)
 
       :eventual ->
         case MemberCache.get(name) do
           {:ok, %GroupStatus{} = group_status} ->
             node = Enum.random(group_status.members)
 
-            Machine.query(name, node, query, consistency, opts)
+            call_machine(name, node, {:quer, :eventual, query}, timeout)
 
           :not_found ->
             Logger.error("No known nodes for group '#{inspect(name)}', have you called Craft.discover/2?")
@@ -290,6 +304,20 @@ defmodule Craft do
     members.voting_nodes
     |> MapSet.union(members.non_voting_nodes)
     |> Enum.into(%{}, &state(name, &1))
+  end
+
+  @doc false
+  def call_machine(name, node, request, timeout) do
+    case Machine.call(name, node, request, timeout) do
+      {:badrpc, {:EXIT, {reason, _}}} ->
+        {:error, reason}
+
+      {:badrpc, reason} ->
+        {:error, reason}
+
+      result ->
+        result
+    end
   end
 
   defp configuration(name, node) do

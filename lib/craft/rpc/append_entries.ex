@@ -26,6 +26,12 @@ defmodule Craft.RPC.AppendEntries do
     ]
   end
 
+  #
+  # TODO: limit size of `entries` so it can be delivered before the next heartbeat
+  # i.e. send only N entries, or limit to 10Mb, etc...
+  #
+  # see :erlang.external_size/2
+  #
   def new(%State{state: :leader} = state, to_node) do
     next_index = Map.get(state.leader_state.next_indices, to_node)
     prev_log_index = next_index - 1

@@ -68,23 +68,7 @@ defmodule Craft.Consensus do
   #
 
   def command(name, command) do
-    :gen_statem.call(via(name, __MODULE__), {:machine_command, command})
-  end
-
-  def cast_user_command(name, node, msg, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 5_000)
-    id = {self(), make_ref()}
-
-    remote_operation(name, node, :cast, {:user_command, id, msg})
-
-    receive do
-      {^id, reply} ->
-        reply
-
-      after
-        timeout ->
-          {:error, :timeout}
-    end
+    do_operation(:call, name, {:command, command})
   end
 
   def state(name, node) do
@@ -93,14 +77,6 @@ defmodule Craft.Consensus do
 
   def configuration(name, node) do
     remote_operation(name, node, :call, :configuration)
-  end
-
-  def add_member(name, node, member) do
-    remote_operation(name, node, :call, {:add_member, member})
-  end
-
-  def remove_member(name, node, member) do
-    remote_operation(name, node, :call, {:remove_member, member})
   end
 
   def transfer_leadership(name, node, to_node) do
@@ -116,7 +92,25 @@ defmodule Craft.Consensus do
   end
 
   def snapshot_ready(name, index, path) do
-    :gen_statem.call(via(name, __MODULE__), {:snapshot_ready, index, path})
+    do_operation(:call, name, {:snapshot_ready, index, path})
+  end
+
+  # casting a user command is necessary when the node that recieves the command
+  # is not the one that will respond to it (just leadership transfer, so far).
+  def cast_user_command(name, node, msg, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+    id = {self(), make_ref()}
+
+    remote_operation(name, node, :cast, {:user_command, id, msg})
+
+    receive do
+      {^id, reply} ->
+        reply
+
+      after
+        timeout ->
+          {:error, :timeout}
+    end
   end
 
   # we can't use the {name, node} form, since `name` must be an atom, and we allow anything to be a group name
@@ -877,17 +871,14 @@ defmodule Craft.Consensus do
         with %MembershipChange{} = membership_change <- data.leader_state.membership_change,
              true <- data.commit_index >= membership_change.log_index do
           data = put_in(data.leader_state.membership_change, nil)
-          actions = [{:reply, membership_change.from, :ok}]
 
           # if we're being removed, transfer leadership away first
           if membership_change.action == :remove && membership_change.node == node() do
             data = LeaderState.transfer_leadership(data)
 
-            actions = [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :self_removal} | actions]
-
-            {:keep_state, heartbeat(data), actions}
+            {:keep_state, heartbeat(data), [{{:timeout, :leadership_transfer_failed}, @leadership_transfer_timeout, :self_removal}]}
           else
-            {:keep_state, data, actions}
+            {:keep_state, data}
           end
         else
           _ ->
@@ -940,14 +931,14 @@ defmodule Craft.Consensus do
     end
   end
 
-  def leader({:call, from}, {:machine_command, _command}, %State{leader_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
+  def leader({:call, from}, {:command, _command}, %State{leader_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
     {:keep_state_and_data, [{:reply, from, {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}}]}
   end
 
-  def leader({:call, from}, {:machine_command, command}, %State{global_clock: global_clock} = data) when not is_nil(global_clock) do
+  def leader({:call, from}, {:command, command}, %State{global_clock: global_clock} = data) when not is_nil(global_clock) do
     case GlobalTimestamp.time_until_lease_expires(data.global_clock, data.lease_expires_at) do
       {:ok, time} when time > 0 ->
-        append_command(command, from, data)
+        handle_command(command, from, data)
 
       {:ok, 0} ->
         {:keep_state_and_data, [{:reply, from, {:error, :not_leaseholder}}]}
@@ -959,8 +950,8 @@ defmodule Craft.Consensus do
     end
   end
 
-  def leader({:call, from}, {:machine_command, command}, data) do
-    append_command(command, from, data)
+  def leader({:call, from}, {:command, command}, data) do
+    handle_command(command, from, data)
   end
 
   def leader({:call, from}, {:snapshot_ready, index, path_or_content}, data) do
@@ -980,34 +971,6 @@ defmodule Craft.Consensus do
       |> Map.merge(%{machine_module: data.machine, persistence_module: data.persistence.module})
 
     {:keep_state_and_data, [{:reply, from, {:ok, config}}]}
-  end
-
-  def leader({:call, from}, {:add_member, node}, data) do
-    if LeaderState.config_change_in_progress?(data) do
-      {:keep_state_and_data, [{:reply, from, {:error, :config_change_in_progress}}]}
-    else
-      data = LeaderState.add_node(data, node, from, Persistence.latest_index(data.persistence) + 1)
-      entry = %MembershipEntry{term: data.current_term, members: data.members}
-      data = %{data | persistence: Persistence.append(data.persistence, entry)}
-
-      MemberCache.update(data)
-
-      {:keep_state, data}
-    end
-  end
-
-  def leader({:call, from}, {:remove_member, node}, data) do
-    if LeaderState.config_change_in_progress?(data) do
-      {:keep_state_and_data, [{:reply, from, {:error, :config_change_in_progress}}]}
-    else
-      data = LeaderState.remove_node(data, node, from, Persistence.latest_index(data.persistence) + 1)
-      entry = %MembershipEntry{term: data.current_term, members: data.members}
-      data = %{data | persistence: Persistence.append(data.persistence, entry)}
-
-      MemberCache.update(data)
-
-      {:keep_state, data}
-    end
   end
 
   def leader({:call, from}, :state, data) do
@@ -1087,8 +1050,30 @@ defmodule Craft.Consensus do
     end)
   end
 
-  defp append_command(command, from, data) do
-    entry = %CommandEntry{term: data.current_term, command: command}
+  defp handle_command({membership_change, node}, from, data) when membership_change in [:add_member, :remove_member] do
+    if LeaderState.config_change_in_progress?(data) do
+      {:keep_state_and_data, [{:reply, from, {:error, :config_change_in_progress}}]}
+    else
+      data =
+        case membership_change do
+          :add_member ->
+            LeaderState.add_node(data, node, Persistence.latest_index(data.persistence) + 1)
+
+          :remove_member ->
+            LeaderState.remove_node(data, node, Persistence.latest_index(data.persistence) + 1)
+        end
+
+      MemberCache.update(data)
+
+      append_entry(%MembershipEntry{term: data.current_term, members: data.members}, from, data)
+    end
+  end
+
+  defp handle_command({:machine_command, command}, from, data) do
+    append_entry(%CommandEntry{term: data.current_term, command: command}, from, data)
+  end
+
+  defp append_entry(entry, from, data) do
     persistence = Persistence.append(data.persistence, entry)
     entry_index = Persistence.latest_index(persistence)
 

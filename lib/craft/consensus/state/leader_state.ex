@@ -10,6 +10,8 @@ defmodule Craft.Consensus.State.LeaderState do
 
   require Logger
 
+  import Craft.Tracing, only: [logger_metadata: 1]
+
   defstruct [
     :next_indices,
     :match_indices,
@@ -26,12 +28,12 @@ defmodule Craft.Consensus.State.LeaderState do
 
   defmodule MembershipChange do
     # action: :add | :remove
-    defstruct [:action, :node, :from, :log_index]
+    defstruct [:action, :node, :log_index]
   end
 
   defmodule LeadershipTransfer do
     defstruct [
-      :from, # {pid, ref}, from Consensus.cast, for transmission to the new leader via AppenEntries
+      :from, # {pid, ref}, from Consensus.cast, for transmission to the new leader via AppendEntries
       :current_candidate,
       candidates: MapSet.new()
     ]
@@ -85,12 +87,12 @@ defmodule Craft.Consensus.State.LeaderState do
     end)
   end
 
-  def add_node(%State{} = state, node, from, log_index) do
+  def add_node(%State{} = state, node, log_index) do
     next_index = Persistence.latest_index(state.persistence) + 1
     next_indices = Map.put(state.leader_state.next_indices, node, next_index)
     match_indices = Map.put(state.leader_state.match_indices, node, 0)
 
-    membership_change = %MembershipChange{action: :add, node: node, from: from, log_index: log_index}
+    membership_change = %MembershipChange{action: :add, node: node, log_index: log_index}
 
     leader_state =
       %{
@@ -103,12 +105,12 @@ defmodule Craft.Consensus.State.LeaderState do
     %{state | members: Members.add_member(state.members, node), leader_state: leader_state}
   end
 
-  def remove_node(%State{} = state, node, from, log_index) do
+  def remove_node(%State{} = state, node, log_index) do
     next_indices = Map.delete(state.leader_state.next_indices, node)
     match_indices = Map.delete(state.leader_state.match_indices, node)
     last_heartbeat_replies_at = Map.delete(state.leader_state.last_heartbeat_replies_at, node)
 
-    membership_change = %MembershipChange{action: :remove, node: node, from: from, log_index: log_index}
+    membership_change = %MembershipChange{action: :remove, node: node, log_index: log_index}
 
     snapshot_transfers = Map.delete(state.leader_state.snapshot_transfers, node)
 
@@ -129,7 +131,7 @@ defmodule Craft.Consensus.State.LeaderState do
   # may cause quorum failures on unreliable networks, if this is an issue, we can implement a sliding window of quorum rounds
   # then `last_quorum_at` is just the most recent quorum round to complete.
   def handle_append_entries_results(%State{leader_state: %__MODULE__{last_heartbeat_sent_at: round_time}} = state, %AppendEntries.Results{heartbeat_sent_at: reply_time} = results) when round_time != reply_time do
-    Logger.debug("heartbeat from #{results.from} missed deadline, ignoring.")
+    Logger.debug("heartbeat from #{results.from} missed deadline, ignoring.", logger_metadata(state))
 
     state
   end
@@ -139,7 +141,7 @@ defmodule Craft.Consensus.State.LeaderState do
 
     case Map.fetch(state.leader_state.last_heartbeat_replies_at, results.from) do
       {:ok, {^heartbeat_sent_at, _}} ->
-        Logger.warning("duplicate heartbeat reply received: #{inspect results}, ignoring.")
+        Logger.warning("duplicate heartbeat reply received: #{inspect results}, ignoring.", logger_metadata(state))
 
         state
 

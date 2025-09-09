@@ -126,35 +126,14 @@ defmodule Craft.Machine do
     |> GenServer.cast({:quorum_reached, state.commit_index, state.persistence, should_snapshot?, lease_expires_at})
   end
 
-  def command(name, node, command, opts \\ []) do
-    request(name, node, :command, command, opts)
+  def call(name, node, request, timeout) do
+    :rpc.call(node, __MODULE__, :do_call, [name, request, timeout])
   end
 
-  def query(name, node, query, consistency, opts \\ []) do
-    request(name, node, {:query, consistency}, query, opts)
-  end
-
-  defp request(name, node, type, request, opts) do
-    timeout = Keyword.get(opts, :timeout, 5_000)
-    id = {self(), make_ref()}
-
-    with :ok <- :rpc.call(node, __MODULE__, :cast_request, [name, id, type, request]) do
-      receive do
-        {^id, reply} ->
-          reply
-      after
-        timeout ->
-          {:error, :timeout}
-      end
-    else e ->
-        {:error, e}
-    end
-  end
-
-  def cast_request(name, id, type, request) do
+  def do_call(name, request, timeout) do
     name
     |> lookup(__MODULE__)
-    |> GenServer.cast({type, id, request})
+    |> GenServer.call(request, timeout)
   end
 
   @impl true
@@ -182,12 +161,12 @@ defmodule Craft.Machine do
         {:error, {:not_leader, group_status.leader}}
       end
 
-    for {{_ref, from} = id, _result} <- state.client_query_results do
-      send(from, {id, response})
+    for {from, _result} <- state.client_query_results do
+      GenServer.reply(from, response)
     end
 
-    for {_index, {from, _ref} = id} <- state.client_commands do
-      send(from, {id, response})
+    for {_index, from} <- state.client_commands do
+      GenServer.reply(from, response)
     end
 
     private =
@@ -213,10 +192,10 @@ defmodule Craft.Machine do
     state =
       if state.role == :leader do
         # read-index based queries
-        for {{from, _ref} = id, result} <- state.client_query_results do
-          Logger.debug("responding to client query", logger_metadata(trace: {:sending_client_response, %{from: from, id: id, result: result}}))
+        for {from, result} <- state.client_query_results do
+          Logger.debug("responding to client query", logger_metadata(trace: {:sending_client_response, %{from: from, result: result}}))
 
-          send(from, {id, result})
+          GenServer.reply(from, result)
         end
 
         state = %{state | client_query_results: [], lease_expires_at: lease_expires_at}
@@ -237,39 +216,27 @@ defmodule Craft.Machine do
             state
 
           {:ok, %MembershipEntry{}} ->
-            state
+            reply_to_command(state, index, :ok)
 
           {:ok, %CommandEntry{command: command} = entry} ->
             Logger.debug("applying command entry", logger_metadata(trace: {:applying_command, entry}))
 
-            {reply, side_effects, private} =
+            {reply, private} =
               case state.module.handle_command(command, index, state.private) do
                 {reply, private} ->
-                  {reply, [], private}
+                  {reply, private}
 
                 {reply, side_effects, private} ->
-                  {reply, side_effects, private}
+                  if state.role == :leader do
+                    Enum.each(side_effects, fn {m, f, a} ->
+                      spawn(fn -> apply(m, f, a) end)
+                    end)
+                  end
+
+                  {reply, private}
               end
 
-            state = %{state | private: private}
-
-            if state.role == :leader do
-              Enum.each(side_effects, fn {m, f, a} ->
-                spawn(fn -> apply(m, f, a) end)
-              end)
-
-              case Map.pop(state.client_commands, index) do
-                {{pid, _ref} = id, client_commands} ->
-                  send(pid, {id, reply})
-
-                  %{state | client_commands: client_commands}
-
-                _ ->
-                  state
-              end
-            else
-              state
-            end
+            reply_to_command(%{state | private: private}, index, reply)
         end
       end)
 
@@ -324,74 +291,65 @@ defmodule Craft.Machine do
   #     - otherwise, the query will time out
   #
   @impl true
-  def handle_cast({{:query, :linearizable}, {from, _ref} = id, query}, %State{role: :leader, global_clock: global_clock} = state) when not is_nil(global_clock) do
+  def handle_call({:query, :linearizable, query}, from, %State{role: :leader, global_clock: global_clock} = state) when not is_nil(global_clock) do
     with %GlobalTimestamp{} <- state.lease_expires_at,
-         {:ok, wait_time} when wait_time > 0 <- GlobalTimestamp.time_until_lease_expires(state.global_clock, state.lease_expires_at) do
-      Logger.debug("executing query", logger_metadata(trace: {:query, :linearizable, :lease_read, id, query}))
+         {:ok, lease_time} when lease_time > 0 <- GlobalTimestamp.time_until_lease_expires(state.global_clock, state.lease_expires_at) do
+      Logger.debug("executing query", logger_metadata(trace: {:query, :linearizable, :lease_read, from, query}))
 
-      send(from, {id, state.module.handle_query(query, state.private)})
+      {:reply, state.module.handle_query(query, state.private), state}
     else
       _ ->
-        send(from, {id, {:error, :not_leaseholder}})
+      {:reply, {:error, :not_leaseholder}, state}
     end
-
-    {:noreply, state}
   end
 
-  def handle_cast({{:query, :linearizable}, id, query}, %State{role: :leader} = state) do
-    Logger.debug("executing query", logger_metadata(trace: {:query, :linearizable, :quorum_read, id, query}))
+  def handle_call({:query, :linearizable, query}, from, %State{role: :leader} = state) do
+    Logger.debug("executing query", logger_metadata(trace: {:query, :linearizable, :quorum_read, from, query}))
 
     result = state.module.handle_query(query, state.private)
 
-    {:noreply, %{state | client_query_results: [{id, result} | state.client_query_results]}}
+    {:noreply, %{state | client_query_results: [{from, result} | state.client_query_results]}}
   end
 
   # only the leader can process linearizable queries
-  def handle_cast({{:query, :linearizable}, {from, _ref} = id, _query}, state) do
+  def handle_call({:query, :linearizable, _query}, _from, state) do
     {:ok, group_status} = MemberCache.get(state.name)
 
-    send(from, {id, {:error, {:not_leader, group_status.leader}}})
-
-    {:noreply, state}
+    {:reply, {:error, {:not_leader, group_status.leader}}, state}
   end
 
-  def handle_cast({{:query, {:eventual, :leader}}, {from, _ref} = id, query}, state) do
+  def handle_call({:query, {:eventual, :leader}, query}, from, state) do
     if state.role == :leader do
-      Logger.debug("executing query", logger_metadata(trace: {:query, :leader_eventual, :quorum_read, id, query}))
+      Logger.debug("executing query", logger_metadata(trace: {:query, :leader_eventual, :quorum_read, from, query}))
 
-      send(from, {id, state.module.handle_query(query, state.private)})
+      {:reply, state.module.handle_query(query, state.private), state}
     else
       case MemberCache.get(state.name) do
-        {:ok, group_status} -> send(from, {id, {:error, {:not_leader, group_status.leader}}})
-        :not_found -> send(from, {id, {:error, :unknown_leader}})
+        {:ok, group_status} ->
+          {:reply, {:error, {:not_leader, group_status.leader}}, state}
+
+        :not_found ->
+          {:reply, {:error, :unknown_leader}, state}
       end
     end
-
-    {:noreply, state}
   end
 
-  def handle_cast({{:query, :eventual}, {from, _ref} = id, query}, state) do
-    Logger.debug("executing query", logger_metadata(trace: {:query, :eventual, :quorum_read, id, query}))
+  def handle_call({:query, :eventual, query}, from, state) do
+    Logger.debug("executing query", logger_metadata(trace: {:query, :eventual, :quorum_read, from, query}))
 
-    result = state.module.handle_query(query, state.private)
-
-    send(from, {id, result})
-
-    {:noreply, state}
+    {:reply, state.module.handle_query(query, state.private), state}
   end
 
-  def handle_cast({:command, {from, _ref} = id, command}, state) do
+  def handle_call({:command, command}, from, state) do
     case Consensus.command(state.name, command) do
       {:ok, index} ->
-        Logger.debug("executed command", logger_metadata(trace: {:command, id, command}))
+        Logger.debug("sent command to consensus", logger_metadata(trace: {:command, from, command}))
 
-        {:noreply, %{state | client_commands: Map.put(state.client_commands, index, id)}}
+        {:noreply, %{state | client_commands: Map.put(state.client_commands, index, from)}}
 
       # not leader, not leaseholder, etc...
       error ->
-        send(from, {id, error})
-
-        {:noreply, state}
+        {:reply, error, state}
     end
   end
 
@@ -469,11 +427,11 @@ defmodule Craft.Machine do
   @impl true
   def handle_call(:state, _from, state) do
     machine_state =
-    if function_exported?(state.module, :dump, 1) do
-      state.module.dump(state.private)
-    else
-      {:not_implemented, {state.module, {:dump, 1}}}
-    end
+      if function_exported?(state.module, :dump, 1) do
+        state.module.dump(state.private)
+      else
+        {:not_implemented, {state.module, {:dump, 1}}}
+      end
 
     {:reply, %{state: state, machine_state: machine_state}, state}
   end
@@ -488,6 +446,19 @@ defmodule Craft.Machine do
       end
 
     {:noreply, %{state | private: private}}
+  end
+
+  defp reply_to_command(state, index, reply) do
+    with :leader <- state.role,
+         {from, client_commands} when not is_nil(from) <- Map.pop(state.client_commands, index) do
+      GenServer.reply(from, reply)
+
+      %{state | client_commands: client_commands}
+
+    else
+      _ ->
+        state
+    end
   end
 
   defp snapshot_info(path) do
