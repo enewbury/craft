@@ -91,6 +91,24 @@ defmodule Craft.RocksDBMachine do
     {:reply, resp}
   end
 
+  def handle_query({:get_parralel, k}, from, state) do
+    {:ok, snapshot} = :rocksdb.snapshot(state.db)
+
+    spawn_link(fn ->
+      resp =
+        case :rocksdb.get(state.db, encode(k), [snapshot: snapshot]) do
+          {:ok, value} -> {:ok, decode(value)}
+          :not_found -> {:error, :not_found}
+          error -> error
+        end
+
+      :ok = :rocksdb.release_snapshot(snapshot)
+      Craft.Machine.reply(from, resp)
+    end)
+
+    :noreply
+  end
+
   def handle_query(_, _from, state) do
     {:reply, {{:error, :unknown_query}, state}}
   end
