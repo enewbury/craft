@@ -13,8 +13,8 @@ defmodule Craft.SimpleMachine do
     Craft.query({:get, k}, name, opts)
   end
 
-  def get_parralel(name, k, opts \\ []) do
-    Craft.query({:get_parralel, k, []}, name, opts)
+  def get_parallel(name, k, opts \\ []) do
+    Craft.query({:get_parallel, k, []}, name, opts)
   end
 
   @impl TestModel
@@ -51,9 +51,10 @@ defmodule Craft.SimpleMachine do
   end
 
   @impl true
-  def handle_query({:get_parralel, k, opts}, from, state) do
+  def handle_query({:get_parallel, k, opts}, from, state) do
     pid = self()
     spawn_link(fn ->
+      Process.sleep(300)
       resp = Map.get(state, k)
       if Keyword.get(opts, :send_self, false) do
         send(pid, {:reply, resp})

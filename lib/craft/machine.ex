@@ -368,7 +368,7 @@ defmodule Craft.Machine do
 
   def handle_call({{:query_reply, reply}, query_from}, _from, state) do
     if Map.get(state.client_query_results, query_from) == :pending do
-      {:reply, :ok, put_in(state, [:client_query_results, query_from], {:resolved, reply})}
+      {:reply, :ok, put_in(state, [Access.key!(:client_query_results), query_from], {:resolved, reply})}
     else
       GenServer.reply(query_from, reply)
       {:reply, :ok, state}

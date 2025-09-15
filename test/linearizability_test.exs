@@ -129,7 +129,7 @@ defmodule Craft.LinearizabilityTest do
           query = {:get, :a}
           {{:read, query}, Craft.query(query, ctx.name)}
         _val ->
-          {{:read, {:get_parralel, :a, send_self: true}}, Craft.query({:get_parralel, :a, []}, ctx.name)}
+          {{:read, {:get_parallel, :a, send_self: true}}, Craft.query({:get_parallel, :a, []}, ctx.name)}
       end
     end
   end
