@@ -4,6 +4,7 @@
 #
 # :erlang.term_to_binary/2 isn't guaranteed to be consistent over OTP releases, but :dets uses it, so i guess it's actually stable?
 #
+#
 defmodule Craft.Configuration do
   @moduledoc false
 
@@ -54,19 +55,26 @@ defmodule Craft.Configuration do
       |> Map.put(:name, name)
       |> :erlang.term_to_binary()
 
-    make_new_directory()
+    name
+    |> make_new_directory()
     |> configuration_file()
     |> File.write!(contents)
 
     find(name)
   end
 
-  def make_new_directory do
-    name = random_string()
-    path = Path.join(data_dir(), name)
+  def make_new_directory(name) do
+    hash =
+      name
+      |> :erlang.phash2()
+      |> Integer.to_string()
+
+    path = Path.join(data_dir(), hash)
 
     if File.exists?(path) do
-      make_new_directory()
+      :crypto.strong_rand_bytes(16)
+      |> Base.encode16(case: :lower)
+      |> make_new_directory()
     else
       File.mkdir_p!(path)
 
@@ -76,10 +84,5 @@ defmodule Craft.Configuration do
 
   def data_dir do
     Application.get_env(:craft, :data_dir)
-  end
-
-  defp random_string do
-    :crypto.strong_rand_bytes(16)
-    |> Base.encode16(case: :lower)
   end
 end
