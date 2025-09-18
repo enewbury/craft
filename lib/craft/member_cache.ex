@@ -6,20 +6,21 @@ defmodule Craft.MemberCache do
 
   alias Craft.Consensus.State, as: ConsensusState
   alias Craft.Consensus.State.Members
-  alias Craft.Machine.State, as: MachineState
   alias Craft.GlobalTimestamp
+  alias Craft.Machine.State, as: MachineState
+  alias Craft.Persistence
 
   defmodule GroupStatus do
     @moduledoc false
-    defstruct [:group_name, :lease_holder, :leader, :members]
+    defstruct [:group_name, :lease_holder, :leader, :members, :commit_index, :current_term]
   end
-  Record.defrecord(:group_status, [:lease_holder, :leader, :members])
+  Record.defrecord(:group_status, [:lease_holder, :leader, :members, :commit_index, :current_term])
   defmacrop index(field), do: (quote do group_status(unquote(field)) + 1 end)
 
   @doc false
   def discover(group_name, members) do
     tuple =
-      group_status(members: MapSet.new(members))
+      group_status(members: Map.new(members, fn member -> {member, %{}} end))
       |> put_elem(0, group_name)
 
     :ets.insert(__MODULE__, tuple)
@@ -47,15 +48,46 @@ defmodule Craft.MemberCache do
 
   @doc false
   def update(%ConsensusState{} = state) do
+    members =
+      state.members
+      |> Members.all_nodes()
+      |> Map.new(fn member ->
+        status =
+          cond do
+            member in state.members.voting_nodes ->
+              :voting
+
+            member in state.members.non_voting_nodes ->
+              :non_voting
+
+            member in state.members.catching_up_nodes ->
+              :catching_up
+          end
+
+        log_index =
+          if state.leader_state do
+            if member == state.leader_id do
+              Persistence.latest_index(state.persistence)
+            else
+              state.leader_state.match_indices[member]
+            end
+          end
+
+        {member, %{status: status, log_index: log_index}}
+      end)
+
     elements = [
       {index(:leader), state.leader_id},
-      {index(:members), Members.all_nodes(state.members)}
+      {index(:members), members},
+      {index(:commit_index), state.commit_index},
+      {index(:current_term), state.current_term}
     ]
 
     if :ets.update_element(__MODULE__, state.name, elements) do
       :ok
     else
       discover(state.name, [])
+
       update(state)
     end
   end
@@ -81,6 +113,11 @@ defmodule Craft.MemberCache do
 
   @doc false
   def update_members(group_name, new_members) do
+    :ets.update_element(__MODULE__, group_name, {index(:members), new_members})
+  end
+
+  @doc false
+  def update_commit_index(group_name, new_members) do
     :ets.update_element(__MODULE__, group_name, {index(:members), new_members})
   end
 
@@ -123,11 +160,11 @@ defmodule Craft.MemberCache do
   def handle_info(:poll, state) do
     for {group_name, group_status} <- all() do
       # group members should not poll their own group
-      if not MapSet.member?(group_status.members, node()) do
+      if not Map.has_key?(group_status.members, node()) do
         followers =
           group_status.members
-          |> MapSet.delete(group_status.leader)
-          |> MapSet.to_list()
+          |> Map.delete(group_status.leader)
+          |> Map.keys()
 
         nodes = [group_status.leader | followers]
 
@@ -161,7 +198,9 @@ defmodule Craft.MemberCache do
       group_name: elem(record, 0),
       members: group_status(record, :members),
       leader: group_status(record, :leader),
-      lease_holder: group_status(record, :lease_holder)
+      lease_holder: group_status(record, :lease_holder),
+      commit_index: group_status(record, :commit_index),
+      current_term: group_status(record, :current_term)
     }
   end
 end

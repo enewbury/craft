@@ -13,6 +13,7 @@ defmodule Mix.Tasks.Compile.Nif do
 end
 
 defmodule Craft.MixProject do
+  @moduledoc false
   use Mix.Project
 
   def project do

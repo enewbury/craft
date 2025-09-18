@@ -1,4 +1,5 @@
 defmodule Craft.Visualizer do
+  @moduledoc false
   require EEx
 
   @template Path.join([__DIR__, "visualizer", "index.html.eex"])

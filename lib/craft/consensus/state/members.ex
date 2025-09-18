@@ -1,4 +1,6 @@
 defmodule Craft.Consensus.State.Members do
+  @moduledoc false
+
   defstruct [
     :catching_up_nodes,
     :non_voting_nodes,

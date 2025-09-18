@@ -1,4 +1,6 @@
 defmodule Craft.ParallelClients do
+  @moduledoc false
+
   alias Craft.Linearizability.Operation
 
   def run(fun, num, num_requests) do

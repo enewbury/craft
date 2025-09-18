@@ -1,4 +1,6 @@
 defmodule Craft.Bootstrap do
+  @moduledoc false
+
   def start_dev_cluster(num \\ 5) do
     {name, nodes} =
       num

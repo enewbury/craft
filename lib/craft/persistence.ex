@@ -1,4 +1,6 @@
 defmodule Craft.Persistence do
+  @moduledoc false
+
   alias Craft.Log.EmptyEntry
   alias Craft.Log.CommandEntry
   alias Craft.Log.MembershipEntry

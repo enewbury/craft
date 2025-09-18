@@ -229,7 +229,10 @@ defmodule Craft do
       :eventual ->
         case MemberCache.get(name) do
           {:ok, %GroupStatus{} = group_status} ->
-            node = Enum.random(group_status.members)
+            node =
+              group_status.members
+              |> Map.keys()
+              |> Enum.random()
 
             call_machine(name, node, {:quer, :eventual, query}, timeout)
 
@@ -248,11 +251,17 @@ defmodule Craft do
 
   defp with_leader_redirect(name, func) do
     case MemberCache.get(name) do
-      {:ok, %GroupStatus{leader: nil} = group_status} ->
-        do_leader_redirect(name, Enum.random(group_status.members), group_status.members, func)
-
       {:ok, %GroupStatus{} = group_status} ->
-        do_leader_redirect(name, group_status.leader, group_status.members, func)
+        members =
+          group_status.members
+          |> Map.keys()
+          |> MapSet.new()
+
+        if group_status.leader do
+          do_leader_redirect(name, group_status.leader, members, func)
+        else
+          do_leader_redirect(name, Enum.random(members), members, func)
+        end
 
       :not_found ->
         Logger.error("No known nodes for group '#{inspect(name)}', have you called Craft.discover/2?")
