@@ -3,6 +3,7 @@ defmodule Craft.Consensus.State.LeaderState do
   alias Craft.Consensus.State.Members
   alias Craft.Log.MembershipEntry
   alias Craft.Machine
+  alias Craft.MemberCache
   alias Craft.Persistence
   alias Craft.RPC.AppendEntries
   alias Craft.RPC.InstallSnapshot
@@ -146,7 +147,11 @@ defmodule Craft.Consensus.State.LeaderState do
         state
 
       _ ->
-        do_handle_append_entries_results(state, results)
+        state = do_handle_append_entries_results(state, results)
+
+        MemberCache.update(state)
+
+        state
     end
   end
 
