@@ -22,10 +22,11 @@ defmodule Craft.Machine do
   @type private :: any()
   @type snapshot :: any()
   @type role :: :receiving_snapshot | :lonely | :follower | :candidate | :leader
+  @type reply_from :: {:direct, GenServer.from()} | {:quorum, pid(), GenServer.from()}
 
   @callback init(Craft.group_name()) :: {:ok, private()}
   @callback handle_command(Craft.command(), Craft.log_index(), private()) :: {Craft.reply(), private()} | {Craft.reply(), Craft.side_effects(), private()}
-  @callback handle_query(Craft.query(), from :: {pid(), {pid(), reference()}}, private()) :: {:reply, Craft.reply()} | :noreply
+  @callback handle_query(Craft.query(), reply_from(), private()) :: {:reply, Craft.reply()} | :noreply
   @callback handle_role_change(role(), private()) :: private()
   @callback handle_info(term(), private()) :: private()
   @optional_callbacks handle_role_change: 2, handle_info: 2
@@ -61,7 +62,8 @@ defmodule Craft.Machine do
       :global_clock,
       :lease_expires_at,
       last_applied: 0,
-      client_query_results: %{},
+      client_query_results: [],
+      pending_parallel_queries: MapSet.new(),
       client_commands: %{}
     ]
   end
@@ -144,8 +146,12 @@ defmodule Craft.Machine do
   end
 
   @doc "Allows responding to a query from a different process, like GenServer.reply"
-  def reply({pid, query_from}, reply) do
-    GenServer.call(pid, {{:query_reply, reply}, query_from})
+  def reply({:direct, query_from}, reply) do
+    GenServer.reply(query_from, reply)
+  end
+
+  def reply({:quorum, machine_pid, query_from}, reply) do
+    GenServer.call(machine_pid, {{:query_reply, reply}, query_from})
   end
 
   @impl true
@@ -181,6 +187,10 @@ defmodule Craft.Machine do
       GenServer.reply(from, response)
     end
 
+    for from <- state.pending_parallel_queries do
+      GenServer.reply(from, response)
+    end
+
     private =
       if function_exported?(state.module, :handle_role_change, 2) do
         state.module.handle_role_change(new_role, state.private)
@@ -188,7 +198,15 @@ defmodule Craft.Machine do
         state.private
       end
 
-    {:noreply, %{state | role: new_role, private: private, client_commands: %{}, client_query_results: %{}}}
+    {:noreply,
+     %{
+       state
+       | role: new_role,
+         private: private,
+         client_commands: %{},
+         client_query_results: [],
+         pending_parallel_queries: MapSet.new()
+     }}
   end
 
   @impl true
@@ -205,13 +223,11 @@ defmodule Craft.Machine do
       if state.role == :leader do
         # read-index based queries
         for {from, result} <- state.client_query_results do
-          with {:resolved, reply} <- result do
-            Logger.debug("responding to client query", logger_metadata(trace: {:sending_client_response, %{from: from, result: reply}}))
-            GenServer.reply(from, reply)
-          end
+          Logger.debug("responding to client query", logger_metadata(trace: {:sending_client_response, %{from: from, result: result}}))
+          GenServer.reply(from, result)
         end
 
-        state = %{state | client_query_results: %{}, lease_expires_at: lease_expires_at}
+        state = %{state | client_query_results: [], lease_expires_at: lease_expires_at}
 
         if lease_expires_at do
           MemberCache.update_lease_holder(state)
@@ -309,7 +325,7 @@ defmodule Craft.Machine do
          {:ok, lease_time} when lease_time > 0 <- GlobalTimestamp.time_until_lease_expires(state.global_clock, state.lease_expires_at) do
       Logger.debug("executing query", logger_metadata(trace: {:query, :linearizable, :lease_read, from, query}))
 
-      case state.module.handle_query(query, {self(), from}, state.private) do
+      case state.module.handle_query(query, {:direct, from}, state.private) do
         {:reply, reply} -> {:reply, reply, state}
         :noreply -> {:noreply, state}
       end
@@ -322,13 +338,13 @@ defmodule Craft.Machine do
   def handle_call({:query, :linearizable, query}, from, %State{role: :leader} = state) do
     Logger.debug("executing query", logger_metadata(trace: {:query, :linearizable, :quorum_read, from, query}))
 
-    client_query_results = 
-      case state.module.handle_query(query, {self(), from}, state.private) do
-        {:reply, reply} -> Map.put(state.client_query_results, from, {:resolved, reply})
-        :noreply -> Map.put(state.client_query_results, from, :pending)
+    state = 
+      case state.module.handle_query(query, {:quorum, self(), from}, state.private) do
+        {:reply, reply} -> %{state | client_query_results: [{from, reply} | state.client_query_results]}
+        :noreply -> %{state | pending_parallel_queries: MapSet.put(state.pending_parallel_queries, from)}
       end
 
-    {:noreply, %{state | client_query_results: client_query_results}}
+    {:noreply, state}
   end
 
   # only the leader can process linearizable queries
@@ -342,9 +358,9 @@ defmodule Craft.Machine do
     if state.role == :leader do
       Logger.debug("executing query", logger_metadata(trace: {:query, :leader_eventual, :quorum_read, from, query}))
 
-      case state.module.handle_query(query, {self(), from}, state.private) do
+      case state.module.handle_query(query, {:direct, from}, state.private) do
         {:reply, reply} -> {:reply, reply, state}
-        :noreply -> {:norely, state}
+        :noreply -> {:noreply, state}
       end
     else
       case MemberCache.get(state.name) do
@@ -360,18 +376,22 @@ defmodule Craft.Machine do
   def handle_call({:query, :eventual, query}, from, state) do
     Logger.debug("executing query", logger_metadata(trace: {:query, :eventual, :quorum_read, from, query}))
 
-    case state.module.handle_query(query, {self(), from}, state.private) do
+    case state.module.handle_query(query, {:direct, from}, state.private) do
       {:reply, reply} -> {:reply, reply, state}
-      :noreply -> {:norely, state}
+      :noreply -> {:noreply, state}
     end
   end
 
   def handle_call({{:query_reply, reply}, query_from}, _from, state) do
-    if Map.get(state.client_query_results, query_from) == :pending do
-      {:reply, :ok, put_in(state, [Access.key!(:client_query_results), query_from], {:resolved, reply})}
+    if MapSet.member?(state.pending_parallel_queries, query_from) do
+      {:reply, :ok,
+       %{
+         state
+         | pending_parallel_queries: MapSet.delete(state.pending_parallel_queries, query_from),
+           client_query_results: [{query_from, reply} | state.client_query_results]
+       }}
     else
-      GenServer.reply(query_from, reply)
-      {:reply, :ok, state}
+      {:reply, :noop, state}
     end
   end
 
