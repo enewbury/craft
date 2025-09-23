@@ -41,6 +41,7 @@ defmodule Craft.Machine do
     @callback snapshots(private()) :: %{index() => snapshot()}
     @callback prepare_to_receive_snapshot(private()) :: {:ok, data_dir(), private()}
     @callback receive_snapshot(private()) :: {:ok, private()}
+    @callback backup(to_directory :: Path.t(), private()) :: :ok | {:error, any()}
   end
 
   defmodule LogStoredMachine do
@@ -91,6 +92,12 @@ defmodule Craft.Machine do
     name
     |> lookup(__MODULE__)
     |> GenServer.call({:receive_snapshot, install_snapshot})
+  end
+
+  def backup(name, to_directory) do
+    name
+    |> lookup(__MODULE__)
+    |> GenServer.call({:backup, to_directory})
   end
 
   def state(name) do
@@ -422,6 +429,11 @@ defmodule Craft.Machine do
       end
 
     {:reply, :ok, %{state | private: private, last_applied: last_applied}}
+  end
+
+  @impl true
+  def handle_call({:backup, to_directory}, _from, state) do
+    {:reply, state.module.backup(to_directory, state.private), state}
   end
 
   @impl true

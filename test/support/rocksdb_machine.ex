@@ -144,6 +144,11 @@ defmodule Craft.RocksDBMachine do
     end
   end
 
+  @impl true
+  def backup(to_directory, state) do
+    :rocksdb.checkpoint(state.db, :erlang.binary_to_list(to_directory))
+  end
+
   def dump(state) do
     kv =
       with {:ok, iterator} <- :rocksdb.iterator(state.db, []),

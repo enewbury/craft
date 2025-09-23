@@ -95,6 +95,10 @@ defmodule Craft.Consensus do
     do_operation(:call, name, {:snapshot_ready, index, path})
   end
 
+  def backup(name, to_directory) do
+    do_operation(:call, name, {:backup, to_directory})
+  end
+
   # casting a user command is necessary when the node that recieves the command
   # is not the one that will respond to it (just leadership transfer, so far).
   def cast_user_command(name, node, msg, opts \\ []) do
@@ -303,6 +307,10 @@ defmodule Craft.Consensus do
     {:keep_state, data, [{:reply, from, :ok}]}
   end
 
+  def lonely({:call, from}, {:backup, to_directory}, data) do
+    backup(to_directory, from, data)
+  end
+
   def lonely({:call, from}, _request, data) do
     {:keep_state_and_data, [{:reply, from, not_leader_response(data)}]}
   end
@@ -410,6 +418,10 @@ defmodule Craft.Consensus do
     send(caller_pid, {id, not_leader_response(data)})
 
     :keep_state_and_data
+  end
+
+  def receiving_snapshot({:call, from}, {:backup, _to_directory}, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :receiving_snapshot}}]}
   end
 
   def receiving_snapshot({:call, from}, _request, data) do
@@ -575,6 +587,10 @@ defmodule Craft.Consensus do
     {:keep_state, data, [{:reply, from, :ok}]}
   end
 
+  def follower({:call, from}, {:backup, to_directory}, data) do
+    backup(to_directory, from, data)
+  end
+
   def follower({:call, from}, _request, data) do
     {:keep_state_and_data, [{:reply, from, not_leader_response(data)}]}
   end
@@ -712,6 +728,10 @@ defmodule Craft.Consensus do
     data = State.snapshot_ready(data, index, path_or_content)
 
     {:keep_state, data, [{:reply, from, :ok}]}
+  end
+
+  def candidate({:call, from}, {:backup, to_directory}, data) do
+    backup(to_directory, from, data)
   end
 
   def candidate({:call, from}, _request, data) do
@@ -960,6 +980,10 @@ defmodule Craft.Consensus do
     {:keep_state, data, [{:reply, from, :ok}]}
   end
 
+  def leader({:call, from}, {:backup, to_directory}, data) do
+    backup(to_directory, from, data)
+  end
+
   def leader({:call, from}, _msg, %State{leader_state: %LeaderState{leadership_transfer: %LeadershipTransfer{} = leadership_transfer}}) do
     {:keep_state_and_data, [{:reply, from, {:error, {:leadership_transfer_in_progress, leadership_transfer.current_candidate}}}]}
   end
@@ -1078,5 +1102,19 @@ defmodule Craft.Consensus do
     entry_index = Persistence.latest_index(persistence)
 
     {:keep_state, %{data | persistence: persistence}, [{:reply, from, {:ok, entry_index}}]}
+  end
+
+  defp backup(to_directory, from, data) do
+    consensus_result = Persistence.backup(data.persistence, Path.join(to_directory, "consensus"))
+    machine_result = Machine.backup(data.name, Path.join(to_directory, "machine"))
+
+    result =
+      if consensus_result == :ok and machine_result == :ok do
+        :ok
+      else
+        {:error, %{machine_result: machine_result, consensus_result: consensus_result}}
+      end
+
+    {:keep_state_and_data, [{:reply, from, result}]}
   end
 end

@@ -17,6 +17,7 @@
 #
 defmodule Craft do
   alias Craft.Consensus
+  alias Craft.Configuration
   alias Craft.Machine
   alias Craft.MemberCache
   alias Craft.MemberCache.GroupStatus
@@ -144,6 +145,19 @@ defmodule Craft do
   @doc "Transfers leadership to a random follower."
   def transfer_leadership(name) do
     with_leader_redirect(name, &Consensus.transfer_leadership(name, &1))
+  end
+
+  @doc "Writes a backup of the local member of the given group to the provided path."
+  def backup(name, path) do
+    File.mkdir_p!(path)
+
+    with :ok <- Configuration.copy_configuration(name, path),
+         :ok <- Consensus.backup(name, path) do
+      :ok
+    else
+      error ->
+        error
+    end
   end
 
   @doc """

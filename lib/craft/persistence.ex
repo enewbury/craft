@@ -36,6 +36,7 @@ defmodule Craft.Persistence do
   @callback fetch_metadata(any()) :: {:ok, binary()} | :error
   @callback dump(any()) :: any()
   @callback length(any()) :: pos_integer()
+  @callback backup(any(), Path.t()) :: :ok | {:error, any()}
   @callback close(any()) :: :ok
 
   @optional_callbacks [close: 1]
@@ -169,6 +170,10 @@ defmodule Craft.Persistence do
 
   def length(%__MODULE__{module: module, private: private}) do
     module.length(private)
+  end
+
+  def backup(%__MODULE__{module: module, private: private}, to_directory) do
+    module.backup(private, to_directory)
   end
 
   def close(%__MODULE__{module: module, private: private} = persistence) do

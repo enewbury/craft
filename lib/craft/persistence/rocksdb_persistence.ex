@@ -277,6 +277,11 @@ defmodule Craft.Persistence.RocksDBPersistence do
   end
 
   @impl true
+  def backup(%__MODULE__{} = state, to_directory) do
+    :rocksdb.checkpoint(state.db, :erlang.binary_to_list(to_directory))
+  end
+
+  @impl true
   def close(%__MODULE__{} = state) do
     :rocksdb.close(state.db)
   end

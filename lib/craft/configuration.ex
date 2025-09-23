@@ -9,20 +9,38 @@ defmodule Craft.Configuration do
   @moduledoc false
 
   def find(name) do
+    with {dir, file} <- find_file(name) do
+      file
+      |> File.read!()
+      |> :erlang.binary_to_term()
+      |> Map.put(:data_dir, dir)
+    end
+  end
+
+  def copy_configuration(name, to_directory) do
+    with {_dir, file} <- find_file(name) do
+      to_file = configuration_file(to_directory)
+
+      File.cp(file, to_file)
+    end
+  end
+
+  defp find_file(name) do
     data_dir()
     |> File.ls!()
     |> Enum.find_value(fn dir ->
       path = Path.join(data_dir(), dir)
 
       if File.dir?(path) do
+        config_file = configuration_file(path)
+
         config =
-          path
-          |> configuration_file()
+          config_file
           |> File.read!()
           |> :erlang.binary_to_term()
 
         if config.name == name do
-          Map.put(config, :data_dir, dir)
+          {dir, config_file}
         end
       end
     end)
