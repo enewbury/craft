@@ -22,7 +22,7 @@ defmodule Craft.Machine do
   @type private :: any()
   @type snapshot :: any()
   @type role :: :receiving_snapshot | :lonely | :follower | :candidate | :leader
-  @type reply_from :: {:direct, GenServer.from()} | {:quorum, pid(), GenServer.from()}
+  @type reply_from :: {:direct, GenServer.from()} | {{:quorum, Craft.log_index(), pid()}, GenServer.from()}
 
   @callback init(Craft.group_name()) :: {:ok, private()}
   @callback handle_command(Craft.command(), Craft.log_index(), private()) :: {Craft.reply(), private()} | {Craft.reply(), Craft.side_effects(), private()}
@@ -150,8 +150,8 @@ defmodule Craft.Machine do
     GenServer.reply(query_from, reply)
   end
 
-  def reply({:quorum, machine_pid, query_from}, reply) do
-    GenServer.call(machine_pid, {{:query_reply, reply}, query_from})
+  def reply({{:quorum, index, machine_pid}, query_from}, reply) do
+    GenServer.call(machine_pid, {{:query_reply, index, reply}, query_from})
   end
 
   @impl true
@@ -339,7 +339,7 @@ defmodule Craft.Machine do
     Logger.debug("executing query", logger_metadata(trace: {:query, :linearizable, :quorum_read, from, query}))
 
     state = 
-      case state.module.handle_query(query, {:quorum, self(), from}, state.private) do
+      case state.module.handle_query(query, {{:quorum, state.last_applied, self()}, from}, state.private) do
         {:reply, reply} -> %{state | client_query_results: [{from, reply} | state.client_query_results]}
         :noreply -> %{state | pending_parallel_queries: MapSet.put(state.pending_parallel_queries, from)}
       end
@@ -382,16 +382,22 @@ defmodule Craft.Machine do
     end
   end
 
-  def handle_call({{:query_reply, reply}, query_from}, _from, state) do
-    if MapSet.member?(state.pending_parallel_queries, query_from) do
-      {:reply, :ok,
-       %{
-         state
-         | pending_parallel_queries: MapSet.delete(state.pending_parallel_queries, query_from),
-           client_query_results: [{query_from, reply} | state.client_query_results]
-       }}
-    else
-      {:reply, :noop, state}
+  def handle_call({{:query_reply, index, reply}, query_from}, _from, state) do
+    is_pending? = MapSet.member?(state.pending_parallel_queries, query_from)
+
+    cond do
+      is_pending? and index < state.last_applied ->
+        GenServer.reply(query_from, reply)
+        {:reply, :ok, %{state | pending_parallel_queries: MapSet.delete(state.pending_parallel_queries, query_from)}}
+      is_pending? ->
+        {:reply, :ok,
+         %{
+           state
+           | pending_parallel_queries: MapSet.delete(state.pending_parallel_queries, query_from),
+             client_query_results: [{query_from, reply} | state.client_query_results]
+         }}
+      true ->
+        {:reply, :noop, state}
     end
   end
 
