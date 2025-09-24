@@ -54,7 +54,7 @@ defmodule Craft.SimpleMachine do
   def handle_query({:get_parallel, k, opts}, from, state) do
     pid = self()
     spawn_link(fn ->
-      resp = Map.get(state, k)
+      resp = {:ok, Map.get(state, k)}
       if Keyword.get(opts, :send_self, false) do
         send(pid, {:reply, resp})
       else
