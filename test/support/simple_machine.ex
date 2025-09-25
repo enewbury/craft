@@ -32,7 +32,7 @@ defmodule Craft.SimpleMachine do
   def read(query, state) do
     id = {self(), make_ref()}
     case handle_query(query, id, state) do
-      {:reply, resp}-> resp
+      {:reply, resp} -> resp
       :noreply ->
         receive do
           {:reply, resp} -> resp
