@@ -105,7 +105,7 @@ defmodule Craft.Adapter.Local do
   def handle_call({:query, group, query}, from, state) do
     %{machine: machine, machine_state: machine_state} = Map.get(state.groups, group)
 
-    case machine.handle_query(query, {self(), from}, machine_state) do
+    case machine.handle_query(query, {:direct, from}, machine_state) do
       {:reply, response} -> {:reply, response, state}
       :noreply -> {:noreply, state}
     end

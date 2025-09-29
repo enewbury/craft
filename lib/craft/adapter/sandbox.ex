@@ -5,8 +5,6 @@ defmodule Craft.Adapter.Sandbox do
 
   alias Craft.Adapter.Local
 
-  @custom_lookup Application.compile_env(:craft, __MODULE__, [])[:custom_lookup]
-
   # Passthrough
   for {func, arity} <- [discover: 2, transfer_leadership: 2, add_member: 2, holding_lease?: 1, cached_info: 1] do
     args = Macro.generate_arguments(arity, __MODULE__)
@@ -118,9 +116,9 @@ defmodule Craft.Adapter.Sandbox do
       end)
 
     {response, state} =
-      if is_nil(response) && @custom_lookup do
+      if is_nil(response) && is_atom(custom_lookup()) do
         Enum.reduce_while(pids, nil, fn pid, _acc ->
-          case @custom_lookup.lookup(pid) do
+          case custom_lookup().lookup(pid) do
             nil ->
               {:cont, {nil, state}}
 
@@ -178,5 +176,9 @@ defmodule Craft.Adapter.Sandbox do
     else
       state
     end
+  end
+
+  defp custom_lookup do
+    Application.get_env(:craft, __MODULE__, [])[:custom_lookup]
   end
 end
