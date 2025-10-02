@@ -829,7 +829,11 @@ defmodule Craft.Consensus do
         {:ok, 0} ->
           Logger.info("taking over lease", logger_metadata(data, trace: :lease_takeover))
 
-          {:keep_state, put_in(data.leader_state.waiting_for_lease, false)}
+          data = put_in(data.leader_state.waiting_for_lease, false)
+
+          Machine.lease_taken(data)
+
+          {:keep_state, data}
 
         {:ok, wait_time} ->
           Logger.debug("waiting #{wait_time}ms for lease", logger_metadata(data, trace: {:waiting_out_lease, wait_time}))

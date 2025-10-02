@@ -28,6 +28,7 @@ defmodule Craft.Machine do
   @callback handle_command(Craft.command(), Craft.log_index(), private()) :: {Craft.reply(), private()} | {Craft.reply(), Craft.side_effects(), private()}
   @callback handle_query(Craft.query(), reply_from(), private()) :: {:reply, Craft.reply()} | :noreply
   @callback handle_role_change(role(), private()) :: private()
+  @callback handle_lease_taken(private()) :: private()
   @callback handle_info(term(), private()) :: private()
   @optional_callbacks handle_role_change: 2, handle_info: 2
 
@@ -101,6 +102,12 @@ defmodule Craft.Machine do
     name
     |> lookup(__MODULE__)
     |> GenServer.call({:backup, to_directory})
+  end
+
+  def lease_taken(%ConsensusState{} = state) do
+    state.name
+    |> lookup(__MODULE__)
+    |> GenServer.call({:lease_taken, state.lease_expires_at})
   end
 
   def state(name) do
@@ -495,6 +502,22 @@ defmodule Craft.Machine do
   @impl true
   def handle_call({:backup, to_directory}, _from, state) do
     {:reply, state.module.backup(to_directory, state.private), state}
+  end
+
+  @impl true
+  def handle_call({:lease_taken, lease_expires_at}, _from, state) do
+    state = %{state | lease_expires_at: lease_expires_at}
+
+    MemberCache.update_lease_holder(state)
+
+    private =
+      if function_exported?(state.module, :handle_lease_taken, 1) do
+        state.module.handle_lease_taken(state.private)
+      else
+        state.private
+      end
+
+    {:reply, :ok, %{state | private: private}}
   end
 
   @impl true
