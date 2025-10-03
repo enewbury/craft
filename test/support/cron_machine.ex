@@ -1,3 +1,6 @@
+#
+# This is just a toy, there are edge cases, don't use this in production.
+#
 defmodule Craft.CronMachine do
   use Craft.Machine, mutable: false
 

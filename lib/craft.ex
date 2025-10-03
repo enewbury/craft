@@ -160,6 +160,23 @@ defmodule Craft do
     end
   end
 
+  @doc "Copies the backup at the given path to Craft's data directory. You must call Craft.start_member/1 afterwards."
+  def restore(path) do
+    config =
+      path
+      |> Configuration.configuration_file()
+      |> Configuration.read_file()
+
+    if Craft.MemberSupervisor.member_running?(config.name) do
+      raise "unable to restore, local member for group #{config.name} is running, you must first stop it with Craft.stop_member/1"
+    end
+
+    Configuration.delete_member_data(config.name)
+    Configuration.restore_from_backup(path)
+
+    :ok
+  end
+
   @doc """
   Sends a message to the local instance of the user's state machine.
 

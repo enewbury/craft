@@ -25,6 +25,25 @@ defmodule Craft.Configuration do
     end
   end
 
+  def delete_member_data(name) do
+    with {dir, _file} <- find_file(name) do
+      data_dir()
+      |> Path.join(dir)
+      |> File.rm_rf!()
+    end
+  end
+
+  def restore_from_backup(path) do
+    config =
+      path
+      |> configuration_file()
+      |> read_file()
+
+    new_path = make_new_directory(config.name)
+
+    File.cp_r!(path, new_path)
+  end
+
   defp find_file(name) do
     data_dir()
     |> File.ls!()
@@ -34,10 +53,7 @@ defmodule Craft.Configuration do
       if File.dir?(path) do
         config_file = configuration_file(path)
 
-        config =
-          config_file
-          |> File.read!()
-          |> :erlang.binary_to_term()
+        config = read_file(config_file)
 
         if config.name == name do
           {dir, config_file}
@@ -46,7 +62,13 @@ defmodule Craft.Configuration do
     end)
   end
 
-  defp configuration_file(dir) do
+  def read_file(file) do
+    file
+    |> File.read!()
+    |> :erlang.binary_to_term()
+  end
+
+  def configuration_file(dir) do
     Path.join(dir, "config.erlterm")
   end
 
