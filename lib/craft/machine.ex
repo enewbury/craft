@@ -50,8 +50,8 @@ defmodule Craft.Machine do
     @type private() :: Craft.Machine.private()
     @type snapshot() :: Craft.Machine.snapshot()
 
-    @callback snapshot(private()) :: {:ok, snapshot()}
-    @callback receive_snapshot(snapshot(), private()) :: {:ok, private()}
+    @callback snapshot(private()) :: snapshot()
+    @callback receive_snapshot(snapshot(), private()) :: private()
   end
 
   defmodule State do
@@ -501,7 +501,12 @@ defmodule Craft.Machine do
 
   @impl true
   def handle_call({:backup, to_directory}, _from, state) do
-    {:reply, state.module.backup(to_directory, state.private), state}
+    if state.module.__craft_mutable__() do
+      {:reply, state.module.backup(to_directory, state.private), state}
+    else
+      # log-stored machines don't need to write a backup
+      {:reply, :ok, state}
+    end
   end
 
   @impl true

@@ -232,7 +232,7 @@ defmodule Craft.Consensus do
   def lonely(:cast, %RequestVote{pre_vote: true} = request_vote, data) do
     vote_granted = State.vote_for?(data, request_vote)
 
-    Logger.debug("#{if vote_granted, do: "granting", else: "denying"} pre-vote to #{request_vote.candidate_id}", logger_metadata(data, trace: {:vote_requested, request_vote, granted?: vote_granted}))
+    Logger.info("#{if vote_granted, do: "granting", else: "denying"} pre-vote to #{request_vote.candidate_id}", logger_metadata(data, trace: {:vote_requested, request_vote, granted?: vote_granted}))
 
     RPC.respond_vote(request_vote, vote_granted, data)
 
@@ -255,7 +255,7 @@ defmodule Craft.Consensus do
   end
 
   def lonely(:cast, %RequestVote{pre_vote: false} = request_vote, data) do
-    Logger.debug("denying vote to #{request_vote.candidate_id}, already voted in this term", logger_metadata(data, trace: {:vote_requested, request_vote, granted?: false}))
+    Logger.info("denying vote to #{request_vote.candidate_id}, already voted in this term", logger_metadata(data, trace: {:vote_requested, request_vote, granted?: false}))
 
     RPC.respond_vote(request_vote, false, data)
 
@@ -263,7 +263,7 @@ defmodule Craft.Consensus do
   end
 
   def lonely(:cast, %RequestVote.Results{pre_vote: true} = results, data) do
-    Logger.debug("pre-vote #{if results.vote_granted, do: "granted", else: "denied"} by #{results.from}", logger_metadata(data, trace: {:vote_received, granted?: results.vote_granted, pre_vote?: true}))
+    Logger.info("pre-vote #{if results.vote_granted, do: "granted", else: "denied"} by #{results.from}", logger_metadata(data, trace: {:vote_received, granted?: results.vote_granted, pre_vote?: true}))
 
     data = State.record_vote(data, results)
 
@@ -1109,7 +1109,7 @@ defmodule Craft.Consensus do
   end
 
   defp backup(to_directory, from, data) do
-    consensus_result = Persistence.backup(data.persistence, Path.join(to_directory, "consensus"))
+    consensus_result = Persistence.backup(data.persistence, to_directory)
     machine_result = Machine.backup(data.name, Path.join(to_directory, "machine"))
 
     result =

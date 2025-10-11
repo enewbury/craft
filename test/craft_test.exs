@@ -117,4 +117,36 @@ defmodule CraftTest do
 
     assert_receive ^message
   end
+
+  nexus_test "backup/2 + purge/1 + restore/1 roundtrip", %{name: name, nodes: nodes, nexus: nexus} do
+    wait_until(nexus, {Stability, :all})
+
+    ref = make_ref()
+    :ok = SimpleMachine.put(name, :test_key, ref)
+
+    wait_until(nexus, {Stability, :all})
+
+    backup_node = Enum.random(nodes)
+    backup_dir = Path.join([
+                   System.tmp_dir!(),
+                   "craft_test_backup_" <> (:crypto.strong_rand_bytes(8) |> Base.encode16())
+                 ])
+
+    :ok = :rpc.call(backup_node, Craft, :backup, [name, backup_dir])
+
+    :ok = Craft.stop_group(name)
+
+    for node <- nodes do
+      assert is_list(:rpc.call(node, Craft, :purge, [name]))
+
+      :ok = :rpc.call(node, Craft, :restore, [backup_dir])
+      {:ok, _pid} = :rpc.call(node, Craft, :start_member, [name, [nexus_pid: nexus]])
+    end
+
+    wait_until(nexus, {Stability, :majority})
+
+    assert {:ok, ^ref} = SimpleMachine.get(name, :test_key, consistency: :eventual)
+
+    File.rm_rf!(backup_dir)
+  end
 end

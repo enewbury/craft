@@ -22,10 +22,12 @@ defmodule Craft.MemberSupervisor do
     Supervisor.init(children, strategy: :one_for_all)
   end
 
-  def start_member(name) do
+  def start_existing_member(name, opts) do
     case Configuration.find(name) do
       config when is_map(config) ->
-        do_start_member(config)
+        config
+        |> Map.merge(Enum.into(opts, %{}))
+        |> do_start_member()
 
       _ ->
         {:error, :not_found}

@@ -31,7 +31,10 @@ defmodule Craft.Persistence.RocksDBPersistence do
       |> Configuration.find()
       |> Map.fetch!(:data_dir)
 
-    data_dir = Path.join([Configuration.data_dir(), group_dir, "log"])
+    data_dir =
+      Configuration.data_dir()
+      |> Path.join(group_dir)
+      |> log_dir()
 
     File.mkdir_p!(data_dir)
 
@@ -52,6 +55,8 @@ defmodule Craft.Persistence.RocksDBPersistence do
     }
     |> set_latest_index_and_term()
   end
+
+  defp log_dir(base), do: Path.join(base, "log")
 
   @impl true
   def latest_index(%__MODULE__{} = state), do: state.latest_index
@@ -278,7 +283,12 @@ defmodule Craft.Persistence.RocksDBPersistence do
 
   @impl true
   def backup(%__MODULE__{} = state, to_directory) do
-    :rocksdb.checkpoint(state.db, :erlang.binary_to_list(to_directory))
+    dir =
+      to_directory
+      |> log_dir()
+      |> :erlang.binary_to_list()
+
+    :rocksdb.checkpoint(state.db, dir)
   end
 
   @impl true

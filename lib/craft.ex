@@ -193,7 +193,7 @@ defmodule Craft do
   end
 
   @doc "Starts the local member with the given name"
-  defdelegate start_member(name), to: Craft.MemberSupervisor
+  defdelegate start_member(name, opts \\ []), to: Craft.MemberSupervisor, as: :start_existing_member
   @doc "Stops the local member with the given name"
   defdelegate stop_member(name), to: Craft.MemberSupervisor
   @doc "Initializes the MemberCache for a raft group with the given nodes"
@@ -204,6 +204,8 @@ defmodule Craft do
   defdelegate known_groups, to: MemberCache, as: :all
   @doc "Lists cached information about the given group."
   defdelegate cached_info(group_name), to: MemberCache, as: :get
+  @doc "Destroys all local data for the given group."
+  defdelegate purge(name), to: Configuration, as: :delete_member_data
 
   @doc """
   Submits a command to the given group `name`, once quorum is reached, the command is executed.
@@ -265,7 +267,7 @@ defmodule Craft do
               |> Map.keys()
               |> Enum.random()
 
-            call_machine(name, node, {:quer, :eventual, query}, timeout)
+            call_machine(name, node, {:query, :eventual, query}, timeout)
 
           :not_found ->
             Logger.error("No known nodes for group '#{inspect(name)}', have you called Craft.discover/2?")
