@@ -109,7 +109,17 @@ defmodule Craft.LinearizabilityTest do
   end
 
   def assert_linearizable(history) do
-    assert {:ok, _linearized_history, _ignored_ops} = Linearizability.linearize(history, Craft.SimpleMachine)
+    case Linearizability.linearize(history, Craft.SimpleMachine) do
+      {:ok, _linearized_history, _ignored_ops} ->
+        :ok
+
+      :error ->
+        rand = :crypto.strong_rand_bytes(8) |> Base.encode16()
+        filename = "#{__MODULE__}_history_#{rand}.erlterm"
+        File.write(filename, :erlang.term_to_binary(history))
+
+        flunk "linearizability violation detected, history written to #{filename}"
+    end
   end
 
   defp random_request_fun(ctx) do

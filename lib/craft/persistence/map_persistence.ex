@@ -122,4 +122,9 @@ defmodule Craft.Persistence.MapPersistence do
   def dump(state) do
     state
   end
+
+  @impl true
+  def backup(_dir, _state) do
+    :ok
+  end
 end

@@ -22,7 +22,7 @@ defmodule Craft.MemberSupervisor do
     Supervisor.init(children, strategy: :one_for_all)
   end
 
-  def start_existing_member(name, opts) do
+  def start_existing_member(name, opts \\ []) do
     case Configuration.find(name) do
       config when is_map(config) ->
         config
@@ -34,7 +34,7 @@ defmodule Craft.MemberSupervisor do
     end
   end
 
-  def start_member(name, opts) do
+  def start_member(name, opts \\ []) do
     opts =
       Map.merge(%{
         name: name,

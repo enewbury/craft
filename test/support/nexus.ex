@@ -122,7 +122,6 @@ defmodule Craft.Nexus do
           case action do
             :drop ->
               Logger.debug("dropped %{inspect message.__struct__} for #{to_node} from #{from_node}", logger_metadata(trace: {:dropped_msg, to_node, from_node, message}))
-
               state
 
             :forward ->
@@ -137,7 +136,6 @@ defmodule Craft.Nexus do
 
             {:delay, msecs} ->
               :timer.apply_after(msecs, Consensus, :remote_operation, [event.meta.name, to_node, :cast, message])
-
               State.record_event(state, event)
           end
 

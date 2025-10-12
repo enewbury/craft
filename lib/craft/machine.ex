@@ -30,7 +30,7 @@ defmodule Craft.Machine do
   @callback handle_role_change(role(), private()) :: private()
   @callback handle_lease_taken(private()) :: private()
   @callback handle_info(term(), private()) :: private()
-  @optional_callbacks handle_role_change: 2, handle_info: 2
+  @optional_callbacks handle_role_change: 2, handle_lease_taken: 1, handle_info: 2
 
   defmodule MutableMachine do
     @type private() :: Craft.Machine.private()
@@ -336,8 +336,11 @@ defmodule Craft.Machine do
       Logger.debug("executing query", logger_metadata(trace: {:query, :linearizable, :lease_read, from, query}))
 
       case state.module.handle_query(query, {:direct, from}, state.private) do
-        {:reply, reply} -> {:reply, reply, state}
-        :noreply -> {:noreply, state}
+        {:reply, reply} ->
+          {:reply, reply, state}
+
+        :noreply ->
+          {:noreply, state}
       end
     else
       _ ->
@@ -352,8 +355,11 @@ defmodule Craft.Machine do
 
     state = 
       case state.module.handle_query(query, {:quorum, query_time, self(), from}, state.private) do
-        {:reply, reply} -> %{state | client_query_results: [{from, reply} | state.client_query_results]}
-        :noreply -> %{state | pending_parallel_queries: MapSet.put(state.pending_parallel_queries, from)}
+        {:reply, reply} ->
+          %{state | client_query_results: [{from, reply} | state.client_query_results]}
+
+        :noreply ->
+          %{state | pending_parallel_queries: MapSet.put(state.pending_parallel_queries, from)}
       end
 
     {:noreply, state}
@@ -371,8 +377,11 @@ defmodule Craft.Machine do
       Logger.debug("executing query", logger_metadata(trace: {:query, :leader_eventual, :quorum_read, from, query}))
 
       case state.module.handle_query(query, {:direct, from}, state.private) do
-        {:reply, reply} -> {:reply, reply, state}
-        :noreply -> {:noreply, state}
+        {:reply, reply} ->
+          {:reply, reply, state}
+
+        :noreply ->
+          {:noreply, state}
       end
     else
       case MemberCache.get(state.name) do
@@ -389,8 +398,11 @@ defmodule Craft.Machine do
     Logger.debug("executing query", logger_metadata(trace: {:query, :eventual, :quorum_read, from, query}))
 
     case state.module.handle_query(query, {:direct, from}, state.private) do
-      {:reply, reply} -> {:reply, reply, state}
-      :noreply -> {:noreply, state}
+      {:reply, reply} ->
+        {:reply, reply, state}
+
+      :noreply ->
+        {:noreply, state}
     end
   end
 

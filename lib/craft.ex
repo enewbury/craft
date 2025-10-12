@@ -84,9 +84,6 @@ defmodule Craft do
   @doc """
   Adds an erlang node to an existing raft group.
 
-  This function will also ensure the supervised processes for this raft group are
-  running on the node to add before it tries to connect it.
-
   ### Opts
   - `timeout` - (default: 5_000) the time before we return a timeout error
   """
@@ -95,7 +92,7 @@ defmodule Craft do
 
     :pong = Node.ping(node)
 
-    case :rpc.call(node, Craft.MemberSupervisor, :start_member, [name]) do
+    case :rpc.call(node, Craft.MemberSupervisor, :start_existing_member, [name]) do
       {:error, :not_found} ->
         {:ok, config} = with_leader_redirect(name, &configuration(name, &1))
 
