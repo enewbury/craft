@@ -57,8 +57,16 @@ defmodule Craft.Consensus do
 
   # amount of time to wait for votes before concluding that the election has failed
   @election_timeout 1500
-  # max jitter for lonely election initiation
+
+  # jitter for lonely election initiation
   @election_timeout_jitter 1500
+
+  if Mix.env == :test do
+    # min floor prevents some flake in election tests
+    defp lonely_election_timeout(), do: 100 + :rand.uniform(@election_timeout_jitter)
+  else
+    defp lonely_election_timeout(), do: :rand.uniform(@election_timeout_jitter)
+  end
 
   # amount of time to wait for new leader to take over before concluding that leadership transfer has failed
   @leadership_transfer_timeout 3000
@@ -205,7 +213,7 @@ defmodule Craft.Consensus do
 
     Logger.info("became lonely", logger_metadata(data, trace: {:became, :lonely}))
 
-    {:keep_state, data, [{:state_timeout, :rand.uniform(@election_timeout_jitter), :begin_pre_vote}]}
+    {:keep_state, data, [{:state_timeout, lonely_election_timeout(), :begin_pre_vote}]}
   end
 
   def lonely(:state_timeout, :begin_pre_vote, data) do
