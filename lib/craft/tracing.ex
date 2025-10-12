@@ -1,10 +1,11 @@
 defmodule Craft.Tracing do
   alias Craft.Consensus.State, as: ConsensusState
+  alias Craft.GlobalTimestamp.NativeClock
 
   def logger_metadata(extras) when is_list(extras) do
     # :logger uses the :time keyword (in microseconds), we want nanoseconds
 
-    Keyword.merge([t: :os.system_time(:nanosecond)], extras)
+    Keyword.merge([t: NativeClock.monotonic_raw_time()], extras)
   end
 
   def logger_metadata(%ConsensusState{} = state, extras \\ []) do
