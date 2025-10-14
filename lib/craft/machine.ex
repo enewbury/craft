@@ -11,6 +11,7 @@ defmodule Craft.Machine do
   alias Craft.Log.MembershipEntry
   alias Craft.Log.SnapshotEntry
   alias Craft.MemberCache
+  alias Craft.MemberCache.GroupStatus
   alias Craft.Persistence
   alias Craft.SnapshotServer.RemoteFile
 
@@ -183,7 +184,7 @@ defmodule Craft.Machine do
 
     # if we're the just-deposed leader, we probably don't know who the new leader is
     response =
-      if state.role == :leader && node() == group_status.leader && new_role != :leader do
+      if !group_status.leader || state.role == :leader && node() == group_status.leader && new_role != :leader  do
         {:error, :unknown_leader}
       else
         {:error, {:not_leader, group_status.leader}}
@@ -367,9 +368,13 @@ defmodule Craft.Machine do
 
   # only the leader can process linearizable queries
   def handle_call({:query, :linearizable, _query}, _from, state) do
-    {:ok, group_status} = MemberCache.get(state.name)
+    case MemberCache.get(state.name) do
+      {:ok, %GroupStatus{leader: leader}} when not is_nil(leader) ->
+        {:reply, {:error, {:not_leader, leader}}, state}
 
-    {:reply, {:error, {:not_leader, group_status.leader}}, state}
+      _ ->
+        {:reply, {:error, :unknown_leader}, state}
+    end
   end
 
   def handle_call({:query, {:eventual, :leader}, query}, from, state) do
@@ -385,10 +390,10 @@ defmodule Craft.Machine do
       end
     else
       case MemberCache.get(state.name) do
-        {:ok, group_status} ->
-          {:reply, {:error, {:not_leader, group_status.leader}}, state}
+        {:ok, %GroupStatus{leader: leader}} when not is_nil(leader) ->
+          {:reply, {:error, {:not_leader, leader}}, state}
 
-        :not_found ->
+        _ ->
           {:reply, {:error, :unknown_leader}, state}
       end
     end
