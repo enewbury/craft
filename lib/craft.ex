@@ -197,12 +197,16 @@ defmodule Craft do
   defdelegate discover(name, nodes), to: MemberCache
   @doc "Indicates if this node is holding the lease for the specified group name."
   defdelegate holding_lease?(name), to: MemberCache
+  @doc "Indicates if this node is holding the lease, called from within a user's machine callback"
+  defdelegate holding_lease?(), to: Machine
   @doc "Lists the groups known to this node, with cached information (members, lease holder, etc..)"
-  defdelegate known_groups, to: MemberCache, as: :all
+  defdelegate known_groups(), to: MemberCache, as: :all
   @doc "Lists cached information about the given group."
   defdelegate cached_info(group_name), to: MemberCache, as: :get
   @doc "Destroys all local data for the given group."
   defdelegate purge(name), to: Configuration, as: :delete_member_data
+  @doc "Gives the current time, if the machine has a global clock configured. Called from within the user's machine callback."
+  defdelegate now(), to: Machine
 
   @doc """
   Submits a command to the given group `name`, once quorum is reached, the command is executed.

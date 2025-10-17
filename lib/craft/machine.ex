@@ -165,6 +165,22 @@ defmodule Craft.Machine do
     GenServer.call(machine_pid, {{:query_reply, query_time, reply}, query_from})
   end
 
+  def now do
+    case Process.get(:__craft_meta__) do
+      %{global_clock: global_clock} when not is_nil(global_clock) ->
+        global_clock.now()
+
+      _ ->
+        raise "no global clock configured"
+    end
+  end
+
+  def holding_lease? do
+    %{group_name: group_name} = Process.get(:__craft_meta__)
+
+    Craft.holding_lease?(group_name)
+  end
+
   @impl true
   def init(args) do
     Logger.metadata(name: args.name, node: node(), nexus: args[:nexus_pid])
@@ -173,6 +189,8 @@ defmodule Craft.Machine do
       remote_group_leader = :rpc.call(node(nexus_pid), Process, :whereis, [:init])
       :logger.update_process_metadata(%{gl: remote_group_leader})
     end
+
+    Process.put(:__craft_meta__, %{group_name: args.name, global_clock: args[:global_clock]})
 
     {:ok, %State{name: args.name, module: args.machine, global_clock: args[:global_clock]}}
   end
