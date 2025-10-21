@@ -1,8 +1,6 @@
 defmodule Craft.RocksDBMachine do
   use Craft.Machine, mutable: true
 
-  alias Craft.Configuration
-
   @log_index_column_family {~c"log_index", []}
   @log_index_key "log_index"
 
@@ -19,19 +17,10 @@ defmodule Craft.RocksDBMachine do
   end
 
   @impl true
-  def init(group_name) do
-    group_dir =
-      group_name
-      |> Configuration.find()
-      |> Map.fetch!(:data_dir)
-
-    data_dir = Path.join([Configuration.data_dir(), group_dir, "machine"])
-
-    File.mkdir_p!(data_dir)
-
+  def init(args) do
     %State{
-      data_dir: data_dir,
-      snapshots_dir: Path.join(data_dir, "snapshots")
+      data_dir: args.data_dir,
+      snapshots_dir: Path.join(args.data_dir, "snapshots")
     }
     |> do_init(create_if_missing: true, create_missing_column_families: true)
   end
@@ -103,7 +92,7 @@ defmodule Craft.RocksDBMachine do
         end
 
       :ok = :rocksdb.release_snapshot(snapshot)
-      Craft.Machine.reply(from, resp)
+      Craft.reply(from, resp)
     end)
 
     :noreply

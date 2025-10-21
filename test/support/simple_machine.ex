@@ -21,7 +21,7 @@ defmodule Craft.SimpleMachine do
   def init, do: init(nil)
 
   @impl true
-  def init(_group_name) do
+  def init(_args) do
     {:ok, %{}}
   end
 
@@ -58,7 +58,7 @@ defmodule Craft.SimpleMachine do
       if Keyword.get(opts, :send_self, false) do
         send(pid, {:reply, resp})
       else
-        Craft.Machine.reply(from, resp)
+        Craft.reply(from, resp)
       end
     end)
 

@@ -1,75 +1,63 @@
-#
-# This is just a toy, there are edge cases, don't use this in production.
-#
 defmodule Craft.CronMachine do
   use Craft.Machine, mutable: false
 
   require Logger
 
-  def schedule(group_name, mfa, time) do
-    Craft.command({:schedule, mfa, time}, group_name)
+  # @run_at ~T[00:00:00]
+  @run_at Time.utc_now() |> Time.add(20, :second)
+
+  @check_interval :timer.seconds(5)
+
+  def run(group_name) do
+    Craft.command(:run, group_name)
   end
 
   defmodule State do
-    defstruct [
-      :group_name,
-      jobs: MapSet.new()
-    ]
+    defstruct [:group_name, :timer, :next_run_at]
   end
 
   @impl true
-  def init(group_name) do
-    Process.put(:timers, %{})
-
-    {:ok, %State{group_name: group_name}}
+  def init(args) do
+    {:ok, %State{group_name: args.group_name, next_run_at: next_run_at()}}
   end
 
   @impl true
-  def handle_command({:schedule, mfa, time}, _log_index, state) do
-    job = {mfa, time}
-
-    if MapSet.member?(state.jobs, job) do
-      {{:error, :already_scheduled}, state}
-    else
-      start_timer(state.group_name, job)
-
-      {:ok, %{state | jobs: MapSet.put(state.jobs, job)}}
+  def handle_command(:run, _log_index, state) do
+    if Craft.holding_lease?() do
+      spawn(fn ->
+        IO.puts "ran!"
+      end)
     end
+
+    {:ok, %{state | next_run_at: next_run_at()}}
   end
 
   @impl true
-  def handle_query({:get, _}, _from, state) do
-    {:reply, {:ok, state}}
-  end
+  def handle_query(_, _from, state), do: {:reply, :not_implemented, state}
 
   @impl true
+  def handle_role_change(:leader, state) do
+    {:ok, ref} = :timer.send_after(@check_interval, self(), :check)
+
+    %{state | timer: ref}
+  end
+
   def handle_role_change(:follower, state) do
-    for {job, ref} <- Process.get(:timers) do
-      Logger.info("cancelling timer for #{inspect job}")
+    :timer.cancel(state.timer)
 
-      :timer.cancel(ref)
-    end
-
-    state
+    %{state | timer: nil}
   end
   def handle_role_change(_, state), do: state
 
   @impl true
-  def handle_lease_taken(state) do
-    for job <- state.jobs do
-      start_timer(state.group_name, job)
+  def handle_info(:check, state) do
+    {:ok, ref} = :timer.send_after(@check_interval, self(), :check)
+
+    if DateTime.compare(state.next_run_at, now()) == :lt do
+      spawn_link(__MODULE__, :run, [state.group_name])
     end
 
-    state
-  end
-
-  @impl true
-  def handle_info({:run, {{m, f, a}, _time} = job}, state) do
-    spawn(m, f, a)
-
-    start_timer(state.group_name, job)
-
-    state
+    %{state | timer: ref}
   end
 
   @impl true
@@ -80,23 +68,22 @@ defmodule Craft.CronMachine do
 
   def dump(state), do: state
 
-  defp start_timer(group_name, {mfa, time} = job) do
-    if Craft.holding_lease?(group_name) do
-      now = Time.utc_now()
+  defp next_run_at(time \\ @run_at) do
+    now = Time.utc_now()
 
-      milliseconds_until_run =
-        if Time.after?(time, now) do
-          Time.diff(time, now, :millisecond)
-        else
-          Time.diff(time, now, :millisecond) + :timer.hours(24)
-        end
+    seconds_until_run =
+      if Time.after?(time, now) do
+        Time.diff(time, now, :second)
+      else
+        Time.diff(time, now, :second) + (24 * 60 * 60)
+      end
 
-      Logger.info("job #{inspect mfa} scheduled to run in #{:erlang.convert_time_unit(milliseconds_until_run, :millisecond, :second)} seconds")
+    DateTime.add(now(), seconds_until_run, :second)
+  end
 
-      {:ok, ref} = :timer.apply_after(milliseconds_until_run, Craft, :send, [group_name, {:run, job}])
+  defp now do
+    {:ok, %Craft.GlobalTimestamp{latest: latest}} = Craft.now()
 
-      timers = Process.get(:timers)
-      Process.put(:timers, Map.put(timers, job, ref))
-    end
+    latest
   end
 end

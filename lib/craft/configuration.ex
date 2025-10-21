@@ -4,12 +4,13 @@
 #
 # :erlang.term_to_binary/2 isn't guaranteed to be consistent over OTP releases, but :dets uses it, so i guess it's actually stable?
 #
+# the `namespace` parameter is only used by Craft.Sandbox
 #
 defmodule Craft.Configuration do
   @moduledoc false
 
-  def find(name) do
-    with {dir, file} <- find_file(name) do
+  def find(name, namespace \\ "") do
+    with {dir, file} <- find_file(name, namespace) do
       file
       |> File.read!()
       |> :erlang.binary_to_term()
@@ -17,49 +18,58 @@ defmodule Craft.Configuration do
     end
   end
 
-  def copy_configuration(name, to_directory) do
-    with {_dir, file} <- find_file(name) do
+  def copy_configuration(name, to_directory, namespace \\ "") do
+    with {_dir, file} <- find_file(name, namespace) do
       to_file = configuration_file(to_directory)
 
       File.cp(file, to_file)
     end
   end
 
-  def delete_member_data(name) do
-    with {dir, _file} <- find_file(name) do
+  def delete_member_data(name, namespace \\ "") do
+    with {dir, _file} <- find_file(name, namespace) do
       data_dir()
       |> Path.join(dir)
       |> File.rm_rf!()
     end
   end
 
-  def restore_from_backup(path) do
+  def restore_from_backup(path, namespace \\ "") do
     config =
       path
       |> configuration_file()
       |> read_file()
 
-    new_path = make_new_directory(config.name)
+    new_path = make_new_directory(config.name, namespace)
 
     File.cp_r!(path, new_path)
   end
 
-  defp find_file(name) do
-    data_dir()
-    |> File.ls!()
-    |> Enum.find_value(fn dir ->
-      path = Path.join(data_dir(), dir)
+  defp find_file(name, namespace) do
+    dirs =
+      data_dir()
+      |> Path.join(namespace)
+      |> File.ls()
 
-      if File.dir?(path) do
-        config_file = configuration_file(path)
+    case dirs do
+      {:ok, dirs} ->
+        Enum.find_value(dirs, fn dir ->
+          path = Path.join([data_dir(), namespace, dir])
 
-        config = read_file(config_file)
+          if File.dir?(path) do
+            config_file = configuration_file(path)
 
-        if config.name == name do
-          {dir, config_file}
-        end
-      end
-    end)
+            config = read_file(config_file)
+
+            if config.name == name do
+              {Path.join(namespace, dir), config_file}
+            end
+          end
+        end)
+
+      {:error, _} ->
+        nil
+    end
   end
 
   def read_file(file) do
@@ -89,32 +99,36 @@ defmodule Craft.Configuration do
   #   end
   # end
 
-  def write_new!(name, config) when is_map(config) do
+  def write_new!(name, config, namespace \\ "") do
+    if find(name, namespace) do
+      raise "configuration for group #{inspect name} already exists in namespace #{inspect namespace}"
+    end
+
     contents =
       config
       |> Map.put(:name, name)
       |> :erlang.term_to_binary()
 
     name
-    |> make_new_directory()
+    |> make_new_directory(namespace)
     |> configuration_file()
     |> File.write!(contents)
 
-    find(name)
+    find(name, namespace)
   end
 
-  def make_new_directory(name) do
+  def make_new_directory(name, namespace) do
     hash =
       name
       |> :erlang.phash2()
       |> Integer.to_string()
 
-    path = Path.join(data_dir(), hash)
+    path = Path.join([data_dir(), namespace, hash])
 
     if File.exists?(path) do
       :crypto.strong_rand_bytes(16)
       |> Base.encode16(case: :lower)
-      |> make_new_directory()
+      |> make_new_directory(namespace)
     else
       File.mkdir_p!(path)
 

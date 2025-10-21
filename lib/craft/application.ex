@@ -26,6 +26,13 @@ defmodule Craft.Application do
       Craft.MemberCache
     ]
 
+    children =
+      if Craft.adaptor() == Craft.Sandbox do
+        children ++ [Craft.Sandbox.Manager]
+      else
+        children
+      end
+
     Supervisor.start_link(children, strategy: :rest_for_one)
   end
 

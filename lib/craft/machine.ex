@@ -156,15 +156,6 @@ defmodule Craft.Machine do
     |> GenServer.call(request, timeout)
   end
 
-  @doc "Allows responding to a query from a different process, like GenServer.reply"
-  def reply({:direct, query_from}, reply) do
-    GenServer.reply(query_from, reply)
-  end
-
-  def reply({:quorum, query_time, machine_pid, query_from}, reply) do
-    GenServer.call(machine_pid, {{:query_reply, query_time, reply}, query_from})
-  end
-
   def now do
     case Process.get(:__craft_meta__) do
       %{global_clock: global_clock} when not is_nil(global_clock) ->
@@ -467,7 +458,16 @@ defmodule Craft.Machine do
   def handle_call({:init_or_restore, log}, _from, state) do
     {last_applied, private, snapshot} =
       if state.module.__craft_mutable__() do
-        {:ok, private} = state.module.init(state.name)
+        data_dir =
+          state.name
+          |> Configuration.find()
+          |> Map.fetch!(:data_dir)
+
+        data_dir = Path.join([Configuration.data_dir(), data_dir, "machine"])
+
+        File.mkdir_p!(data_dir)
+
+        {:ok, private} = state.module.init(%{name: state.name, data_dir: data_dir})
         last_applied = state.module.last_applied_log_index(private)
 
         snapshot =
