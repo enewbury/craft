@@ -12,3 +12,6 @@ tmp
 .elixir_tools
 .#*
 /visualizations
+/example/data/
+/example/deps
+/example/_build

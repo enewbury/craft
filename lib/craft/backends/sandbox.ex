@@ -1,9 +1,115 @@
 defmodule Craft.Sandbox do
+  @moduledoc """
+  Non-distributed testing backend, isolates groups into namespaces. Suitable for testing basic functionality of an application state machine.
+
+  In full production mode (i.e. using the Craft.Raft backend), each application state machine runs in its own process, when using the sandbox,
+  all machines run in a single sandbox process. So user functionality that expects process isolation will not operate correctly.
+
+  Usage:
+
+  Explicit mode:
+    `config :craft, :backend, Craft.Sandbox`
+
+    then, in your test code, join a sandbox:
+    ```
+    setup do
+      Craft.Sandbox.join("my sandbox", pid \\ self())`
+    end
+    ```
+
+  Implicit mode:
+    Adding the `:lookup` key enables implicit mode, the sandbox is determined by calling the `{m, f}` provided with the pid as its sole argument.
+
+    `config :craft, :backend, {Craft.Sandbox, lookup: {m, f}}`
+
+  Shared mode, single global sandbox (useful for dev):
+    `config :craft, :backend, {Craft.Sandbox, mode: :shared}`
+
+  Inheritance can be enabled by setting the `:mode` to `:inherit`:
+    `config :craft, :backend, {Craft.Sandbox, mode: :inherit, lookup: {m, f}}`
+  """
   use GenServer
 
   alias Craft.Configuration
 
   import Craft.Application, only: [via: 2, lookup: 2]
+
+  # test pid -> sandbox name
+  opts =
+    case Application.compile_env(:craft, :backend) do
+      {__MODULE__, opts} ->
+        opts
+
+      __MODULE__ ->
+        []
+    end
+
+  if opts[:mode] == :shared do
+    defp do_find_sandbox(_pid), do: {:ok, :shared}
+  else
+    with {m, f} <- opts[:lookup] do
+      defp do_find_sandbox(pid) do
+        case :erlang.apply(unquote(m), unquote(f), [pid]) do
+          {:ok, name} ->
+            DynamicSupervisor.start_child(Craft.Supervisor, {Craft.Sandbox, name})
+            {:ok, name}
+
+          error ->
+            error
+        end
+      end
+    else
+      _ ->
+        defp do_find_sandbox(pid), do: __MODULE__.Manager.find(pid)
+    end
+  end
+
+  if opts[:mode] == :inherit do
+    defp find_sandbox(pid) do
+      case do_find_sandbox(pid) do
+        {:ok, name} ->
+          {:ok, name}
+
+        _ ->
+          # if the ancestor is a sandbox, return it
+          # this happens when the machine spawns a process
+          {:dictionary, dictionary} = Process.info(pid, :dictionary)
+          if name = dictionary[:__CRAFT_SANDBOX__] do
+            {:ok, name}
+          else
+            case Process.info(pid, :parent) do
+              {:parent, parent} when is_pid(parent) ->
+                find_sandbox(parent)
+
+              _ ->
+                :error
+            end
+          end
+      end
+    end
+  else
+    defp find_sandbox(pid), do: do_find_sandbox(pid)
+  end
+
+
+  def init do
+    with {__MODULE__, opts} <- Application.get_env(:craft, :backend),
+         :shared <- opts[:mode] do
+      {:ok, _} = DynamicSupervisor.start_child(Craft.Supervisor, {Craft.Sandbox, :shared})
+    end
+  end
+
+  @doc "Enters the specified process into the sandbox given by `name`"
+  def join(name, pid \\ self()) do
+    GenServer.call(__MODULE__.Manager, {:join, name, pid})
+  end
+
+  @doc "Stops the sandbox, destroying all machine state."
+  def stop(name) do
+    if pid = lookup(name, Craft.Sandbox) do
+      DynamicSupervisor.terminate_child(Craft.Supervisor, pid)
+    end
+  end
 
   @doc false
   def start_group(name, nodes, machine, opts) do
@@ -40,10 +146,15 @@ defmodule Craft.Sandbox do
     GenServer.call(find!(), {:user_message, name, message})
   end
 
-  @doc false
-  def now do
-    Craft.GlobalTimestamp.FixedError.now()
+  def reply({:direct, {pid, _ref} = query_from}, reply) do
+    if find!() != find!(pid) do
+      raise "sandbox boundary violation"
+    end
+
+    GenServer.reply(query_from, reply)
   end
+
+  def reply({:quorum, _query_time, _machine_pid, _query_from}, _reply), do: :not_implemented
 
   @doc false
   def backup(name, path) do
@@ -53,6 +164,11 @@ defmodule Craft.Sandbox do
   @doc false
   def restore(path) do
     GenServer.call(find!(), {:restore, path})
+  end
+
+  @doc false
+  def now do
+    Craft.GlobalTimestamp.FixedError.now()
   end
 
   @doc false
@@ -78,22 +194,23 @@ defmodule Craft.Sandbox do
   def cached_info(_name), do: :not_implemented
   @doc false
   def purge(_name), do: :not_implemented
-
-
-  @doc "Enters the specified process into the sandbox given by `name`"
-  def join(name, pid \\ self()) do
-    GenServer.call(__MODULE__.Manager, {:join, name, pid})
-  end
-
   @doc false
-  def find!(pid \\ self()) do
-    with {:ok, name} <- GenServer.call(__MODULE__.Manager, {:find, pid}),
-         pid when is_pid(pid) <- lookup(name, Craft.Sandbox) do
-       pid
+  def state(_name), do: :not_implemented
+  @doc false
+  def state(_name, _node), do: :not_implemented
 
+  defp find!(pid \\ self()) do
+    # if the sandbox itself is the caller, it's its own sandbox
+    if pid == self() && Process.get(:__CRAFT_SANDBOX__) do
+      self()
     else
-      _ ->
-        raise "no sandbox configured for pid #{inspect self()}, you must join a sandbox with Craft.Sandbox.join/1"
+      with {:ok, name} <- find_sandbox(pid),
+           pid when is_pid(pid) <- lookup(name, Craft.Sandbox) do
+        pid
+      else
+        _ ->
+          raise "no sandbox configured for pid #{inspect self()}"
+      end
     end
   end
 
@@ -111,7 +228,9 @@ defmodule Craft.Sandbox do
   end
 
   @impl GenServer
-  def init(_) do
+  def init(name) do
+    Process.put(:__CRAFT_SANDBOX__, name)
+
     {:ok, %{}}
   end
 
@@ -178,7 +297,7 @@ defmodule Craft.Sandbox do
     end
   end
 
-  def handle_call({:user_message, name, message}, state) do
+  def handle_call({:user_message, name, message}, _from, state) do
     if machine_state = state[name] do
       private = machine_state.machine.handle_info(message, machine_state.private)
 
@@ -254,6 +373,10 @@ defmodule Craft.Sandbox do
       GenServer.start_link(__MODULE__, args, name: __MODULE__)
     end
 
+    def find(pid) do
+      GenServer.call(__MODULE__, {:find, pid})
+    end
+
     defmodule State do
       defstruct [
         name_to_pids: %{},
@@ -304,8 +427,8 @@ defmodule Craft.Sandbox do
           {name, pid_to_name} ->
             {_, name_to_pids} =
               Map.get_and_update!(state.name_to_pids, name, fn pids ->
-                if pids == MapSet.new([pid]) do
-                  :ok = DynamicSupervisor.terminate_child(Craft.Supervisor, lookup(name, Craft.Sandbox))
+                if (sandbox = lookup(name, Craft.Sandbox)) && pids == MapSet.new([pid]) do
+                  DynamicSupervisor.terminate_child(Craft.Supervisor, sandbox)
 
                   :pop
                 else

@@ -8,14 +8,6 @@ defmodule Craft.Application do
     silence_sasl_logger()
     set_nexus_logger()
 
-    case :net_kernel.get_state() do
-      %{started: :no} ->
-        ensure_disterl!()
-
-      _ ->
-        :ok
-    end
-
     create_data_dir!()
 
     children = [
@@ -26,14 +18,28 @@ defmodule Craft.Application do
       Craft.MemberCache
     ]
 
-    children =
-      if Craft.adaptor() == Craft.Sandbox do
-        children ++ [Craft.Sandbox.Manager]
-      else
-        children
+    # using Craft.backend/0 causes a typing error, annoying.
+    backend_children =
+      case Application.get_env(:craft, :backend) do
+        {Craft.Sandbox, _args} ->
+          [Craft.Sandbox.Manager]
+
+        Craft.Sandbox ->
+          [Craft.Sandbox.Manager]
+
+        _ ->
+          []
       end
 
-    Supervisor.start_link(children, strategy: :rest_for_one)
+    {:ok, pid} = Supervisor.start_link(children ++ backend_children, strategy: :rest_for_one)
+
+    # lazy-load in dev, annoying.
+    {:module, _} = Code.ensure_loaded(Craft.backend())
+    if function_exported?(Craft.backend(), :init, 0) do
+      :erlang.apply(Craft.backend(), :init, [])
+    end
+
+    {:ok, pid}
   end
 
   def via(name, component) do
@@ -75,21 +81,8 @@ defmodule Craft.Application do
     defp silence_sasl_logger do
       Logger.add_translator({Craft.SASLLoggerTranslator, :translate})
     end
-
-    defp ensure_disterl! do
-      case Node.start(:craft, :shortnames) do
-        {:ok, _} -> :ok
-        {:error, {:already_started, _}} -> :ok
-      end
-    end
   else
     defp set_nexus_logger, do: :noop
     defp silence_sasl_logger, do: :noop
-
-    defp ensure_disterl! do
-      if !Application.get_env(:craft, :allow_local?, false) do
-        raise("Craft requires the node to be in distributed mode. use `config :craft, allow_local?: true` to override")
-      end
-    end
   end
 end
