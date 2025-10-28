@@ -251,7 +251,7 @@ defmodule Craft.Consensus.State.LeaderState do
         # that's just pulled a snapshot can catch up
         # TODO: make log length configurable
         all_followers_caught_up = Enum.empty?(state.members.catching_up_nodes)
-        log_too_long = Persistence.length(state.persistence) > 20
+        log_too_long = Persistence.length(state.persistence) > 10_000
         # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
 
         Machine.quorum_reached(state, all_followers_caught_up && log_too_long)
