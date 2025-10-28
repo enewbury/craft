@@ -139,7 +139,8 @@ defmodule Craft.Machine do
         state.lease_expires_at
       end
 
-    last_quorum_at = get_in(state.leader_state.last_quorum_at)
+    # nil if not leader
+    last_quorum_at = get_in(state.leader_state.quorum_status.current_round_sent_at)
 
     state.name
     |> lookup(__MODULE__)

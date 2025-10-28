@@ -59,7 +59,7 @@ defmodule Craft.RPC.AppendEntries do
       entries: entries,
       leader_commit: state.commit_index,
       leadership_transfer: leadership_transfer,
-      sent_at: state.leader_state.last_heartbeat_sent_at,
+      sent_at: state.leader_state.quorum_status.current_round_sent_at,
       lease_expires_at: state.lease_expires_at
     }
   end

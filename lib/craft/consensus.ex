@@ -819,7 +819,7 @@ defmodule Craft.Consensus do
   end
 
   def leader({:timeout, :check_quorum}, :check_quorum, data) do
-    if data.leader_state.last_quorum_at < :erlang.monotonic_time(:millisecond) - @checkquorum_interval do
+    if LeaderState.QuorumStatus.last_quorum_at(data) < :erlang.monotonic_time(:millisecond) - @checkquorum_interval do
       Logger.info("unable to make quorum, stepping down.", logger_metadata(data, trace: {:check_quorum, :failed}))
 
       {:next_state, :lonely, data}
@@ -1035,17 +1035,7 @@ defmodule Craft.Consensus do
   defp not_leader_response(%State{leader_id: leader_id}), do: {:error, {:not_leader, leader_id}}
 
   defp heartbeat(%State{} = state) do
-    # the monotonic clock is not strictly increasing, so it can freeze unboundedly.
-    # if that happens, we add a millisecond to the last round's value to continue generating unique consensus round ids
-    now = :erlang.monotonic_time(:millisecond)
-    last_heartbeat_sent_at =
-      if state.leader_state.last_heartbeat_sent_at < now do
-        now
-      else
-        state.leader_state.last_heartbeat_sent_at + 1
-      end
-    state = put_in(state.leader_state.last_heartbeat_sent_at, last_heartbeat_sent_at)
-    state = put_in(state.leader_state.current_quorum_successful, false)
+    state = LeaderState.QuorumStatus.start_new_round(state)
 
     state =
       if state.global_clock do

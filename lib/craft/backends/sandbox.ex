@@ -40,7 +40,7 @@ defmodule Craft.Sandbox do
       {__MODULE__, opts} ->
         opts
 
-      __MODULE__ ->
+      _ ->
         []
     end
 

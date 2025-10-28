@@ -1,5 +1,6 @@
 defmodule Craft.Consensus.State.LeaderState do
   alias Craft.Consensus.State
+  alias Craft.Consensus.State.LeaderState.QuorumStatus
   alias Craft.Consensus.State.Members
   alias Craft.Log.MembershipEntry
   alias Craft.Machine
@@ -9,21 +10,13 @@ defmodule Craft.Consensus.State.LeaderState do
   alias Craft.RPC.InstallSnapshot
   alias Craft.SnapshotServer.SnapshotTransfer
 
-  require Logger
-
-  import Craft.Tracing, only: [logger_metadata: 1]
-
   defstruct [
     :next_indices,
     :match_indices,
     :membership_change,
     :leadership_transfer,
-    :last_heartbeat_sent_at, # the time that the most recent heartbeat round was sent
-    :last_quorum_at, # the last time we knew we were leader
-    # indicates if the current quorum round has been successful thus far (so we don't tell the machine multiple times)
-    :current_quorum_successful,
+    :quorum_status,
     :waiting_for_lease,
-    last_heartbeat_replies_at: %{}, # for CheckQuorum, voting members only
     snapshot_transfers: %{}
   ]
 
@@ -31,6 +24,7 @@ defmodule Craft.Consensus.State.LeaderState do
     # action: :add | :remove
     defstruct [:action, :node, :log_index]
   end
+
 
   defmodule LeadershipTransfer do
     defstruct [
@@ -74,8 +68,7 @@ defmodule Craft.Consensus.State.LeaderState do
     %__MODULE__{
       next_indices: next_indices,
       match_indices: match_indices,
-      last_quorum_at: :erlang.monotonic_time(:millisecond),
-      last_heartbeat_sent_at: :erlang.monotonic_time(:millisecond)
+      quorum_status: QuorumStatus.new()
     }
   end
 
@@ -128,35 +121,16 @@ defmodule Craft.Consensus.State.LeaderState do
     %{state | members: Members.remove_member(state.members, node), leader_state: leader_state}
   end
 
-  # this approach of generating a new id for each consensus round and only accepting replies from that one round
-  # may cause quorum failures on unreliable networks, if this is an issue, we can implement a sliding window of quorum rounds
-  # then `last_quorum_at` is just the most recent quorum round to complete.
-  def handle_append_entries_results(%State{leader_state: %__MODULE__{last_heartbeat_sent_at: round_time}} = state, %AppendEntries.Results{heartbeat_sent_at: reply_time} = results) when round_time != reply_time do
-    Logger.debug("heartbeat from #{results.from} missed deadline, ignoring.", logger_metadata(state))
+  def handle_append_entries_results(%State{} = state, %AppendEntries.Results{} = results) do
+    state = do_handle_append_entries_results(state, results)
+
+    MemberCache.update(state)
 
     state
   end
 
-  def handle_append_entries_results(%State{} = state, %AppendEntries.Results{} = results) do
-    heartbeat_sent_at = results.heartbeat_sent_at
-
-    case Map.fetch(state.leader_state.last_heartbeat_replies_at, results.from) do
-      {:ok, {^heartbeat_sent_at, _}} ->
-        Logger.warning("duplicate heartbeat reply received: #{inspect results}, ignoring.", logger_metadata(state))
-
-        state
-
-      _ ->
-        state = do_handle_append_entries_results(state, results)
-
-        MemberCache.update(state)
-
-        state
-    end
-  end
-
   defp do_handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: true} = results) do
-    state = bump_last_heartbeat_reply_at(state, results)
+    state = update_quorum_status(state, results)
     # accounts for the possibility of stale AppendEntries results (due to pathological network reordering)
     # and also avoids work when no follower log appends took place (i.e. a heartbeat that doesnt append anything)
     if results.latest_index > state.leader_state.match_indices[results.from] do
@@ -207,7 +181,7 @@ defmodule Craft.Consensus.State.LeaderState do
   end
 
   defp do_handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: false} = results) do
-    state = bump_last_heartbeat_reply_at(state, results)
+    state = update_quorum_status(state, results)
     # we don't know where we match the followers log
     match_indices = Map.put(state.leader_state.match_indices, results.from, 0)
     state = put_in(state.leader_state.match_indices, match_indices)
@@ -267,38 +241,22 @@ defmodule Craft.Consensus.State.LeaderState do
     put_in(state.leader_state.leadership_transfer, LeadershipTransfer.new(to_member, from))
   end
 
-  def bump_last_heartbeat_reply_at(%State{} = state, %AppendEntries.Results{} = results) do
+  def update_quorum_status(%State{} = state, %AppendEntries.Results{} = results) do
     if Members.can_vote?(state.members, results.from) do
-      last_heartbeat_replies_at = Map.put(state.leader_state.last_heartbeat_replies_at, results.from, {results.heartbeat_sent_at, :erlang.monotonic_time(:millisecond)})
-      state = put_in(state.leader_state.last_heartbeat_replies_at, last_heartbeat_replies_at)
+      {notify_machine?, state} = QuorumStatus.heartbeat_response_received(state, results)
 
-      # -1 since we're the leader
-      num_replies_needed = State.quorum_needed(state) - 1
+      if notify_machine? do
+        # snapshotting truncates the log, so we want to make sure that all followers are caught up first
+        # we don't want to delete a snapshot that's being downloaded, nor truncate the log before a follower
+        # that's just pulled a snapshot can catch up
+        # TODO: make log length configurable
+        all_followers_caught_up = Enum.empty?(state.members.catching_up_nodes)
+        log_too_long = Persistence.length(state.persistence) > 20
+        # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
 
-      num_heartbeat_replies_received_this_round =
-        Enum.count(last_heartbeat_replies_at, fn {_member, {sent_at, _received_at}} ->
-          sent_at == state.leader_state.last_heartbeat_sent_at
-        end)
+        Machine.quorum_reached(state, all_followers_caught_up && log_too_long)
 
-      # if quorum was achieved, the most we can say is that we we were leader when the round was sent
-      if num_heartbeat_replies_received_this_round >= num_replies_needed do
-        state = put_in(state.leader_state.last_quorum_at, state.leader_state.last_heartbeat_sent_at)
-
-        if not state.leader_state.current_quorum_successful do
-          # snapshotting truncates the log, so we want to make sure that all followers are caught up first
-          # we don't want to delete a snapshot that's being downloaded, nor truncate the log before a follower
-          # that's just pulled a snapshot can catch up
-          # TODO: make log length configurable
-          all_followers_caught_up = Enum.empty?(state.members.catching_up_nodes)
-          log_too_long = Persistence.length(state.persistence) > 20
-          # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
-
-          Machine.quorum_reached(state, all_followers_caught_up && log_too_long)
-
-          put_in(state.leader_state.current_quorum_successful, true)
-        else
-          state
-        end
+        state
       else
         state
       end
