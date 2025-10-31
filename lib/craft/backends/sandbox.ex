@@ -88,7 +88,7 @@ defmodule Craft.Sandbox do
       end
     end
 
-    defp find_ancestors_sandbox({:parent, pid}) do
+    defp find_ancestors_sandbox({:parent, pid}) when is_pid(pid) do
       # if the ancestor is a sandbox, return it
       # this happens when the machine spawns a process
       {:dictionary, dictionary} = Process.info(pid, :dictionary)
