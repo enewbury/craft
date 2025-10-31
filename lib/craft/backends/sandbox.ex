@@ -74,7 +74,7 @@ defmodule Craft.Sandbox do
           caller_pids = Process.get(:"$callers", [])
 
           sandbox =
-            Enum.find_value(pids, fn pid ->
+            Enum.find_value(caller_pids, fn pid ->
               case do_find_sandbox(pid) do
                 {:ok, name} -> {:ok, name}
                 :error -> nil
