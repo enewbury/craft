@@ -65,32 +65,48 @@ defmodule Craft.Sandbox do
   end
 
   if opts[:mode] == :inherit do
-    defp find_sandbox(pid) do
+    def find_sandbox(pid) do
       case do_find_sandbox(pid) do
         {:ok, name} ->
           {:ok, name}
 
-        _ ->
-          # if the ancestor is a sandbox, return it
-          # this happens when the machine spawns a process
-          {:dictionary, dictionary} = Process.info(pid, :dictionary)
-          if name = dictionary[:__CRAFT_SANDBOX__] do
-            {:ok, name}
-          else
-            case Process.info(pid, :parent) do
-              {:parent, parent} when is_pid(parent) ->
-                find_sandbox(parent)
+        :error ->
+          caller_pids = Process.get(:"$callers", [])
 
-              _ ->
-                :error
-            end
+          sandbox =
+            Enum.find_value(pids, fn pid ->
+              case do_find_sandbox(pid) do
+                {:ok, name} -> {:ok, name}
+                :error -> nil
+              end
+            end)
+
+          case sandbox do
+            {:ok, name} -> {:ok, name}
+            nil -> find_ancestors_sandbox(Process.info(pid, :parent))
           end
       end
     end
+
+    defp find_ancestors_sandbox({:parent, pid}) do
+      # if the ancestor is a sandbox, return it
+      # this happens when the machine spawns a process
+      {:dictionary, dictionary} = Process.info(pid, :dictionary)
+
+      if name = dictionary[:__CRAFT_SANDBOX__] do
+        {:ok, name}
+      else
+        case do_find_sandbox(pid) do
+          {:ok, name} -> {:ok, name}
+          :error -> find_ancestors_sandbox(Process.info(pid, :parent))
+        end
+      end
+    end
+
+    defp find_ancestors_sandbox(_no_parent), do: :error
   else
     defp find_sandbox(pid), do: do_find_sandbox(pid)
   end
-
 
   def init do
     with {__MODULE__, opts} <- Application.get_env(:craft, :backend),
@@ -209,7 +225,7 @@ defmodule Craft.Sandbox do
         pid
       else
         _ ->
-          raise "no sandbox configured for pid #{inspect self()}"
+          raise "no sandbox configured for pid #{inspect(self())}"
       end
     end
   end
@@ -275,9 +291,11 @@ defmodule Craft.Sandbox do
 
   def handle_call({:command, name, command}, _from, state) do
     if machine_state = state[name] do
-      {reply, private} = machine_state.module.handle_command(command, machine_state.index, machine_state.private)
+      {reply, private} =
+        machine_state.module.handle_command(command, machine_state.index, machine_state.private)
 
-      {:reply, reply, Map.put(state, name, %{machine_state | private: private, index: machine_state.index+1})}
+      {:reply, reply,
+       Map.put(state, name, %{machine_state | private: private, index: machine_state.index + 1})}
     else
       {:reply, {:error, :unknown_group}, state}
     end
@@ -378,10 +396,8 @@ defmodule Craft.Sandbox do
     end
 
     defmodule State do
-      defstruct [
-        name_to_pids: %{},
-        pid_to_name: %{}
-      ]
+      defstruct name_to_pids: %{},
+                pid_to_name: %{}
     end
 
     def init(_) do
@@ -404,9 +420,10 @@ defmodule Craft.Sandbox do
           end
 
         state =
-          %{state |
-            name_to_pids: Map.put(state.name_to_pids, name, pids),
-            pid_to_name: Map.put(state.pid_to_name, pid, name)
+          %{
+            state
+            | name_to_pids: Map.put(state.name_to_pids, name, pids),
+              pid_to_name: Map.put(state.pid_to_name, pid, name)
           }
 
         Process.monitor(pid)
