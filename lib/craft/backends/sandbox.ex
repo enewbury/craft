@@ -37,41 +37,40 @@ defmodule Craft.Sandbox do
   # test pid -> sandbox name
   opts =
     case Application.compile_env(:craft, :backend) do
-      {__MODULE__, opts} ->
-        opts
-
-      _ ->
-        []
+      {__MODULE__, opts} -> opts
+      _ -> []
     end
 
   if opts[:mode] == :shared do
     defp do_find_sandbox(_pid), do: {:ok, :shared}
   else
-    with {m, f} <- opts[:lookup] do
-      defp do_find_sandbox(pid) do
-        case :erlang.apply(unquote(m), unquote(f), [pid]) do
-          {:ok, name} ->
-            DynamicSupervisor.start_child(Craft.Supervisor, {Craft.Sandbox, name})
-            {:ok, name}
+    # with {m, f} <- opts[:lookup] do
+    #   defp do_find_sandbox(pid) do
+    #     case :erlang.apply(unquote(m), unquote(f), [pid]) do
+    #       {:ok, name} ->
+    #         DynamicSupervisor.start_child(Craft.Supervisor, {Craft.Sandbox, name})
+    #         {:ok, name}
 
-          error ->
-            error
-        end
-      end
-    else
-      _ ->
-        defp do_find_sandbox(pid), do: __MODULE__.Manager.find(pid)
-    end
+    #       error ->
+    #         error
+    #     end
+    #   end
+    # else
+    #   _ ->
+    defp do_find_sandbox(pid), do: __MODULE__.Manager.find(pid)
+    # end
   end
 
   if opts[:mode] == :inherit do
-    def find_sandbox(pid) do
+    def find_sandbox(pid, pid_callers) do
       case do_find_sandbox(pid) do
         {:ok, name} ->
           {:ok, name}
 
         :error ->
-          caller_pids = Process.get(:"$callers", [])
+          # pid might be self(), or it might be some other pid. We can't use Process.get expecting it to be on the current process.
+          caller_pids = Process.get(:"$callers", []) |> IO.inspect(label: "pid #{inspect(self())} $callers value, during craft lookup")
+
 
           sandbox =
             Enum.find_value(caller_pids, fn pid ->
@@ -85,7 +84,7 @@ defmodule Craft.Sandbox do
             {:ok, name} -> {:ok, name}
             nil -> find_ancestors_sandbox(Process.info(pid, :parent))
           end
-      end
+      end |> IO.inspect(label: "find_sandbox returnd value")
     end
 
     defp find_ancestors_sandbox({:parent, pid}) when is_pid(pid) do
@@ -94,8 +93,10 @@ defmodule Craft.Sandbox do
       {:dictionary, dictionary} = Process.info(pid, :dictionary)
 
       if name = dictionary[:__CRAFT_SANDBOX__] do
+        IO.puts("IS sandbox")
         {:ok, name}
       else
+        IO.puts("NOT sandbox")
         case do_find_sandbox(pid) do
           {:ok, name} -> {:ok, name}
           :error -> find_ancestors_sandbox(Process.info(pid, :parent))
@@ -302,6 +303,7 @@ defmodule Craft.Sandbox do
   end
 
   def handle_call({:query, name, query}, from, state) do
+    IO.inspect(state, label: "Sandbox state")
     if machine_state = state[name] do
       case machine_state.module.handle_query(query, {:direct, from}, machine_state.private) do
         {:reply, response} ->
@@ -312,7 +314,7 @@ defmodule Craft.Sandbox do
       end
     else
       {:reply, {:error, :unknown_group}, state}
-    end
+    end |> IO.inspect(label: "Return from sandbox query")
   end
 
   def handle_call({:user_message, name, message}, _from, state) do
@@ -432,6 +434,7 @@ defmodule Craft.Sandbox do
     end
 
     def handle_call({:find, pid}, _from, state) do
+      IO.inspect({pid, state}, label: "find pid in sandbox")
       {:reply, Map.fetch(state.pid_to_name, pid), state}
     end
 
