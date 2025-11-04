@@ -57,7 +57,7 @@ defmodule Craft.Sandbox do
       end
     else
       _ ->
-      defp do_find_sandbox(pid), do: __MODULE__.Manager.find(pid)
+        defp do_find_sandbox(pid), do: __MODULE__.Manager.find(pid)
     end
   end
 
