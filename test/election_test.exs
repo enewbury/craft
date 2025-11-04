@@ -64,9 +64,9 @@ defmodule Craft.ElectionTest do
 
       states = Craft.state(name)
 
-      {_leader_state, {leader_log, _metadata}} = get_in(states, [leader, :consensus])
-      {_caught_up_follower_state, {caught_up_follower_log, _metadata}} = get_in(states, [candidate, :consensus])
-      assert caught_up_follower_log == leader_log
+      {_leader_state, leader_state} = get_in(states, [leader, :consensus])
+      {_caught_up_follower_state, caught_up_follower_state} = get_in(states, [candidate, :consensus])
+      assert caught_up_follower_state.log == leader_state.log
 
       Craft.stop_group(name)
     end
@@ -117,11 +117,11 @@ defmodule Craft.ElectionTest do
       assert %{leader: ^candidate} = wait_until(nexus, {Stability, :majority})
       states = Map.new(majority, &Craft.state(name, &1))
 
-      {_leader_state, {leader_log, _metadata}} = get_in(states, [candidate, :consensus])
+      {_leader_state, leader_state} = get_in(states, [candidate, :consensus])
       for node <- majority -- [candidate] do
-        {_follower_state, {follower_log, _metadata}} = get_in(states, [node, :consensus])
+        {_follower_state, follower_state} = get_in(states, [node, :consensus])
 
-        assert follower_log == leader_log
+        assert follower_state.log == leader_state.log
       end
 
       Craft.stop_group(name)

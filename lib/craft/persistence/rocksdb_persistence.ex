@@ -15,13 +15,16 @@ defmodule Craft.Persistence.RocksDBPersistence do
   @log_column_family {~c"log", []}
   @metadata_column_family {~c"metadata", []}
 
+  defmodule AppendBuffer, do: defstruct [:batch, :index, :term, empty?: true]
+
   defstruct [
     :db,
     :log_cf,
     :metadata_cf,
     :latest_index,
     :latest_term,
-    :write_opts
+    :write_opts,
+    :append_buffer
   ]
 
   @impl true
@@ -93,16 +96,54 @@ defmodule Craft.Persistence.RocksDBPersistence do
   end
 
   @impl true
-  def append(%__MODULE__{} = state, [], _at_index), do: state
-  def append(%__MODULE__{} = state, entries, at_index) do
-    {:ok, batch} = :rocksdb.batch()
+  def add_to_append_buffer(%__MODULE__{} = state, entry) do
+    append_buffer =
+      if !state.append_buffer do
+        {:ok, batch} = :rocksdb.batch()
 
-    state =
-      if at_index do
-        %{state | latest_index: at_index - 1}
+        %AppendBuffer{batch: batch, index: state.latest_index}
       else
-        state
+        state.append_buffer
       end
+
+    index = append_buffer.index + 1
+    :ok = :rocksdb.batch_put(append_buffer.batch, state.log_cf, encode(index), encode(entry))
+
+    Logger.debug("appended log entry to batch", logger_metadata(trace: {:appended, [entry]}))
+
+    append_buffer = %{append_buffer | index: index, term: entry.term, empty?: false}
+
+    {%{state | append_buffer: append_buffer}, index}
+  end
+
+  @impl true
+  def write_append_buffer(%__MODULE__{} = state) do
+    if state.append_buffer && !state.append_buffer.empty? do
+      :ok = :rocksdb.write_batch(state.db, state.append_buffer.batch, state.write_opts)
+
+      state = %{release_append_buffer(state)| latest_index: state.append_buffer.index, latest_term: state.append_buffer.term}
+      state
+    else
+      state
+    end
+  end
+
+  @impl true
+  def release_append_buffer(%__MODULE__{append_buffer: nil} = state), do: state
+  def release_append_buffer(%__MODULE__{} = state) do
+    :ok = :rocksdb.release_batch(state.append_buffer.batch)
+
+    %{state | append_buffer: nil}
+  end
+
+  # if an append buffer exists, we need to flush it first (append buffer has already decided on index numbers, which would break if we didn't flush first)
+  # only the leader holds and append buffer
+  @impl true
+  def append(%__MODULE__{} = state, []), do: state
+  def append(%__MODULE__{} = state, entries) do
+    state = write_append_buffer(state)
+
+    {:ok, batch} = :rocksdb.batch()
 
     state =
       Enum.reduce(entries, state, fn entry, state ->
@@ -121,14 +162,6 @@ defmodule Craft.Persistence.RocksDBPersistence do
   end
 
   @impl true
-  # unimplemented in optimistic mode, it seems :(
-  # def rewind(%__MODULE__{latest_index: latest_index} = state, index) when index < latest_index do
-    # :ok = :rocksdb.delete_range(state.db, state.log_cf, encode(index + 1), encode(state.latest_index + 1), state.write_opts)
-
-  #   %{state | latest_index: index}
-  # end
-  # def rewind(state, _index), do: state
-
   def rewind(%__MODULE__{latest_index: latest_index} = state, index) when index < latest_index do
     {:ok, transaction} = :rocksdb.transaction(state.db, state.write_opts)
     {:ok, iterator} = :rocksdb.transaction_iterator(transaction, state.log_cf, [])

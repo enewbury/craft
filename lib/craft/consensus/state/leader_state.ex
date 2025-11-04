@@ -102,7 +102,6 @@ defmodule Craft.Consensus.State.LeaderState do
   def remove_node(%State{} = state, node, log_index) do
     next_indices = Map.delete(state.leader_state.next_indices, node)
     match_indices = Map.delete(state.leader_state.match_indices, node)
-    last_heartbeat_replies_at = Map.delete(state.leader_state.last_heartbeat_replies_at, node)
 
     membership_change = %MembershipChange{action: :remove, node: node, log_index: log_index}
 
@@ -114,7 +113,6 @@ defmodule Craft.Consensus.State.LeaderState do
         next_indices: next_indices,
         match_indices: match_indices,
         membership_change: membership_change,
-        last_heartbeat_replies_at: last_heartbeat_replies_at,
         snapshot_transfers: snapshot_transfers
       }
 
@@ -122,21 +120,45 @@ defmodule Craft.Consensus.State.LeaderState do
   end
 
   def handle_append_entries_results(%State{} = state, %AppendEntries.Results{} = results) do
-    state = do_handle_append_entries_results(state, results)
+    # need to implement flow control in response to how laggy (and how laggy over time) a follower is
+    # e.g. don't send larger messages until previous smaller messages can be acked
+    {handle_results?, notify_machine?, _follower_lagging?, state} =
+      if Members.can_vote?(state.members, results.from) do
+        QuorumStatus.heartbeat_response_received(state, results)
+      else
+        # TODO: support non-voting followers properly
+        {true, false, false, state}
+      end
+
+    state =
+      if handle_results? do
+        do_handle_append_entries_results(state, results)
+      else
+        state
+      end
 
     MemberCache.update(state)
+
+    if notify_machine? do
+      # snapshotting truncates the log, so we want to make sure that all followers are caught up first
+      # we don't want to delete a snapshot that's being downloaded, nor truncate the log before a follower
+      # that's just pulled a snapshot can catch up
+      # TODO: make log length configurable
+      all_followers_caught_up = Enum.empty?(state.members.catching_up_nodes)
+      log_too_long = Persistence.length(state.persistence) > 10_000
+      # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
+
+      Machine.quorum_reached(state, all_followers_caught_up && log_too_long)
+    end
 
     state
   end
 
   defp do_handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: true} = results) do
-    state = update_quorum_status(state, results)
-    # accounts for the possibility of stale AppendEntries results (due to pathological network reordering)
-    # and also avoids work when no follower log appends took place (i.e. a heartbeat that doesnt append anything)
+    # avoid work when no follower log appends took place (i.e. a heartbeat that doesnt append anything)
     if results.latest_index > state.leader_state.match_indices[results.from] do
-      match_indices = Map.put(state.leader_state.match_indices, results.from, results.latest_index)
-      next_indices = Map.put(state.leader_state.next_indices, results.from, results.latest_index + 1)
-      state = %{state | leader_state: %{state.leader_state | next_indices: next_indices, match_indices: match_indices}}
+      state = put_in(state.leader_state.match_indices[results.from], results.latest_index)
+      state = put_in(state.leader_state.next_indices[results.from], results.latest_index + 1)
       # find the highest uncommitted match index shared by a majority of servers
       #
       # when we become leader, match indexes work their way up from zero non-uniformly
@@ -181,12 +203,9 @@ defmodule Craft.Consensus.State.LeaderState do
   end
 
   defp do_handle_append_entries_results(%State{} = state, %AppendEntries.Results{success: false} = results) do
-    state = update_quorum_status(state, results)
-    # we don't know where we match the followers log
-    match_indices = Map.put(state.leader_state.match_indices, results.from, 0)
-    state = put_in(state.leader_state.match_indices, match_indices)
+    # we don't know where we match the follower's log
+    state = put_in(state.leader_state.match_indices[results.from], 0)
 
-    # is the follower going to need a snapshot?
     if needs_snapshot?(state, results.from) do
       if state.machine.__craft_mutable__() do
         {:needs_snapshot, create_snapshot_transfer(state, results.from)}
@@ -239,29 +258,5 @@ defmodule Craft.Consensus.State.LeaderState do
 
   def transfer_leadership(%State{} = state, to_member, from \\ nil) do
     put_in(state.leader_state.leadership_transfer, LeadershipTransfer.new(to_member, from))
-  end
-
-  def update_quorum_status(%State{} = state, %AppendEntries.Results{} = results) do
-    if Members.can_vote?(state.members, results.from) do
-      {notify_machine?, state} = QuorumStatus.heartbeat_response_received(state, results)
-
-      if notify_machine? do
-        # snapshotting truncates the log, so we want to make sure that all followers are caught up first
-        # we don't want to delete a snapshot that's being downloaded, nor truncate the log before a follower
-        # that's just pulled a snapshot can catch up
-        # TODO: make log length configurable
-        all_followers_caught_up = Enum.empty?(state.members.catching_up_nodes)
-        log_too_long = Persistence.length(state.persistence) > 10_000
-        # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
-
-        Machine.quorum_reached(state, all_followers_caught_up && log_too_long)
-
-        state
-      else
-        state
-      end
-    else
-      state
-    end
   end
 end

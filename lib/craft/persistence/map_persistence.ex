@@ -4,26 +4,31 @@ defmodule Craft.Persistence.MapPersistence do
   """
   @behaviour Craft.Persistence
 
+  # it's not necessary to use a write buffer for this memory-only log,
+  # but it roughly simulates the behaviour of the on-disk implementation
+  # so it may turn up bugs
+  defstruct [:metadata, log: %{}, append_buffer: %{}]
+
   @impl true
   def new(_group_name, []) do
-    {%{}, nil}
+    %__MODULE__{}
   end
 
   @impl true
-  def latest_term({log, _metadata} = state) do
-    log
+  def latest_term(state) do
+    state.log
     |> Map.fetch!(latest_index(state))
     |> Map.fetch!(:term)
   end
 
   @impl true
-  def latest_index({log, _metadata}) do
-    map_size(log) - 1
+  def latest_index(state) do
+    map_size(state.log) - 1
   end
 
   @impl true
-  def fetch({log, _metadata}, index) do
-    Map.fetch(log, index)
+  def fetch(state, index) do
+    Map.fetch(state.log, index)
   end
 
   @impl true
@@ -40,30 +45,41 @@ defmodule Craft.Persistence.MapPersistence do
   end
 
   @impl true
-  def append(state, [], _at_index), do: state
+  def append(state, []), do: state
 
-  def append({log, _metadata} = state, entries, nil) do
-    append(state, entries, map_size(log))
-  end
-
-  def append({log, metadata}, [entry | rest], at_index) do
-    log = Map.put(log, at_index, entry)
-
-    append({log, metadata}, rest, at_index + 1)
+  def append(state, [entry | rest]) do
+    put_in(state.log[map_size(state.log)], entry) |> append(rest)
   end
 
   @impl true
-  def rewind({log, metadata} = state, index) when index + 1 < map_size(log) do
-    log = Map.delete(log, latest_index(state))
+  def add_to_append_buffer(state, entry) do
+    put_in(state.append_buffer[map_size(state.log)], entry)
+  end
 
-    rewind({log, metadata}, index)
+  @impl true
+  def write_append_buffer(%__MODULE__{} = state) do
+    log = Map.merge(state.log, state.append_buffer)
+
+    %{state | log: log}
+  end
+
+  @impl true
+  def release_append_buffer(%__MODULE__{} = state) do
+    %{state | append_buffer: %{}}
+  end
+
+  @impl true
+  def rewind(state, index) when index + 1 < map_size(state.log) do
+    log = Map.delete(state.log, latest_index(state))
+
+    rewind(%{state | log: log}, index)
   end
   def rewind(state, _index), do: state
 
   @impl true
-  def truncate({log, metadata}, snapshot_index, snapshot_entry) do
+  def truncate(state, snapshot_index, snapshot_entry) do
     log =
-      log
+      state.log
       |> Map.filter(fn
         {index, _entry} when index < snapshot_index ->
           false
@@ -73,12 +89,12 @@ defmodule Craft.Persistence.MapPersistence do
       end)
       |> Map.put(snapshot_index, snapshot_entry)
 
-    {log, metadata}
+    %{state | log: log}
   end
 
   @impl true
-  def reverse_find({log, _metadata} = state, fun) do
-    Enum.find_value(latest_index(log)..0, fn i ->
+  def reverse_find(state, fun) do
+    Enum.find_value(latest_index(state)..0, fn i ->
       {:ok, entry} = fetch(state, i)
 
       if fun.(entry) do
@@ -90,27 +106,27 @@ defmodule Craft.Persistence.MapPersistence do
   end
 
   @impl true
-  def reduce_while({log, _metadata}, acc, fun) do
-    Enum.reduce_while(log, acc, fun)
+  def reduce_while(state, acc, fun) do
+    Enum.reduce_while(state.log, acc, fun)
   end
 
   @impl true
-  def length({log, _metadata}) do
-    map_size(log)
+  def length(state) do
+    map_size(state.log)
   end
 
   @impl true
-  def put_metadata({log, _old_metadata}, metadata) do
-    {log, metadata}
+  def put_metadata(state, metadata) do
+    %{state | metadata: metadata}
   end
 
   @impl true
-  def fetch_metadata({_log, nil}) do
-    :error
-  end
-
-  def fetch_metadata({_log, metadata}) do
-    {:ok, metadata}
+  def fetch_metadata(state) do
+    if state.metadata do
+      {:ok, state.metadata}
+    else
+      :error
+    end
   end
 
   @impl true

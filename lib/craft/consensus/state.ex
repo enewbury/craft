@@ -118,6 +118,7 @@ defmodule Craft.Consensus.State do
       leadership_transfer_request_id: nil,
       election: Election.new(state.members)
     }
+    |> release_append_buffer()
   end
 
   def become_follower(%__MODULE__{} = state) do
@@ -128,6 +129,7 @@ defmodule Craft.Consensus.State do
       leadership_transfer_request_id: nil,
       election: nil
     }
+    |> release_append_buffer()
   end
 
   def become_receiving_snapshot(%__MODULE__{} = state) do
@@ -138,6 +140,7 @@ defmodule Craft.Consensus.State do
       leadership_transfer_request_id: nil,
       election: nil
     }
+    |> release_append_buffer()
   end
 
   # leadership_transfer_request_id set directly in Consensus
@@ -150,8 +153,10 @@ defmodule Craft.Consensus.State do
       election: Election.new(state.members),
     }
     |> set_current_term(state.current_term + 1, node())
+    |> release_append_buffer()
   end
 
+  # the leader buffers log entry and writes them in batches
   def become_leader(%__MODULE__{} = state) do
     %{
       state |
@@ -161,6 +166,10 @@ defmodule Craft.Consensus.State do
       election: nil
     }
     |> set_current_term(state.current_term)
+  end
+
+  defp release_append_buffer(%__MODULE__{} = state) do
+    %{state | persistence: Persistence.release_append_buffer(state.persistence)}
   end
 
   # voting for others

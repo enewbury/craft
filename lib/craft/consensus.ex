@@ -819,7 +819,7 @@ defmodule Craft.Consensus do
   end
 
   def leader({:timeout, :check_quorum}, :check_quorum, data) do
-    if LeaderState.QuorumStatus.last_quorum_at(data) < :erlang.monotonic_time(:millisecond) - @checkquorum_interval do
+    if data.leader_state.quorum_status.latest_successful_round_sent_at < :erlang.monotonic_time(:millisecond) - @checkquorum_interval do
       Logger.info("unable to make quorum, stepping down.", logger_metadata(data, trace: {:check_quorum, :failed}))
 
       {:next_state, :lonely, data}
@@ -1035,6 +1035,8 @@ defmodule Craft.Consensus do
   defp not_leader_response(%State{leader_id: leader_id}), do: {:error, {:not_leader, leader_id}}
 
   defp heartbeat(%State{} = state) do
+    state = %{state | persistence: Persistence.write_append_buffer(state.persistence)}
+
     state = LeaderState.QuorumStatus.start_new_round(state)
 
     state =
@@ -1100,8 +1102,7 @@ defmodule Craft.Consensus do
   end
 
   defp append_entry(entry, from, data) do
-    persistence = Persistence.append(data.persistence, entry)
-    entry_index = Persistence.latest_index(persistence)
+    {persistence, entry_index} = Persistence.add_to_append_buffer(data.persistence, entry)
 
     {:keep_state, %{data | persistence: persistence}, [{:reply, from, {:ok, entry_index}}]}
   end

@@ -121,7 +121,7 @@ defmodule Craft.Nexus do
         state =
           case action do
             :drop ->
-              Logger.debug("dropped %{inspect message.__struct__} for #{to_node} from #{from_node}", logger_metadata(trace: {:dropped_msg, to_node, from_node, message}))
+              Logger.debug("dropped #{inspect message.__struct__} for #{to_node} from #{from_node}", logger_metadata(trace: {:dropped_msg, to_node, from_node, message}))
               state
 
             :forward ->

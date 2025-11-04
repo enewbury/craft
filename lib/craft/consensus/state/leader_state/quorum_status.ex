@@ -2,9 +2,17 @@ defmodule Craft.Consensus.State.LeaderState.QuorumStatus do
   alias Craft.Consensus.State
   alias Craft.RPC.AppendEntries
 
-  @num_rounds 10
+  require Logger
 
-  defstruct [:current_round_sent_at, current_round_successful: false, rounds: %{}]
+  import Craft.Tracing, only: [logger_metadata: 1]
+
+  @num_rounds 20
+
+  defstruct [
+    :current_round_sent_at,
+    latest_successful_round_sent_at: nil,
+    rounds: []
+  ]
 
   def new do
     %__MODULE__{}
@@ -24,69 +32,67 @@ defmodule Craft.Consensus.State.LeaderState.QuorumStatus do
       end
 
     # drop old rounds
-    rounds =
-      quorum_status.rounds
-      |> Enum.sort_by(fn {round_sent_at, _} -> round_sent_at end, :desc)
-      |> Enum.take(@num_rounds)
-      |> Map.new()
+    rounds = Enum.take(quorum_status.rounds, @num_rounds - 1)
 
     quorum_status =
-      %{
-        quorum_status |
-          current_round_successful: false,
-          current_round_sent_at: round_sent_at,
-          rounds: Map.put(rounds, round_sent_at, %{})
+      %{quorum_status |
+        current_round_sent_at: round_sent_at,
+        rounds: [{round_sent_at, %{}} | rounds]
       }
 
     put_in(state.leader_state.quorum_status, quorum_status)
   end
 
-  # returns {this_vote_caused_quorum :: boole, state}
+  # {should_handle?, round_is_most_recent_and_just_succeeded?, follower_lagging?, state}
   def heartbeat_response_received(%State{} = state, %AppendEntries.Results{} = results) do
-    cond do
-      !state.leader_state.quorum_status.rounds[results.heartbeat_sent_at] ->
-        # Logger.warning("unknown/old quorum round in heartbeat reply: #{inspect results}, ignoring.", logger_metadata(state))
-
-        {false, state}
-
-      state.leader_state.quorum_status.rounds[results.heartbeat_sent_at][results.from] ->
-        # Logger.warning("duplicate heartbeat reply received: #{inspect results}, ignoring.", logger_metadata(state))
-
-        {false, state}
-
-      true ->
-        state = put_in(state.leader_state.quorum_status.rounds[results.heartbeat_sent_at][results.from], {results.heartbeat_sent_at, :erlang.monotonic_time(:millisecond)})
-
-        if results.heartbeat_sent_at == state.leader_state.quorum_status.current_round_sent_at
-           and not state.leader_state.quorum_status.current_round_successful
-           and round_successful?(state, results.heartbeat_sent_at) do
-          state = put_in(state.leader_state.quorum_status.current_round_successful, true)
-
-          {true, state}
-        else
-          {false, state}
-        end
-    end
-  end
-
-  def last_quorum_at(%State{} = state) do
+    received_at = :erlang.monotonic_time(:millisecond)
     quorum_status = state.leader_state.quorum_status
-
-    quorum_status.rounds
-    |> Map.keys()
-    |> Enum.sort(:desc)
-    |> Enum.find(&round_successful?(state, &1))
-  end
-
-  defp round_successful?(%State{} = state, round_sent_at) do
     # -1 since we're the leader
     num_replies_needed = State.quorum_needed(state) - 1
 
-    num_replies_received =
-      state.leader_state.quorum_status.rounds
-      |> Map.get(round_sent_at)
-      |> Enum.count()
+    result =
+      Enum.reduce_while(state.leader_state.quorum_status.rounds, {[], state.leader_state.quorum_status.rounds}, fn {round_sent_at, heartbeats}, {recent_rounds, rest} ->
+        rest = if rest == [], do: rest, else: tl(rest)
 
-    num_replies_received >= num_replies_needed
+        if heartbeats[results.from] do
+          if results.heartbeat_sent_at == round_sent_at do
+            Logger.warning("duplicate heartbeat reply received: #{inspect results}, ignoring.", logger_metadata(state))
+          else
+            Logger.warning("out-of-order heartbeat reply received: #{inspect results}, ignoring.", logger_metadata(state))
+          end
+
+          {:halt, {false, false, false, quorum_status}}
+        else
+          if round_sent_at == results.heartbeat_sent_at do
+            heartbeats = Map.put(heartbeats, results.from, {results.heartbeat_sent_at, received_at})
+            round_successful? = Enum.count(heartbeats) >= num_replies_needed
+            round_is_most_recent_and_just_succeeded? = round_successful? and (!quorum_status.latest_successful_round_sent_at ||  round_sent_at > quorum_status.latest_successful_round_sent_at)
+            follower_lagging? = round_sent_at != quorum_status.current_round_sent_at
+
+            quorum_status =
+              if round_is_most_recent_and_just_succeeded? do
+                %{quorum_status | latest_successful_round_sent_at: results.heartbeat_sent_at}
+              else
+                quorum_status
+              end
+
+            rounds = List.flatten([Enum.reverse(recent_rounds), {round_sent_at, heartbeats}, rest])
+
+            {:halt, {true, round_is_most_recent_and_just_succeeded?, follower_lagging?, %{quorum_status | rounds: rounds}}}
+          else
+            {:cont, {[{round_sent_at, heartbeats} | recent_rounds], rest}}
+          end
+        end
+      end)
+
+    case result do
+      {_, []} ->
+        Logger.warning("expired quorum round in heartbeat reply: #{inspect results}, ignoring.", logger_metadata(state))
+
+        {false, false, false, state}
+
+      {should_handle?, should_notify?, follower_lagging?, quorum_status} ->
+        {should_handle?, should_notify?, follower_lagging?, put_in(state.leader_state.quorum_status, quorum_status)}
+    end
   end
 end

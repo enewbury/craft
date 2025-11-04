@@ -27,7 +27,10 @@ defmodule Craft.Persistence do
   @callback latest_index(any()) :: integer()
   @callback fetch(any(), index :: integer()) :: entry()
   @callback fetch_from(any(), index :: integer()) :: [entry()]
-  @callback append(any(), [entry()], index :: integer() | nil) :: any()
+  @callback add_to_append_buffer(any(), entry()) :: {any(), index :: integer()}
+  @callback write_append_buffer(any()) :: any()
+  @callback release_append_buffer(any()) :: any()
+  @callback append(any(), [entry()]) :: any()
   @callback rewind(any(), index :: integer()) :: any() # remove all long entries after index
   @callback truncate(any(), index :: integer(), SnapshotEntry.t()) :: any() # atomically remove log entries up to and including `index` and replace with SnapshotEntry
   @callback reverse_find(any(), fun()) :: entry() | nil
@@ -140,12 +143,26 @@ defmodule Craft.Persistence do
     module.fetch_from(private, index)
   end
 
-  # FIXME: rename to append!
-  def append(persistence, entries, at_index \\ nil)
-  def append(%__MODULE__{module: module, private: private} = persistence, entries, at_index) when is_list(entries) do
-    %{persistence | private: module.append(private, entries, at_index)}
+  def add_to_append_buffer(%__MODULE__{module: module, private: private} = persistence, entry) do
+    {private, index} = module.add_to_append_buffer(private, entry)
+
+    {%{persistence | private: private}, index}
   end
-  def append(persistence, entry, at_index), do: append(persistence, [entry], at_index)
+
+  def write_append_buffer(%__MODULE__{module: module, private: private} = persistence) do
+    %{persistence | private: module.write_append_buffer(private)}
+  end
+
+  def release_append_buffer(%__MODULE__{module: module, private: private} = persistence) do
+    %{persistence | private: module.release_append_buffer(private)}
+  end
+
+  # FIXME: rename to append!
+  def append(persistence, entries)
+  def append(%__MODULE__{module: module, private: private} = persistence, entries) when is_list(entries) do
+    %{persistence | private: module.append(private, entries)}
+  end
+  def append(persistence, entry), do: append(persistence, [entry])
 
   def rewind(%__MODULE__{module: module, private: private} = persistence, index) do
     %{persistence | private: module.rewind(private, index)}
