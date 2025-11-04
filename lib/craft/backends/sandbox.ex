@@ -44,21 +44,21 @@ defmodule Craft.Sandbox do
   if opts[:mode] == :shared do
     defp do_find_sandbox(_pid), do: {:ok, :shared}
   else
-    # with {m, f} <- opts[:lookup] do
-    #   defp do_find_sandbox(pid) do
-    #     case :erlang.apply(unquote(m), unquote(f), [pid]) do
-    #       {:ok, name} ->
-    #         DynamicSupervisor.start_child(Craft.Supervisor, {Craft.Sandbox, name})
-    #         {:ok, name}
+    with {m, f} <- opts[:lookup] do
+      defp do_find_sandbox(pid) do
+        case :erlang.apply(unquote(m), unquote(f), [pid]) do
+          {:ok, name} ->
+            DynamicSupervisor.start_child(Craft.Supervisor, {Craft.Sandbox, name})
+            {:ok, name}
 
-    #       error ->
-    #         error
-    #     end
-    #   end
-    # else
-    #   _ ->
-    defp do_find_sandbox(pid), do: __MODULE__.Manager.find(pid)
-    # end
+          error ->
+            error
+        end
+      end
+    else
+      _ ->
+      defp do_find_sandbox(pid), do: __MODULE__.Manager.find(pid)
+    end
   end
 
   if opts[:mode] == :inherit do
