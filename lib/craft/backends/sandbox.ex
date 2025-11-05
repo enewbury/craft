@@ -315,7 +315,7 @@ defmodule Craft.Sandbox do
 
   def handle_call({:user_message, name, message}, _from, state) do
     if machine_state = state[name] do
-      private = machine_state.machine.handle_info(message, machine_state.private)
+      private = machine_state.module.handle_info(message, machine_state.private)
 
       {:noreply, Map.put(state, name, %{machine_state | private: private})}
     else
