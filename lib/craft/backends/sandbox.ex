@@ -160,7 +160,6 @@ defmodule Craft.Sandbox do
   end
 
   def reply({:direct, {_pid, _ref} = reply_ref, sandbox_pid}, reply) do
-
     if find!() != sandbox_pid do
       raise "sandbox boundary violation"
     end
@@ -228,6 +227,10 @@ defmodule Craft.Sandbox do
     end
   end
 
+  def current_index(name, group) do
+    GenServer.call(via(name, __MODULE__), {:current_index, group})
+  end
+
   @doc false
   def start_link(name) do
     GenServer.start_link(__MODULE__, name, name: via(name, __MODULE__))
@@ -246,6 +249,14 @@ defmodule Craft.Sandbox do
     Process.put(:__CRAFT_SANDBOX__, name)
 
     {:ok, %{}}
+  end
+
+  @impl GenServer
+  def handle_call({:current_index, group}, _from, state) do
+    case state[group] do
+      nil -> {:reply, {:error, :group_not_started}, state}
+      machine_state -> {:reply, {:ok, machine_state.index}, state}
+    end
   end
 
   @impl GenServer
@@ -301,7 +312,11 @@ defmodule Craft.Sandbox do
 
   def handle_call({:query, name, query}, from, state) do
     if machine_state = state[name] do
-      case machine_state.module.handle_query(query, {:direct, from, self()}, machine_state.private) do
+      case machine_state.module.handle_query(
+             query,
+             {:direct, from, self()},
+             machine_state.private
+           ) do
         {:reply, response} ->
           {:reply, response, state}
 
