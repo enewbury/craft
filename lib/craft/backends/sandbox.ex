@@ -156,7 +156,7 @@ defmodule Craft.Sandbox do
 
   @doc false
   def send(name, message) do
-    GenServer.call(find!(), {:user_message, name, message})
+    Kernel.send(find!(), {:user_message, name, message})
   end
 
   def reply({:direct, {_pid, _ref} = reply_ref, sandbox_pid}, reply) do
@@ -313,16 +313,6 @@ defmodule Craft.Sandbox do
     end
   end
 
-  def handle_call({:user_message, name, message}, _from, state) do
-    if machine_state = state[name] do
-      private = machine_state.module.handle_info(message, machine_state.private)
-
-      {:noreply, Map.put(state, name, %{machine_state | private: private})}
-    else
-      {:noreply, state}
-    end
-  end
-
   def handle_call({:backup, name, path}, state) do
     if machine_state = state[name] do
       machine_state.backup(path, machine_state.private)
@@ -347,6 +337,17 @@ defmodule Craft.Sandbox do
     Configuration.restore_from_backup(path)
 
     {:reply, :ok}
+  end
+
+  @impl GenServer
+  def handle_info({:user_message, name, message}, state) do
+    if machine_state = state[name] do
+      private = machine_state.module.handle_info(message, machine_state.private)
+
+      {:noreply, Map.put(state, name, %{machine_state | private: private})}
+    else
+      {:noreply, state}
+    end
   end
 
   defp init_machine(name, machine, state) do
