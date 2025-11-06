@@ -63,29 +63,31 @@ defmodule Craft.Sandbox do
 
   if opts[:mode] == :inherit do
     defp find_sandbox() do
-      case do_find_sandbox(self()) do
-        {:ok, name} ->
-          {:ok, name}
-
-        :error ->
-          caller_pids = Process.get(:"$callers", [])
-
-          sandbox =
-            Enum.find_value(caller_pids, fn pid ->
-              case do_find_sandbox(pid) do
-                {:ok, name} -> {:ok, name}
-                :error -> nil
-              end
-            end)
-
-          case sandbox do
-            {:ok, name} -> {:ok, name}
-            nil -> find_ancestors_sandbox(Process.info(self(), :parent))
-          end
-      end
+      self()
+      |> do_find_sandbox()
+      |> find_sandbox_by_callers()
+      |> find_sandbox_by_parents()
     end
 
-    defp find_ancestors_sandbox({:parent, pid}) when is_pid(pid) do
+    defp find_sandbox_by_callers({:ok, name}), do: {:ok, name}
+
+    defp find_sandbox_by_callers(:error) do
+      caller_pids = Process.get(:"$callers", [])
+
+      Enum.reduce_while(caller_pids, :error, fn pid, _acc ->
+        case do_find_sandbox(pid) do
+          {:ok, name} -> {:halt, {:ok, name}}
+          :error -> {:cont, :error}
+        end
+      end)
+    end
+
+    defp find_sandbox_by_parents({:ok, name}), do: {:ok, name}
+
+    defp find_sandbox_by_parents(:error),
+      do: find_sandbox_on_next_parent(Process.info(self(), :parent))
+
+    defp find_sandbox_on_next_parent({:parent, pid}) when is_pid(pid) do
       # if the ancestor is a sandbox, return it
       # this happens when the machine spawns a process
       {:dictionary, dictionary} = Process.info(pid, :dictionary)
@@ -95,12 +97,12 @@ defmodule Craft.Sandbox do
       else
         case do_find_sandbox(pid) do
           {:ok, name} -> {:ok, name}
-          :error -> find_ancestors_sandbox(Process.info(pid, :parent))
+          :error -> find_sandbox_on_next_parent(Process.info(pid, :parent))
         end
       end
     end
 
-    defp find_ancestors_sandbox(_no_parent), do: :error
+    defp find_sandbox_on_next_parent(_no_parent), do: :error
   else
     defp find_sandbox(), do: do_find_sandbox(self())
   end
