@@ -767,8 +767,6 @@ defmodule Craft.Consensus do
 
     MemberCache.update(data)
 
-    Machine.update_role(data)
-
     #
     # when the cluster starts up, each node is explicitly given the same configuration to
     # hold in-memory to bootstrap the cluster.
@@ -787,7 +785,15 @@ defmodule Craft.Consensus do
     # previous leader can not be answered by the new leader. since those writes will never be confirmed to the client,
     # they're not "witnessed" state confirmations according to the outside world. and hence they're not a linearizability violation.
     #
+    # additionally, we need to wait for this empty entry to commit before we service any reads, since every new leader needs to
+    # determine what the correct commit index is for itself. (for example, if we appended an entry from the previous leader,
+    # and then leadership was transferred to us, but we hadn't yet heard from the previous leader that the commit index had bumped,
+    # we'd still think the commit index was from before that entry, which isn't true)
+    #
     data = %{data | persistence: Persistence.append(data.persistence, MembershipEntry.new(data))}
+    wait_for_entry_index = Persistence.latest_index(data.persistence)
+
+    Machine.update_role(data, wait_for_entry_index)
 
     actions = [
       {:state_timeout, 0, :heartbeat},

@@ -22,10 +22,9 @@ defmodule Craft.Visualizer do
     |> String.replace(~r/}$/, "<br />}")
   end
 
-  def module(%{meta: %{mfa: {module, _, _}}}), do: module
-
-  def group_id(module, node), do: [module, node] |> Enum.map(&inspect/1) |> Enum.join("_")
-  def group_id(%{meta: %{node: node, mfa: {module, _, _}}}), do: group_id(module, node)
+  def group_id({module, nil}, node), do: [module, node] |> Enum.map(&inspect/1) |> Enum.join("_")
+  def group_id({module, actor}, node), do: [module, actor, node] |> Enum.map(&inspect/1) |> Enum.join("_")
+  def group_id(%{meta: %{node: node, mfa: {module, _, _}} = meta}), do: group_id({module, meta[:actor]}, node)
 
   def to_html(events) do
     events =
@@ -41,16 +40,18 @@ defmodule Craft.Visualizer do
       |> Enum.map(& &1.meta.node)
       |> Enum.uniq()
 
-    sub_groups =
+    actors =
       events
       |> Enum.group_by(& &1.meta.node)
       |> Map.new(fn {node, events} ->
-        sub_groups =
+        actors =
           events
-          |> Enum.map(&module/1)
+          |> Enum.map(fn %{meta: %{mfa: {module, _, _}} = meta} ->
+            {module, meta[:actor]}
+          end)
           |> Enum.uniq()
 
-        {node, sub_groups}
+        {node, actors}
       end)
 
     role_periods =
@@ -68,7 +69,7 @@ defmodule Craft.Visualizer do
         {node, role_periods(events)}
       end)
 
-    render(events: events, nodes: nodes, sub_groups: sub_groups, role_periods: role_periods, end_time: end_time)
+    render(events: events, nodes: nodes, actors: actors, role_periods: role_periods, end_time: end_time)
   end
 
   defp role_periods(events, periods \\ [], current_event \\ nil)

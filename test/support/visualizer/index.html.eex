@@ -36,12 +36,12 @@
 
   var groups = new vis.DataSet([
     <%= for node <- @nodes do %>
-      {id: '<%= node %>', content: '<%= node %>', showNested: false, nestedGroups: <%= inspect(Enum.map(@sub_groups[node], fn sub_group -> sub_group |> group_id(node) end)) %>},
+      {id: '<%= node %>', content: '<%= node %>', showNested: false, nestedGroups: <%= inspect(Enum.map(@actors[node], &group_id(&1, node))) %>},
     <% end %>
 
-    <%= for {node, modules} <- @sub_groups do %>
-      <%= for module <- modules do %>
-          {id: '<%= group_id(module, node) %>', content: '<%= inspect(module) %>'},
+    <%= for {node, actors} <- @actors do %>
+      <%= for {module, actor}<- actors do %>
+          {id: '<%= group_id({module, actor}, node) %>', content: '<%= inspect(module) %><%= if actor, do: ", #{inspect actor}", else: "" %>'},
       <% end %>
     <% end %>
   ]);
@@ -78,6 +78,9 @@
 
         <% {:quorum_reached, metadata} -> %>
             {id: <%= id %>, group: '<%= group_id(event) %>', content: 'quorum reached', start: '<%= event.meta.t %>', title: '<%= format_struct(metadata) %>'},
+
+        <% {:client_request, sent_or_received, operation} -> %>
+            {id: <%= id %>, group: '<%= group_id(event) %>', content: 'client request <%= sent_or_received %>', start: '<%= event.meta.t %>', title: '<%= format_struct(operation) %>'},
 
         <% _ -> %>
             {id: <%= id %>, group: '<%= group_id(event) %>', content: '<%= inspect event.meta.trace %>', start: '<%= event.meta.t %>'},

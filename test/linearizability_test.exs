@@ -2,33 +2,35 @@ defmodule Craft.LinearizabilityTest do
   use Craft.NexusCase,
       parameterize: (for leases <- [true, false], do: %{leader_leases: leases})
 
+  alias Craft.Linearizability
   alias Craft.Nexus.Stability
   alias Craft.ParallelClients
-  alias Craft.Linearizability
+
+  require Logger
 
   @moduletag timeout: :timer.minutes(20)
 
   nexus_test "under stable conditions", ctx do
     wait_until(ctx.nexus, {Stability, :all})
 
-    num_clients = 1
-    num_commands = 10
+    num_clients = 10
+    num_commands = 20
 
     ctx
     |> random_request_fun()
-    |> ParallelClients.run(num_clients, num_commands)
+    |> ParallelClients.run(num_clients, num_commands, ctx.nexus)
     |> assert_linearizable()
   end
 
   nexus_test "during leadership transfer", %{nodes: nodes, name: name, nexus: nexus} = ctx do
     %{leader: leader} = wait_until(nexus, {Stability, :all})
 
-    num_clients = 10
+    num_clients = 1
 
     clients =
       ctx
       |> random_request_fun()
-      |> ParallelClients.start(num_clients)
+      |> ParallelClients.start(num_clients, ctx.nexus)
 
     Process.sleep(300)
 
@@ -61,7 +63,7 @@ defmodule Craft.LinearizabilityTest do
     clients =
       ctx
       |> random_request_fun()
-      |> ParallelClients.start(num_clients)
+      |> ParallelClients.start(num_clients, nexus)
 
     Process.sleep(300)
 
@@ -99,7 +101,7 @@ defmodule Craft.LinearizabilityTest do
     clients =
       ctx
       |> random_request_fun()
-      |> ParallelClients.start(num_clients)
+      |> ParallelClients.start(num_clients, nexus)
 
     Process.sleep(3000)
 
@@ -135,11 +137,15 @@ defmodule Craft.LinearizabilityTest do
         val when val > 50 ->
           command = {:put, :a, "#{value}_#{i}"}
           {{:write, command}, Craft.command(command, ctx.name)}
+
         val when val > 25  ->
           query = {:get, :a}
           {{:read, query}, Craft.query(query, ctx.name)}
+
         _val ->
-          {{:read, {:get_parallel, :a, send_self: true}}, Craft.query({:get_parallel, :a, []}, ctx.name)}
+          # {{:read, {:get_parallel, :a, send_self: true}}, Craft.query({:get_parallel, :a, []}, ctx.name)}
+          query = {:get, :a}
+          {{:read, query}, Craft.query(query, ctx.name)}
       end
     end
   end

@@ -64,6 +64,9 @@ defmodule Craft.Machine do
       :global_clock,
       :lease_expires_at,
       :last_quorum_at,
+      # we need to wait for the section 5.4.2 entry to commit before servicing client requests
+      # boolean | {:waiting, log_index}
+      waiting_for_first_commit: true,
       last_applied: 0,
       client_query_results: [],
       pending_parallel_queries: MapSet.new(),
@@ -81,10 +84,10 @@ defmodule Craft.Machine do
     |> GenServer.call({:init_or_restore, state.persistence})
   end
 
-  def update_role(%ConsensusState{} = state) do
+  def update_role(%ConsensusState{} = state, await_commit_index \\ nil) do
     state.name
     |> lookup(__MODULE__)
-    |> GenServer.cast({:update_role, state.state})
+    |> GenServer.cast({:update_role, state.state, await_commit_index})
   end
 
   def prepare_to_receive_snapshot(name) do
@@ -140,7 +143,7 @@ defmodule Craft.Machine do
       end
 
     # nil if not leader
-    last_quorum_at = get_in(state.leader_state.quorum_status.current_round_sent_at)
+    last_quorum_at = get_in(state.leader_state.quorum_status.latest_successful_round_sent_at)
 
     state.name
     |> lookup(__MODULE__)
@@ -188,7 +191,7 @@ defmodule Craft.Machine do
   end
 
   @impl true
-  def handle_cast({:update_role, new_role}, state) do
+  def handle_cast({:update_role, new_role, await_commit_index}, state) do
     # if we were just the leader and are holding in-flight requests, but we've been deposed, we need to let the awaiting clients know
     {:ok, group_status} = MemberCache.get(state.name)
 
@@ -219,6 +222,15 @@ defmodule Craft.Machine do
         state.private
       end
 
+    waiting_for_first_commit =
+      if new_role == :leader do
+        Logger.debug("waiting for index #{await_commit_index}", logger_metadata(trace: :waiting))
+
+        {:waiting, await_commit_index}
+      else
+        false
+      end
+
     {:noreply,
      %{
        state
@@ -226,7 +238,8 @@ defmodule Craft.Machine do
          private: private,
          client_commands: %{},
          client_query_results: [],
-         pending_parallel_queries: MapSet.new()
+         pending_parallel_queries: MapSet.new(),
+         waiting_for_first_commit: waiting_for_first_commit
      }}
   end
 
@@ -245,6 +258,7 @@ defmodule Craft.Machine do
         # read-index based queries
         for {from, result} <- state.client_query_results do
           Logger.debug("responding to client query", logger_metadata(trace: {:sending_client_response, %{from: from, result: result}}))
+
           GenServer.reply(from, result)
         end
 
@@ -254,7 +268,15 @@ defmodule Craft.Machine do
           MemberCache.update_lease_holder(state)
         end
 
-        state
+        case state.waiting_for_first_commit do
+          {:waiting, index} when new_commit_index >= index ->
+            Logger.debug("saw first commit, ready for queries", logger_metadata(trace: :ready_for_queries))
+
+            %{state | waiting_for_first_commit: false}
+
+          _ ->
+            state
+        end
       else
         state
       end
@@ -341,6 +363,12 @@ defmodule Craft.Machine do
   #     - otherwise, the query will time out
   #
   @impl true
+  def handle_call({:query, :linearizable, query}, from, %State{role: :leader, waiting_for_first_commit: waiting} = state) when waiting != false do
+    Logger.debug("rejecting linearizable query, not ready", logger_metadata(trace: {:query, :linearizable, :rejected_not_ready, from, query}))
+
+    {:reply, {:error, :not_ready_for_queries}, state}
+  end
+
   def handle_call({:query, :linearizable, query}, from, %State{role: :leader, global_clock: global_clock} = state) when not is_nil(global_clock) do
     with %GlobalTimestamp{} <- state.lease_expires_at,
          {:ok, lease_time} when lease_time > 0 <- GlobalTimestamp.time_until_lease_expires(state.global_clock, state.lease_expires_at) do
