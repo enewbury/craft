@@ -41,10 +41,10 @@ defmodule InheritExplicitSandboxTest do
     assert :ok = Craft.start_group("abc", [], Craft.SandboxTestMachine)
 
     me = self()
-      Task.Supervisor.async(Craft.TestTaskSupervisor, fn ->
-          assert :ok = Craft.command({:put, "a", "b"}, "abc")
-          send(me, :go)
-      end)
+    Task.Supervisor.async(Craft.TestTaskSupervisor, fn ->
+        assert :ok = Craft.command({:put, "a", "b"}, "abc")
+        send(me, :go)
+    end)
 
     receive do
       :go ->
