@@ -28,7 +28,7 @@ defmodule Craft.Sandbox do
   Inheritance can be enabled by setting the `:mode` to `:inherit`:
     `config :craft, :backend, {Craft.Sandbox, mode: :inherit, lookup: {m, f}}`
 
-    Inheritance allows the a process to inherit the sandbox of 
+    Inheritance allows the test process to inherit the sandbox of 
       1) any process defined in the $callers entry of its process dictionary (i.e. the process that calls TaskSupervisor.async) or 
       2) the ancestors that spawned the process
   """
