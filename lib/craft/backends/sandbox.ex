@@ -141,8 +141,8 @@ defmodule Craft.Sandbox do
   end
 
   @doc false
-  def start_member(name, opts) do
-    GenServer.call(find!(), {:start_member, name, opts})
+  def start_member(name) do
+    GenServer.call(find!(), {:start_member, name})
   end
 
   @doc false
@@ -299,7 +299,7 @@ defmodule Craft.Sandbox do
     end
   end
 
-  def handle_call({:start_member, name, _opts}, _from, state) do
+  def handle_call({:start_member, name}, _from, state) do
     if state[name] do
       {:reply, {:error, :already_started}, state}
     else
