@@ -64,8 +64,8 @@ defmodule Craft.Machine do
       :role,
       :global_clock,
       :last_quorum_at,
-      :snapshotter_pid, # pathalogical mutex to serialize snapshot-taking
       :idle,
+      :should_snapshot?,
       # we need to wait for the section 5.4.2 entry to commit before servicing client requests
       # boolean | {:waiting, log_index}
       waiting_for_first_commit: true,
@@ -137,10 +137,10 @@ defmodule Craft.Machine do
     |> GenServer.cast(:lease_taken)
   end
 
-  def notify_idle(%ConsensusState{} = state) do
+  def notify_idle(%ConsensusState{} = state, should_snapshot?) do
     state.name
     |> lookup(__MODULE__)
-    |> GenServer.cast(:idle)
+    |> GenServer.cast({:idle, should_snapshot?})
   end
 
   def send_user_message(name, message) do
@@ -173,13 +173,13 @@ defmodule Craft.Machine do
   # to continue without being blocked by the machine process while it's applying
   # entries
   #
-  def quorum_reached(%ConsensusState{} = state, apply_up_to, should_snapshot?) do
+  def quorum_reached(%ConsensusState{} = state, apply_up_to) do
     # nil if not leader
     last_quorum_at = get_in(state.leader_state.quorum_status.latest_successful_round_sent_at)
 
     state.name
     |> lookup(__MODULE__)
-    |> GenServer.cast({:quorum_reached, apply_up_to, state.persistence, should_snapshot?, last_quorum_at})
+    |> GenServer.cast({:quorum_reached, apply_up_to, state.persistence, last_quorum_at})
   end
 
   def call(name, node, request, timeout) do
@@ -283,7 +283,7 @@ defmodule Craft.Machine do
   end
 
   @impl true
-  def handle_cast({:quorum_reached, apply_up_to, log, should_snapshot?, last_quorum_at}, state) do
+  def handle_cast({:quorum_reached, apply_up_to, log, last_quorum_at}, state) do
     Logger.debug(fn ->
       metadata = %{}
       metadata = if apply_up_to > state.last_applied, do: Map.put(metadata, :new_apply_up_to, apply_up_to), else: metadata
@@ -294,7 +294,6 @@ defmodule Craft.Machine do
     range_since_last_update = state.apply_up_to+1..apply_up_to//1
     entries_since_last_update = Persistence.fetch_between(log, range_since_last_update)
 
-
     {read_index_queries, queries_to_execute} = take_gb_tree(state.read_index_queries, apply_up_to)
     read_index_queries_to_execute = Enum.flat_map(queries_to_execute, &MapSet.to_list/1)
     state = %{
@@ -302,7 +301,7 @@ defmodule Craft.Machine do
         read_index_queries: read_index_queries,
         last_quorum_at: last_quorum_at,
         apply_up_to: apply_up_to,
-        # if the apply_up_to index wasn't bumped, we're probably idle
+        # if the apply_up_to index was bumped, we're not idle
         idle: apply_up_to == state.apply_up_to
     }
 
@@ -383,54 +382,6 @@ defmodule Craft.Machine do
         state
       end
 
-    #
-    # right now, snapshotting is a synchronous process, later we should allow for async snapshots at
-    # the provided index, and the user will call back when it's done (and we'll send a message
-    # to the consensus module to tell it that a snapshot at the given index completed)
-    #
-    # should probably provide sync/async semantics as well
-    #
-    # only snapshot up to one entry before the latest, since we need the prev log entry to create AppendEntries
-    #
-    state =
-      if should_snapshot? do
-        if state.module.__craft_mutable__() do
-          if !state.snapshotter_pid or !Process.alive?(state.snapshotter_pid) do
-            # apply any outstanding commands before snapshotting (write-optimized mode)
-            state = apply_outstanding_entries(state, log)
-
-            snapshotter_pid = spawn_link(fn ->
-              time(fn ->
-                case state.module.snapshot(state.private) do
-                  {index, path} ->
-                    Logger.debug("snapshot ready", logger_metadata(trace: :snapshot_ready))
-
-                    :ok = Consensus.snapshot_ready(state.name, index, snapshot_info(path))
-
-                  # machine decided not to snapshot (perhaps no commands have run)
-                  nil ->
-                    :noop
-                end
-              end,
-              [:craft, :machine, :user, :snapshot],
-              %{})
-            end)
-
-            %{state | snapshotter_pid: snapshotter_pid}
-          else
-            state
-          end
-        else
-          Logger.debug("snapshot ready", logger_metadata(trace: :snapshot_ready))
-
-          :ok = Consensus.snapshot_ready(state.name, state.last_applied, state.module.snapshot(state.private))
-
-          state
-        end
-      else
-        state
-      end
-
     {:noreply, state}
   end
 
@@ -449,27 +400,20 @@ defmodule Craft.Machine do
   #
   # leader is idle (past N quorum rounds had no log writes)
   # follower is idle when an empty heartbeat is received
+  #
+  # idleness from a write perspective, still triggers if there are ongoing reads, otherwise
+  # continuous reads would prevent snapshotting indefinitely, which is bad.
+  # 
   @impl true
-  def handle_cast(:idle, %State{mode: :write_optimized} = state) do
-    log = Consensus.get_log(state.name)
-    end_range = min(state.apply_up_to, state.last_applied + Consensus.maximum_entries_per_heartbeat())
+  def handle_cast({:idle, should_snapshot?}, state) do
+    state = %{state | should_snapshot?: should_snapshot?, idle: true}
 
-    range = state.last_applied+1..end_range//1
-    unapplied_entries = Persistence.fetch_between(log, range)
-    unapplied_entries_with_index = Enum.zip(range, unapplied_entries)
-    state = apply_entries(state, unapplied_entries_with_index)
-
-    Logger.debug("idle, applying chunk of #{Enum.count(unapplied_entries)} outstanding commands", logger_metadata(trace: {:idle, :applying_commands, Enum.count(unapplied_entries)}))
-
-    if end_range < state.apply_up_to do
-      GenServer.cast(self(), :maybe_do_idle_work)
-    end
-
-    {:noreply, %{state | idle: true}}
+    {:noreply, do_idle_work(state)}
   end
-  def handle_cast(:idle, state), do: {:noreply, %{state | idle: true}}
 
-  def handle_cast(:maybe_do_idle_work, %State{idle: true} = state), do: handle_cast(:idle, state)
+  def handle_cast(:maybe_do_idle_work, %State{idle: true} = state) do
+    {:noreply, do_idle_work(state)}
+  end
   def handle_cast(:maybe_do_idle_work, state), do: {:noreply, state}
 
   def handle_cast({:user_message, msg}, state) do
@@ -484,6 +428,38 @@ defmodule Craft.Machine do
 
     {:noreply, %{state | private: private}}
   end
+
+  #
+  # only snapshot up to one entry before the latest, since we need the prev log entry to create AppendEntries
+  #
+  defp do_snapshot(state) do
+    Logger.debug("snapshotting", logger_metadata(trace: {:snapshot, state.last_applied}))
+
+    if state.module.__craft_mutable__() do
+      time(fn ->
+        case state.module.snapshot(state.private) do
+          path when is_binary(path) ->
+            Logger.debug("snapshot ready", logger_metadata(trace: :snapshot_ready))
+
+            :ok = Consensus.snapshot_ready(state.name, state.last_applied, snapshot_info(path))
+
+          # machine decided not to snapshot (perhaps no commands have run)
+          nil ->
+            :noop
+        end
+      end,
+      [:craft, :machine, :user, :snapshot],
+      %{})
+    else
+      Logger.debug("snapshot ready", logger_metadata(trace: :snapshot_ready))
+
+      :ok = Consensus.snapshot_ready(state.name, state.last_applied, state.module.snapshot(state.private))
+    end
+
+    %{state | should_snapshot?: false}
+  end
+
+
   #
   # the leader handles linearizable queries slightly differently, depending on if leases are enabled:
   #   - if leases are enabled,
@@ -1000,6 +976,34 @@ defmodule Craft.Machine do
         state
     end
   end
+
+  defp do_idle_work(%State{mode: :write_optimized} = state) do
+    log = Consensus.get_log(state.name)
+
+    range_end = min(state.apply_up_to, state.last_applied + Consensus.maximum_entries_per_heartbeat())
+    range = state.last_applied+1..range_end//1
+
+    cond do
+      Range.size(range) > 0 ->
+        unapplied_entries = Persistence.fetch_between(log, range)
+        unapplied_entries_with_index = Enum.zip(range, unapplied_entries)
+        state = apply_entries(state, unapplied_entries_with_index)
+
+        Logger.debug("idle, applying chunk of #{Enum.count(unapplied_entries)} outstanding commands (#{inspect range})", logger_metadata(trace: {:idle, :applying_commands, Enum.count(unapplied_entries)}))
+
+        GenServer.cast(self(), :maybe_do_idle_work)
+
+        state
+
+      state.should_snapshot? ->
+        do_snapshot(state)
+
+      true ->
+        state
+    end
+  end
+  defp do_idle_work(%State{should_snapshot?: true} = state), do: do_snapshot(state)
+  defp do_idle_work(state), do: state
 
   @empty_gb_tree :gb_trees.empty()
   defp take_gb_tree(state, value, results \\ [])

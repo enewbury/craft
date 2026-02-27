@@ -1,5 +1,4 @@
 defmodule Craft.Consensus.State.LeaderState do
-  alias Craft.Consensus
   alias Craft.Consensus.State
   alias Craft.Consensus.State.LeaderState.QuorumStatus
   alias Craft.Consensus.State.Members
@@ -151,21 +150,8 @@ defmodule Craft.Consensus.State.LeaderState do
       if state.lease_expires_at && !state.leader_state.waiting_for_lease do
         MemberCache.update_lease_holder(state)
       end
-      # snapshotting truncates the log, so we want to make sure that all followers are caught up first
-      # we don't want to delete a snapshot that's being downloaded, nor truncate the log before a follower
-      # that's just pulled a snapshot can catch up
-      voting_nodes_caught_up =
-        state.members
-        |> Members.other_voting_nodes()
-        |> Enum.all?(fn node ->
-          state.leader_state.match_indices[node] == Persistence.latest_index(state.persistence)
-        end)
 
-      all_followers_caught_up = Enum.empty?(state.members.catching_up_nodes) and voting_nodes_caught_up
-      log_too_long = Persistence.length(state.persistence) > Consensus.maximum_log_length()
-      # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
-
-      Machine.quorum_reached(state, state.leader_state.commit_index, all_followers_caught_up && log_too_long)
+      Machine.quorum_reached(state, state.leader_state.commit_index)
     end
 
     state

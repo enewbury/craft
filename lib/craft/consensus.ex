@@ -597,18 +597,18 @@ defmodule Craft.Consensus do
     apply_up_to = min(append_entries.leader_last_applied, Persistence.latest_index(data.persistence))
 
     if success && data.last_applied < apply_up_to do
-      log_too_long = Persistence.length(data.persistence) > maximum_log_length()
-
       Logger.debug("quorum reached", logger_metadata(data, trace: :quorum_reached))
 
-      Machine.quorum_reached(data, apply_up_to, log_too_long)
+      Machine.quorum_reached(data, apply_up_to)
     end
 
     # we do this after notifying the machine that quorum has been reached so it can bump apply_up_to
     data =
       if Enum.empty?(append_entries.entries) do
         if !data.notified_machine_of_idleness do
-          Machine.notify_idle(data)
+          log_too_long = Persistence.length(data.persistence) > maximum_log_length()
+
+          Machine.notify_idle(data, log_too_long)
 
           put_in(data.notified_machine_of_idleness, true)
         else
@@ -1122,7 +1122,22 @@ defmodule Craft.Consensus do
       state =
         if LeaderState.QuorumStatus.idle?(state) do
           if !state.notified_machine_of_idleness do
-            Machine.notify_idle(state)
+
+            # snapshotting truncates the log, so we want to make sure that all followers are caught up first
+            # we don't want to delete a snapshot that's being downloaded, nor truncate the log before a follower
+            # that's just pulled a snapshot can catch up
+            voting_nodes_caught_up =
+              state.members
+              |> Members.other_voting_nodes()
+              |> Enum.all?(fn node ->
+                state.leader_state.match_indices[node] == Persistence.latest_index(state.persistence)
+              end)
+
+            all_followers_caught_up = Enum.empty?(state.members.catching_up_nodes) and voting_nodes_caught_up
+            log_too_long = Persistence.length(state.persistence) > maximum_log_length()
+            # log_too_big = Persistence.log_size() > 100mb or 100 entries, etc
+
+            Machine.notify_idle(state, all_followers_caught_up && log_too_long)
 
             put_in(state.notified_machine_of_idleness, true)
           else
