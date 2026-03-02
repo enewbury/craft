@@ -44,7 +44,14 @@ defmodule Craft.Tracing do
       |> Keyword.take([:name])
       |> Enum.into(%{})
       |> Map.merge(meta)
-      |> Map.put(:node, node())
+      |> Map.new(fn {k, v} ->
+        v =
+          v
+          |> to_string()
+          |> String.replace(~w[@ .], "_")
+
+        {k, v}
+      end)
 
     :telemetry.execute(metric, measurements, meta)
   end
