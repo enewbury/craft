@@ -220,7 +220,7 @@ defmodule Craft.Consensus do
   def lonely(:enter, _previous_state, data) do
     data = State.become_lonely(data)
 
-    telemetry([:craft, :role_change, :lonely], %{}, %{})
+    telemetry([:craft, :role, :lonely], %{}, %{})
 
     Machine.update_role(data)
 
@@ -363,7 +363,7 @@ defmodule Craft.Consensus do
   def receiving_snapshot(:enter, _previous_state, data) do
     data = State.become_receiving_snapshot(data)
 
-    telemetry([:craft, :role_change, :receiving_snapshot], %{}, %{})
+    telemetry([:craft, :role, :receiving_snapshot], %{}, %{})
 
     Machine.update_role(data)
 
@@ -476,7 +476,7 @@ defmodule Craft.Consensus do
   def follower(:enter, _previous_state, data) do
     data = State.become_follower(data)
 
-    telemetry([:craft, :role_change, :follower], %{}, %{})
+    telemetry([:craft, :role, :follower], %{}, %{})
 
     Machine.update_role(data)
 
@@ -679,7 +679,7 @@ defmodule Craft.Consensus do
   def candidate(:enter, :follower, %State{leadership_transfer_request_id: id} = data) when is_tuple(id) or id == :internal do
     data = State.become_candidate(data)
 
-    telemetry([:craft, :role_change, :candidate], %{}, %{})
+    telemetry([:craft, :role, :candidate], %{}, %{})
 
     Machine.update_role(data)
 
@@ -694,7 +694,7 @@ defmodule Craft.Consensus do
   def candidate(:enter, _previous_state, data) do
     data = State.become_candidate(data)
 
-    telemetry([:craft, :role_change, :candidate], %{}, %{})
+    telemetry([:craft, :role, :candidate], %{}, %{})
 
     Machine.update_role(data)
 
@@ -836,7 +836,7 @@ defmodule Craft.Consensus do
   def leader(:enter, _previous_state, data) do
     data = State.become_leader(data)
 
-    telemetry([:craft, :role_change, :leader], %{}, %{})
+    telemetry([:craft, :role, :leader], %{}, %{})
 
     #
     # when the cluster starts up, each node is explicitly given the same configuration to
