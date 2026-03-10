@@ -17,16 +17,12 @@ defmodule Craft.RocksDBMachine do
   end
 
   defmodule State do
-    defstruct [:data_dir, :db, :log_index_column_family, :snapshots_dir]
+    defstruct [:data_dir, :db, :log_index_column_family]
   end
 
   @impl true
   def init(args) do
-    %State{
-      data_dir: args.data_dir,
-      snapshots_dir: Path.join(args.data_dir, "snapshots")
-    }
-    |> do_init(create_if_missing: true, create_missing_column_families: true)
+    do_init(%State{data_dir: args.data_dir}, create_if_missing: true, create_missing_column_families: true)
   end
 
   defp do_init(state, db_opts \\ []) do
@@ -34,8 +30,6 @@ defmodule Craft.RocksDBMachine do
       state.data_dir
       |> :erlang.binary_to_list()
       |> :rocksdb.open_optimistic_transaction_db(db_opts, [{~c"default", []}, @log_index_column_family])
-
-    File.mkdir_p!(state.snapshots_dir)
 
     {:ok, %{state | db: db, log_index_column_family: log_index_column_family}}
   end
@@ -117,34 +111,8 @@ defmodule Craft.RocksDBMachine do
   end
 
   @impl true
-  def snapshot(state) do
-    index =
-      state
-      |> last_applied_log_index()
-      |> to_string()
-
-    path = Path.join(state.snapshots_dir, index)
-
-    if not File.exists?(path) do
-      File.mkdir_p!(state.snapshots_dir)
-
-      :ok = :rocksdb.checkpoint(state.db, :erlang.binary_to_list(path))
-
-      path
-    else
-      nil
-    end
-  end
-
-  @impl true
-  def snapshots(state) do
-    state.snapshots_dir
-    |> File.ls!()
-    |> Map.new(fn index_str ->
-      {index, ""} = Integer.parse(index_str)
-
-      {index, Path.join(state.snapshots_dir, index_str)}
-    end)
+  def snapshot(path, state) do
+    :ok = :rocksdb.checkpoint(state.db, :erlang.binary_to_list(path))
   end
 
   @impl true

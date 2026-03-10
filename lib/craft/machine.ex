@@ -40,8 +40,7 @@ defmodule Craft.Machine do
     @type index() :: pos_integer()
 
     @callback last_applied_log_index(private()) :: Craft.log_index() | nil
-    @callback snapshot(private()) :: {index(), snapshot()} | nil
-    @callback snapshots(private()) :: %{index() => snapshot()}
+    @callback snapshot(path :: String.t(), private()) :: :ok | nil
     @callback prepare_to_receive_snapshot(private()) :: {:ok, data_dir(), private()}
     @callback receive_snapshot(private()) :: {:ok, private()}
     @callback backup(to_directory :: Path.t(), private()) :: :ok | {:error, any()}
@@ -61,6 +60,7 @@ defmodule Craft.Machine do
       :name,
       :module,
       :private,
+      :snapshots_dir,
       :role,
       :global_clock,
       :last_quorum_at,
@@ -436,12 +436,14 @@ defmodule Craft.Machine do
     Logger.debug("snapshotting", logger_metadata(trace: {:snapshot, state.last_applied}))
 
     if state.module.__craft_mutable__() do
+      snapshot_path = Path.join(state.snapshots_dir, to_string(state.last_applied))
+
       time(fn ->
-        case state.module.snapshot(state.private) do
-          path when is_binary(path) ->
+        case state.module.snapshot(snapshot_path, state.private) do
+          :ok ->
             Logger.debug("snapshot ready", logger_metadata(trace: :snapshot_ready))
 
-            :ok = Consensus.snapshot_ready(state.name, state.last_applied, snapshot_info(path))
+            :ok = Consensus.snapshot_ready(state.name, state.last_applied, snapshot_info(state.last_applied, state))
 
           # machine decided not to snapshot (perhaps no commands have run)
           nil ->
@@ -654,48 +656,45 @@ defmodule Craft.Machine do
   end
 
   def handle_call({:init_or_restore, log}, _from, state) do
-    {last_applied, private, snapshot} =
+    {state, snapshot} =
       if state.module.__craft_mutable__() do
         data_dir =
           state.name
           |> Configuration.find()
           |> Map.fetch!(:data_dir)
 
-        data_dir = Path.join([Configuration.data_dir(), data_dir, "machine"])
+        machine_data_dir = Path.join([Configuration.data_dir(), data_dir, "machine"])
+        snapshots_dir = Path.join([Configuration.data_dir(), data_dir, "snapshots"])
 
-        File.mkdir_p!(data_dir)
+        File.mkdir_p!(machine_data_dir)
+        File.mkdir_p!(snapshots_dir)
 
-        {:ok, private} = state.module.init(%{name: state.name, data_dir: data_dir})
+        {:ok, private} = state.module.init(%{name: state.name, data_dir: machine_data_dir})
         last_applied = state.module.last_applied_log_index(private)
 
+        state = %{state | snapshots_dir: snapshots_dir, last_applied: last_applied, private: private}
+
         snapshot =
-          case Persistence.first(log) do
-            {keep_index, %SnapshotEntry{}} ->
-              snapshots = state.module.snapshots(private)
+          with {index, %SnapshotEntry{}} <- Persistence.first(log) do
+            (File.ls!(snapshots_dir) -- [to_string(index)])
+            |> Enum.each(fn old_snapshot ->
+              Path.join(snapshots_dir, old_snapshot)
+              |> File.rm_rf()
+            end)
 
-              (Map.keys(snapshots) -- [keep_index])
-              |> Enum.each(fn index ->
-                Configuration.data_dir()
-                |> Path.join(snapshots[index])
-                |> File.rm_rf()
-              end)
-
-              {keep_index, snapshot_info(snapshots[keep_index])}
-
-            _ ->
-              nil
+            {index, snapshot_info(index, state)}
           end
 
-        {last_applied, private, snapshot}
+        {state, snapshot}
       else
         case Persistence.first(log) do
           {index, %SnapshotEntry{} = snapshot} ->
-            {index, snapshot.machine_private, nil}
+            {%{state | last_applied: index, private: snapshot.machine_private}, nil}
 
           _ ->
             {:ok, private} = state.module.init(state.name)
 
-            {0, private, nil}
+            {%{state | last_applied: 0, private: private}, nil}
         end
       end
 
@@ -708,7 +707,7 @@ defmodule Craft.Machine do
       receive do
         {:EXIT, ^me, _reason} -> 
           if function_exported?(module, :close, 1) do
-            module.close(private)
+            module.close(state.private)
           end
 
         msg ->
@@ -716,7 +715,7 @@ defmodule Craft.Machine do
       end
     end)
 
-    {:reply, {:ok, snapshot, last_applied}, %{state | last_applied: last_applied, apply_up_to: last_applied, private: private}}
+    {:reply, {:ok, snapshot, state.last_applied}, %{state | apply_up_to: state.last_applied}}
   end
 
   # delete on-disk machine files etc...
@@ -746,7 +745,9 @@ defmodule Craft.Machine do
 
     state = %{state | private: private, apply_up_to: last_applied} |> update_last_applied(last_applied)
 
-    {:reply, :ok, state}
+    # immediately take a snapshot once the machine has installed the incoming one, so we have one to send to followers if we become leader
+    # we don't just copy the incoming snapshot into the snapshots dir, since the machine may want to use a deduplication mechanism (copy-on-write, fs links, etc)
+    {:reply, :ok, state, {:continue, :take_snapshot}}
   end
 
   def handle_call({:backup, to_directory}, _from, state) do
@@ -862,6 +863,11 @@ defmodule Craft.Machine do
     GenServer.reply(from, {:error, reason})
 
     {:noreply, %{state | read_index_tasks: Map.delete(state.read_index_tasks, ref)}}
+  end
+
+  @impl true
+  def handle_continue(:take_snapshot, state) do
+    {:noreply, do_snapshot(state)}
   end
 
   defp apply_outstanding_entries(state), do: apply_outstanding_entries(state, Consensus.get_log(state.name))
@@ -1019,7 +1025,9 @@ defmodule Craft.Machine do
     end
   end
 
-  defp snapshot_info(path) do
+  defp snapshot_info(index, state) do
+    path = Path.join(state.snapshots_dir, to_string(index))
+
     files =
       path
       |> ls_flat()
