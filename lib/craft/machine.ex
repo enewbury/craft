@@ -655,7 +655,7 @@ defmodule Craft.Machine do
       |> Consensus.get_log()
       |> Persistence.reduce_while(:unknown, fn
         {index, %CommandEntry{request_id: ^request_id}}, _acc ->
-          if index <= state.last_applied do
+          if index <= state.apply_up_to do
             {:halt, :committed}
           else
             {:halt, :uncommitted}
