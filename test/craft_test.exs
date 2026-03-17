@@ -21,6 +21,40 @@ defmodule CraftTest do
     assert_receive {:"$craft_command", ^ref, :ok}
   end
 
+  describe "command/2 + command_status/2" do
+    nexus_test "committed command", %{name: name, nexus: nexus} do
+      wait_until(nexus, {Stability, :all})
+
+      assert {:error, :some_error, %{request_id: request_id}} = SimpleMachine.return_an_error(name, :some_error)
+
+      assert :committed == Craft.command_status(name, request_id)
+    end
+
+    nexus_test "uncommitted command", %{name: name, nexus: nexus} do
+      wait_until(nexus, {Stability, :all})
+
+      # prevent quorum
+      nemesis(nexus, fn _ -> :drop end)
+
+      # allow enough time to write to the leader's log before timing out
+      assert {:error, :timeout, %{request_id: request_id}} = SimpleMachine.put(name, :a, :b, timeout: 100)
+
+      assert :uncommitted == Craft.command_status(name, request_id)
+    end
+
+    nexus_test "unknown command", %{name: name, nexus: nexus} do
+      wait_until(nexus, {Stability, :all})
+
+      # prevent quorum
+      nemesis(nexus, fn _ -> :drop end)
+
+      # timeout immediately to beat the leader to writing the log entry
+      assert {:error, :timeout, %{request_id: request_id}} = SimpleMachine.put(name, :a, :b, timeout: 0)
+
+      assert :unknown == Craft.command_status(name, request_id)
+    end
+  end
+
   describe "query/3" do
     nexus_test "exits early when timeout is hit", %{name: name, nexus: nexus, leader_leases: leases} do
       wait_until(nexus, {Stability, :all})

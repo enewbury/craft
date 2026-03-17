@@ -1241,8 +1241,8 @@ defmodule Craft.Consensus do
     end
   end
 
-  defp handle_command({:machine_command, command}, from, data) do
-    entry = %CommandEntry{term: data.current_term, command: command}
+  defp handle_command({:machine_command, command, request_id}, from, data) do
+    entry = %CommandEntry{term: data.current_term, command: command, request_id: request_id}
 
     {persistence, entry_index} = Persistence.buffer_append(data.persistence, entry)
 

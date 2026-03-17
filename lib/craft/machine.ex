@@ -655,6 +655,25 @@ defmodule Craft.Machine do
     end
   end
 
+  def handle_call({:command_status, request_id}, _from, state) do
+    status =
+      state.name
+      |> Consensus.get_log()
+      |> Persistence.reduce_while(:unknown, fn
+        {index, %CommandEntry{request_id: ^request_id}}, _acc ->
+          if index <= state.last_applied do
+            {:halt, :committed}
+          else
+            {:halt, :uncommitted}
+          end
+
+        _, acc ->
+          {:cont, acc}
+    end)
+
+    {:reply, status, state}
+  end
+
   def handle_call({:init_or_restore, log}, _from, state) do
     {state, snapshot} =
       if state.module.__craft_mutable__() do

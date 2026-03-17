@@ -1,6 +1,7 @@
 defmodule Craft.Log.CommandEntry do
   defstruct [
     :term,
-    :command
+    :command,
+    :request_id
   ]
 end

@@ -131,6 +131,15 @@ defmodule Craft do
   @doc """
   Submits a command to the given group `name`, once quorum is reached, the command is executed.
 
+  In any distributed system, it's possible to submit a command and not hear the response. This leaves the client in a state where
+  it doesn't know if the command was committed by the system or not. Because of this, Craft returns the following error shapes:
+
+  `{:error, reason}`
+    - Craft knows the command has not, and will not ever execute.
+  `{:error, reason, %{request_id: request_id}}`
+    - Craft doesn't know if the command committed, you can then call `Craft.command_status/1` with the given `request_id` to find out.
+    - If the given `reason` is one you're expecting (it's from your application state machine), the command has executed and returned the response you asked it to.
+
   See `c:Machine.handle_command/3`.
 
   ### Opts
@@ -142,6 +151,21 @@ defmodule Craft do
   Asynchronous version of `command/3`, returns a unique `ref`, then sends a message of the form `{:"$craft_command", ref, reply}` with the reply to the caller when the command has executed.
   """
   def async_command(command, name, opts \\ []), do: backend().async_command(command, name, opts)
+
+  @doc """
+  Returns the status of the command associated with the given `request_id`, see `command/3`.
+
+  Gives one of the following values:
+
+  - `:committed` - the command has committed
+  - `:uncommitted` - the command was found in the leader's log, but has not yet committed
+  - `:unknown`
+    - the command was not found in the leader's log, the command may have committed but the log has been expunged due to a snapshot.
+
+  ### Opts
+  - `timeout` - (default: 5_000) the time before we return a timeout error
+  """
+  def command_status(name, request_id, opts \\ []), do: backend().command_status(name, request_id, opts)
 
   #
   # Craft.query(command, name, consistency: :linearizable)

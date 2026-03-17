@@ -188,13 +188,39 @@ defmodule Craft.Raft do
   def command(command, name, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
-    with_leader_redirect(name, &call_machine(name, &1, {:command, {:machine_command, command}, nil}, timeout))
+    request_id = :erlang.make_ref()
+
+    with_leader_redirect(name, fn node ->
+      case call_machine(name, node, {:command, {:machine_command, command, request_id}, nil}, timeout) do
+        {:error, error} ->
+          {:error, error, %{request_id: request_id}}
+
+        result ->
+          result
+      end
+    end)
   end
 
   def async_command(command, name, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
-    with_leader_redirect(name, &call_machine(name, &1, {:command, {:machine_command, command}, self()}, timeout))
+    request_id = :erlang.make_ref()
+
+    with_leader_redirect(name, fn node ->
+      case call_machine(name, node, {:command, {:machine_command, command, request_id}, self()}, timeout) do
+        {:error, error} ->
+          {:error, error, %{request_id: request_id}}
+
+        result ->
+          result
+      end
+    end)
+  end
+
+  def command_status(name, request_id, opts) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+
+    with_leader_redirect(name, &call_machine(name, &1, {:command_status, request_id}, timeout))
   end
 
   def query(query, name, opts \\ []) do
@@ -294,16 +320,24 @@ defmodule Craft.Raft do
         end
 
       {:error, {:not_leader, leader}} ->
-        if MapSet.member?(previous_redirects, leader) do
-          {:error, :redirect_loop}
-        else
-          MemberCache.update_leader(name, leader)
+        redirect_to_known_leader(name, leader, members, func, previous_redirects)
 
-          do_leader_redirect(name, leader, members, func, MapSet.put(previous_redirects, leader))
-        end
+      # allow commands to redirect when we know they failed because they didn't contact the leader
+      {:error, {:not_leader, leader}, _metadata} ->
+        redirect_to_known_leader(name, leader, members, func, previous_redirects)
 
       reply ->
         reply
+    end
+  end
+
+  defp redirect_to_known_leader(name, leader, members, func, previous_redirects) do
+    if MapSet.member?(previous_redirects, leader) do
+      {:error, :redirect_loop}
+    else
+      MemberCache.update_leader(name, leader)
+
+      do_leader_redirect(name, leader, members, func, MapSet.put(previous_redirects, leader))
     end
   end
 

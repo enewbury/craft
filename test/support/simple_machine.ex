@@ -13,6 +13,10 @@ defmodule Craft.SimpleMachine do
     Craft.async_command({:put, k, v}, name, opts)
   end
 
+  def return_an_error(name, error) do
+    Craft.command({:return_an_error, error}, name)
+  end
+
   def reset(name) do
     Craft.command(:reset, name)
   end
@@ -59,6 +63,10 @@ defmodule Craft.SimpleMachine do
 
   def handle_command({:delete, k}, _log_index, state) do
     {:ok, Map.delete(state, k)}
+  end
+
+  def handle_command({:return_an_error, error}, _log_index, state) do
+    {{:error, error}, state}
   end
 
   @impl true

@@ -202,6 +202,9 @@ defmodule Craft.Sandbox do
   end
 
   @doc false
+  def command_status(_name, _request_id, _opts), do: :not_implemented
+
+  @doc false
   def holding_lease?(_name), do: true
   @doc false
   def holding_lease?(), do: true

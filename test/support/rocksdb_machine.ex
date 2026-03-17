@@ -55,11 +55,10 @@ defmodule Craft.RocksDBMachine do
     {:ok, batch} = :rocksdb.batch()
 
     replies =
-      Enum.map(commands, fn 
-        {{:put, k, v}, _log_index} ->
-          :ok = :rocksdb.batch_put(batch, encode(k), encode(v))
+      Enum.map(commands, fn {{:put, k, v}, _log_index} ->
+        :ok = :rocksdb.batch_put(batch, encode(k), encode(v))
 
-          :ok
+        :ok
       end)
 
     {_command, last_log_index} = List.last(commands)
@@ -172,9 +171,7 @@ defmodule Craft.RocksDBMachine do
           %{}
       end
 
-    snapshots = File.ls!(state.snapshots_dir)
-
-    %{kv: kv, last_applied_log_index: last_applied_log_index(state), snapshots: snapshots}
+    %{kv: kv, last_applied_log_index: last_applied_log_index(state)}
   end
 
   defp encode(term), do: :erlang.term_to_binary(term)

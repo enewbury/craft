@@ -123,7 +123,8 @@ defmodule Craft.Linearizability do
         # if the operation was a write that errored, consider the possiblity that it occurred but the client just didn't get a confirming response
         {response_ok?, model_states_to_consider} =
           case op do
-            %{request: {:write, _}, response: {:error, _}} ->
+            # 3-tuple errors are how craft communicates errors that may have committed anyways
+            %{request: {:write, _}, response: {:error, _, _}} ->
               {true, Enum.dedup([model_state, new_model_state])}
 
             _ ->
