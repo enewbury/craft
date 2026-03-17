@@ -243,14 +243,8 @@ defmodule Craft.Machine do
       GenServer.reply(from, response)
     end
 
-    for {_index, {from, async_caller}} <- state.client_commands do
-      if async_caller do
-        {_pid, ref} = from
-
-        send(async_caller, {:"$craft_command", ref, response})
-      else
-        GenServer.reply(from, response)
-      end
+    for {_index, from} <- state.client_commands do
+      GenServer.reply(from, response)
     end
 
     # for a new leader, handle_role_change/2 is called from the :quorum_reached handler when the first section 5.4.2 commit is observed
@@ -633,18 +627,18 @@ defmodule Craft.Machine do
     end
   end
 
-  # since it's over an rpc, `from` is the rpc process, and `async_caller` is the client (if it's an async command)
-  def handle_call({:command, command, async_caller}, from, state) do
+  # since it's over an rpc, the normal genserver `from` is the rpc process, and `caller` is the actual client
+  def handle_call({:command, command, async_from}, from, state) do
     case Consensus.command(state.name, command) do
       {:ok, index} ->
-        Logger.debug("sent command to consensus", logger_metadata(trace: {:command, from, command, async_caller}))
+        from = async_from || from
 
-        state = %{state | client_commands: Map.put(state.client_commands, index, {from, async_caller})}
+        Logger.debug("sent command to consensus", logger_metadata(trace: {:command, from, command}))
 
-        if async_caller do
-          {_pid, ref} = from
+        state = %{state | client_commands: Map.put(state.client_commands, index, from)}
 
-          {:reply, {:ok, ref}, state}
+        if async_from do
+          {:reply, :ok, state}
         else
           {:noreply, state}
         end
@@ -986,14 +980,9 @@ defmodule Craft.Machine do
 
   defp reply_to_command(state, index, reply) do
     with :leader <- state.role,
-         {{from, async_caller}, client_commands} <- Map.pop(state.client_commands, index) do
-      if async_caller do
-        {_pid, ref} = from
+      {{_, _} = from, client_commands} <- Map.pop(state.client_commands, index) do
 
-        send(async_caller, {:"$craft_command", ref, reply})
-      else
-        GenServer.reply(from, reply)
-      end
+      GenServer.reply(from, reply)
 
       %{state | client_commands: client_commands}
     else

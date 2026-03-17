@@ -17,8 +17,8 @@ defmodule CraftTest do
     assert :ok = SimpleMachine.put(name, :a, 123)
     assert {:ok, 123} = SimpleMachine.get(name, :a)
 
-    assert {:ok, ref} = SimpleMachine.put_async(name, :b, 456)
-    assert_receive {:"$craft_command", ^ref, :ok}
+    assert {:ok, request_id} = SimpleMachine.put_async(name, :b, 456)
+    assert_receive {:"$craft_command", ^request_id, :ok}
   end
 
   describe "command/2 + command_status/2" do
@@ -37,7 +37,7 @@ defmodule CraftTest do
       nemesis(nexus, fn _ -> :drop end)
 
       # allow enough time to write to the leader's log before timing out
-      assert {:error, :timeout, %{request_id: request_id}} = SimpleMachine.put(name, :a, :b, timeout: 100)
+      assert {:error, :timeout, %{request_id: request_id}} = SimpleMachine.put(name, :a, :b, timeout: 50)
 
       assert :uncommitted == Craft.command_status(name, request_id)
     end
@@ -53,6 +53,18 @@ defmodule CraftTest do
 
       assert :unknown == Craft.command_status(name, request_id)
     end
+  end
+
+  nexus_test "async_command/3", %{name: name, nexus: nexus} do
+    wait_until(nexus, {Stability, :all})
+
+    assert {:ok, request_id} = SimpleMachine.put_async(name, :a, 123)
+    assert_receive {:"$craft_command", ^request_id, :ok}
+    assert {:ok, 123} = SimpleMachine.get(name, :a)
+
+    assert {:error, :timeout, _} = SimpleMachine.put_async(name, :a, 456, timeout: 0)
+    assert {:ok, request_id} = SimpleMachine.put_async(name, :a, 456, timeout: 10)
+    assert_receive {:"$craft_command", ^request_id, {:error, :timeout, _}}
   end
 
   describe "query/3" do

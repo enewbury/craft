@@ -201,20 +201,49 @@ defmodule Craft.Raft do
     end)
   end
 
+  # to ensure that a timeout message is sent to the caller, we spawn a process to do the request and wait for the reply instead of sending it directly
   def async_command(command, name, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
 
     request_id = :erlang.make_ref()
+    caller = self()
 
-    with_leader_redirect(name, fn node ->
-      case call_machine(name, node, {:command, {:machine_command, command, request_id}, self()}, timeout) do
-        {:error, error} ->
-          {:error, error, %{request_id: request_id}}
+    spawn_link(fn ->
+      command_sent_reply =
+        with_leader_redirect(name, fn node ->
+          case call_machine(name, node, {:command, {:machine_command, command, request_id}, {self(), request_id}}, timeout) do
+            :ok ->
+              :ok
 
-        result ->
-          result
+            {:error, error} ->
+              {:error, error, %{request_id: request_id}}
+          end
+        end)
+
+      case command_sent_reply do
+        :ok ->
+          Kernel.send(caller, request_id)
+
+          receive do
+            {^request_id, reply} ->
+              Kernel.send(caller, {:"$craft_command", request_id, reply})
+
+          after timeout ->
+            Kernel.send(caller, {:"$craft_command", request_id, {:error, :timeout, %{request_id: request_id}}})
+          end
+
+        error ->
+          Kernel.send(caller, {request_id, error})
       end
     end)
+
+    receive do
+      ^request_id ->
+        {:ok, request_id}
+
+      {^request_id, error} ->
+        error
+    end
   end
 
   def command_status(name, request_id, opts) do
