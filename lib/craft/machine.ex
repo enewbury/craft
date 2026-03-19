@@ -42,7 +42,7 @@ defmodule Craft.Machine do
     @callback last_applied_log_index(private()) :: Craft.log_index() | nil
     @callback snapshot(path :: String.t(), private()) :: :ok | nil
     @callback prepare_to_receive_snapshot(private()) :: {:ok, data_dir(), private()}
-    @callback receive_snapshot(private()) :: {:ok, private()}
+    @callback receive_snapshot(private()) :: private()
     @callback backup(to_directory :: Path.t(), private()) :: :ok | {:error, any()}
     @callback close(private()) :: private()
   end

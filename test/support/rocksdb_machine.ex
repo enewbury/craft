@@ -102,7 +102,7 @@ defmodule Craft.RocksDBMachine do
   end
 
   def handle_query(_, _from, state) do
-    {:reply, {{:error, :unknown_query}, state}}
+    {:reply, {:error, :unknown_query}}
   end
 
   @impl true
